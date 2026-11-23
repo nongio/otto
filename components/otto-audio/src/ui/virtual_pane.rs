@@ -279,11 +279,11 @@ impl Ui {
         let about_left = control_left + control_w + 24.0;
         let about_w = button.left - 16.0 - about_left;
         if about_w > 120.0 {
-            let font = styles::FOOTNOTE.font();
+            let font = styles::SUBHEADLINE.font();
             let lines = wrap(&font, kind_about(self.virtual_form.kind), about_w, 3);
             for (i, line) in lines.iter().enumerate() {
                 Label::new(line)
-                    .with_style(styles::FOOTNOTE)
+                    .with_style(styles::SUBHEADLINE)
                     .with_color(theme.text_secondary)
                     .centered_on(about_left, card.top + 54.0 + i as f32 * 18.0)
                     .render(canvas);
@@ -334,9 +334,9 @@ impl Ui {
             kind = kind_label(device.kind),
             channels = channels_label(device.channels)
         );
-        let font = styles::FOOTNOTE.font();
+        let font = styles::SUBHEADLINE.font();
         Label::new(ellipsize(&font, &what, width))
-            .with_style(styles::FOOTNOTE)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_secondary)
             .centered_on(left, card.top + 54.0)
             .render(canvas);
@@ -357,7 +357,7 @@ impl Ui {
         let cy = card.top + 76.0;
         canvas.draw_circle(Point::new(left + 4.0, cy), 4.0, &fill(dot));
         Label::new(ellipsize(&font, state, width - 14.0))
-            .with_style(styles::FOOTNOTE)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_primary)
             .centered_on(left + 14.0, cy)
             .render(canvas);

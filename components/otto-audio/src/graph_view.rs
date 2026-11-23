@@ -1007,7 +1007,7 @@ pub fn canvas_ground(theme: &Theme) -> Color {
     if theme.is_dark() {
         Color::from_rgb(0x1c, 0x1c, 0x1e)
     } else {
-        Color::from_rgb(0xf7, 0xf7, 0xf9)
+        Color::from_rgb(0xfb, 0xfb, 0xfc)
     }
 }
 

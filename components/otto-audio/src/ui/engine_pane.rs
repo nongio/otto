@@ -96,14 +96,14 @@ impl Ui {
             rate = now.rate
         );
         Label::new(detail)
-            .with_style(styles::FOOTNOTE)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_secondary)
             .centered_on(left, card.top + 98.0)
             .render(canvas);
 
         // Who chose each: the engine, or this app.
         let column_w = (card.width() - 40.0) / 2.0;
-        let font = styles::CAPTION_1.font();
+        let font = styles::SUBHEADLINE.font();
         for (i, (label, forced)) in [
             (t!("audio-engine-rate"), now.force_rate.is_some()),
             (t!("audio-engine-quantum"), now.force_quantum.is_some()),
@@ -118,12 +118,12 @@ impl Ui {
                 t!("audio-engine-auto")
             };
             Label::new(ellipsize(&font, label, column_w - 8.0))
-                .with_style(styles::CAPTION_1)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_secondary)
                 .centered_on(x, card.top + 132.0)
                 .render(canvas);
             Label::new(chosen)
-                .with_style(styles::FOOTNOTE_EMPHASIZED)
+                .with_style(styles::SUBHEADLINE_EMPHASIZED)
                 .with_color(theme.text_primary)
                 .centered_on(x, card.top + 150.0)
                 .render(canvas);
@@ -168,19 +168,19 @@ impl Ui {
         } else {
             t_owned!("audio-engine-rate-auto", rate = khz(now.rate))
         };
-        let font = styles::FOOTNOTE.font();
+        let font = styles::SUBHEADLINE.font();
         Label::new(ellipsize(&font, &value, width))
-            .with_style(styles::FOOTNOTE)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_primary)
             .centered_on(left, card.top + 104.0)
             .render(canvas);
-        let caption_font = styles::CAPTION_1.font();
+        let caption_font = styles::SUBHEADLINE.font();
         Label::new(ellipsize(
             &caption_font,
             t!("audio-engine-rate-note"),
             width,
         ))
-        .with_style(styles::CAPTION_1)
+        .with_style(styles::SUBHEADLINE)
         .with_color(theme.text_secondary)
         .centered_on(left, card.top + 126.0)
         .render(canvas);
@@ -218,23 +218,23 @@ impl Ui {
             let ground = if on {
                 theme.accent
             } else if pressed {
-                theme.fill_tertiary
+                theme.fill_primary
             } else {
-                theme.fill_quaternary
+                theme.control_track
             };
             canvas.draw_rrect(rr, &fill(ground));
             let cx = tile.center_x();
             let cy = tile.center_y();
             if *quantum == 0 {
                 Label::new(t!("audio-engine-auto"))
-                    .with_style(styles::FOOTNOTE_EMPHASIZED)
+                    .with_style(styles::SUBHEADLINE_EMPHASIZED)
                     .with_color(text)
                     .centered_at(cx, cy)
                     .render(canvas);
             } else {
                 let ms = f64::from(*quantum) * 1000.0 / f64::from(now.rate.max(1));
                 Label::new(quantum.to_string())
-                    .with_style(styles::FOOTNOTE_EMPHASIZED)
+                    .with_style(styles::SUBHEADLINE_EMPHASIZED)
                     .with_color(text)
                     .centered_at(cx, cy - 7.0)
                     .render(canvas);
@@ -252,9 +252,9 @@ impl Ui {
             min = now.min,
             max = now.max
         );
-        let font = styles::CAPTION_1.font();
+        let font = styles::SUBHEADLINE.font();
         Label::new(ellipsize(&font, &range, width))
-            .with_style(styles::CAPTION_1)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_secondary)
             .centered_on(left, card.top + 158.0)
             .render(canvas);

@@ -22,8 +22,13 @@ const H: f32 = 700.0;
 const SCALE: f32 = 2.0;
 
 /// Draw the window on `pane`, the Graph section in `mode`, into the PNG at
-/// `out`.
-pub fn render(out: &str, pane: Pane, mode: GraphMode) -> Result<(), Box<dyn std::error::Error>> {
+/// `out`; Effects shows its sample at `effect` when it shows samples.
+pub fn render(
+    out: &str,
+    pane: Pane,
+    mode: GraphMode,
+    effect: Option<usize>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = mpsc::channel();
     let connection = Connection::start(WINDOW_APP, move |event| {
         let _ = tx.send(event);
@@ -51,7 +56,7 @@ pub fn render(out: &str, pane: Pane, mode: GraphMode) -> Result<(), Box<dyn std:
             ui.preview_virtual();
         }
         if pane == Pane::Effects {
-            ui.preview_effects();
+            ui.preview_effects(effect);
         }
         canvas.save();
         canvas.scale((SCALE, SCALE));

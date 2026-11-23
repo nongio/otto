@@ -5,7 +5,9 @@
 //! An equaliser is edited on its response curve, computed from the very
 //! biquads the service runs: drag a band's point for its frequency and gain,
 //! scroll over it for its width (Q). Its cards scrub the same values. The
-//! other kinds have a slider per parameter.
+//! other kinds have a slider per parameter. A speaker correction also has
+//! its impulse response file, chosen through the file chooser portal and
+//! copied into Otto's data folder, and an EasyEffects preset import.
 //!
 //! Like Virtual devices, the section edits the routing file and the service
 //! makes the effects. While a value is being dragged it is also set straight
@@ -14,10 +16,12 @@
 
 use std::sync::{Arc, Mutex};
 
+use std::path::Path;
+
 use otto_audio_graph::{
-    flat_bands, parse_autoeq, response_db, support, Band, BandType, Effect, EffectKind, EffectSide,
-    Endpoint, ParamSpec, Support, Unit, EFFECT_PREFIX, MAX_BANDS, MAX_FREQ, MAX_GAIN, MAX_Q,
-    MIN_FREQ, MIN_Q,
+    find_kernel, flat_bands, import_impulse, parse_autoeq, parse_easyeffects, response_db, support,
+    Band, BandType, EasyEffects, Effect, EffectKind, EffectSide, Endpoint, ParamSpec, Support,
+    Unit, EFFECT_PREFIX, MAX_BANDS, MAX_FREQ, MAX_GAIN, MAX_Q, MIN_FREQ, MIN_Q,
 };
 use otto_kit::components::slider::{self, SliderInteraction};
 use otto_kit::components::toggle::{self, ToggleInteraction};
@@ -45,8 +49,13 @@ const BAND_CARD_H: f32 = 100.0;
 const BAND_GAP: f32 = 10.0;
 /// One slider row of a limiter, compressor or noise suppressor.
 const PARAM_ROW_H: f32 = 48.0;
-/// The plot shows this many dB above and below 0.
+/// The room a slider's readout takes after it.
+const PARAM_READOUT_W: f32 = 84.0;
+/// The plot shows at least this many dB above and below 0, and grows in
+/// [`DB_STEP`]s up to [`MAX_DB_RANGE`] to fit the curve and every band.
 const DB_RANGE: f32 = 18.0;
+const DB_STEP: f32 = 6.0;
+const MAX_DB_RANGE: f32 = 48.0;
 /// A band's point on the curve, and how far from it a press still takes it.
 const POINT_R: f32 = 9.0;
 const POINT_HIT: f32 = 14.0;
@@ -58,6 +67,9 @@ const SCRUB_RATIO: f32 = 0.01;
 const SCRUB_DB: f32 = 0.05;
 /// The largest file taken as an AutoEQ profile; a real one is under 1 KiB.
 const MAX_IMPORT_BYTES: u64 = 256 * 1024;
+/// The impulse response the preview's sample speaker correction names; a
+/// file name, not shown translated.
+const SAMPLE_IMPULSE: &str = "IR_22ms_27dB_5t_15s_0c.irs";
 /// The new effect form's rows.
 const FORM_KIND_H: f32 = 46.0;
 const FORM_ROW_H: f32 = 44.0;
@@ -93,6 +105,12 @@ pub(super) enum EffectAction {
     PresetMenu,
     Flat,
     Import,
+    /// A speaker correction's Choose File… for its impulse response.
+    ChooseImpulse,
+    /// A speaker correction's EasyEffects preset import.
+    ImportPreset,
+    /// A speaker correction's high-pass switch.
+    Highpass,
     /// A band's point on the curve: dragged.
     Point(usize),
     /// A band's card: selects it.
@@ -133,8 +151,17 @@ enum Step {
     Other,
 }
 
-/// What an import came back with, handed over from the dialog's thread.
-type ImportAnswer = (String, Outcome);
+/// What a file dialog was opened for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImportFor {
+    AutoEq,
+    Impulse,
+    Preset,
+}
+
+/// What a file dialog came back with, for which effect, handed over from
+/// the dialog's thread.
+type ImportAnswer = (String, ImportFor, Outcome);
 
 /// The section's own state.
 pub(super) struct EffectsState {
@@ -157,10 +184,17 @@ pub(super) struct EffectsState {
     unsaved: bool,
     /// Where the plot was last drawn, which a point drag maps through.
     plot: Rect,
+    /// The dB above and below 0 the plot was last drawn with.
+    range: f32,
     /// The answer of an import dialog, once there is one.
     import: Arc<Mutex<Option<ImportAnswer>>>,
-    /// What the last import said, shown under the bands.
+    /// What the last import said, shown under the bands or the sliders.
     note: Option<String>,
+    /// An EasyEffects preset whose impulse response was not found beside
+    /// it, waiting for the person to choose it; by effect id.
+    pending_preset: Option<(String, EasyEffects)>,
+    /// The `--png` preview: its sample impulse response is not on disk.
+    previewing: bool,
 }
 
 impl Default for EffectsState {
@@ -177,8 +211,11 @@ impl Default for EffectsState {
             drag: None,
             unsaved: false,
             plot: Rect::from_xywh(0.0, 0.0, 0.0, 0.0),
+            range: DB_RANGE,
             import: Arc::new(Mutex::new(None)),
             note: None,
+            pending_preset: None,
+            previewing: false,
         }
     }
 }
@@ -276,9 +313,9 @@ impl Ui {
                     .with_color(theme.text_primary)
                     .centered_on(item.left + 12.0, item.top + 17.0)
                     .render(canvas);
-                let font = styles::FOOTNOTE.font();
+                let font = styles::SUBHEADLINE.font();
                 Label::new(ellipsize(&font, &self.effect_caption(effect), width - 24.0))
-                    .with_style(styles::FOOTNOTE)
+                    .with_style(styles::SUBHEADLINE)
                     .with_color(theme.text_secondary)
                     .centered_on(item.left + 12.0, item.top + 35.0)
                     .render(canvas);
@@ -288,7 +325,7 @@ impl Ui {
             }
             if !any {
                 Label::new(t!("audio-effects-none"))
-                    .with_style(styles::FOOTNOTE)
+                    .with_style(styles::SUBHEADLINE)
                     .with_color(theme.text_tertiary)
                     .centered_on(left + 12.0, y + 10.0)
                     .render(canvas);
@@ -435,6 +472,25 @@ impl Ui {
             );
             right -= 12.0;
         }
+        if effect.kind == EffectKind::SpeakerCorrection {
+            let import = t!("audio-effects-import-easyeffects");
+            let w = push_button::width(import);
+            right -= w;
+            self.button(
+                canvas,
+                Rect::from_xywh(
+                    right,
+                    cy - push_button::HEIGHT / 2.0,
+                    w,
+                    push_button::HEIGHT,
+                ),
+                import,
+                Action::Effect(EffectAction::ImportPreset),
+                true,
+                theme,
+            );
+            right -= 12.0;
+        }
         let font = styles::TITLE_2_EMPHASIZED.font();
         Label::new(ellipsize(
             &font,
@@ -467,11 +523,221 @@ impl Ui {
             y += NOTICE_H + 16.0;
         }
 
+        if effect.kind == EffectKind::SpeakerCorrection && !self.effects.previewing {
+            let gone = effect.impulse_path().filter(|path| !path.is_file());
+            if let Some(path) = gone {
+                let file = file_name(&path.to_string_lossy());
+                let band = Rect::from_ltrb(area.left, y, area.right, y + NOTICE_H);
+                draw_missing(
+                    canvas,
+                    band,
+                    &t_owned!("audio-effects-impulse-gone", file = file),
+                    theme,
+                );
+                y += NOTICE_H + 16.0;
+            }
+        }
+
         let rest = Rect::from_ltrb(area.left, y, area.right, area.bottom);
-        if effect.kind == EffectKind::Equaliser {
-            self.draw_equaliser(canvas, rest, effect, theme);
+        match effect.kind {
+            EffectKind::Equaliser => self.draw_equaliser(canvas, rest, effect, theme),
+            EffectKind::SpeakerCorrection => self.draw_speaker(canvas, rest, effect, theme),
+            _ => self.draw_params(canvas, rest, effect, theme),
+        }
+    }
+
+    /// A speaker correction: its impulse response file, the high-pass and
+    /// the output gain, then what the last import said.
+    fn draw_speaker(&mut self, canvas: &Canvas, area: Rect, effect: &Effect, theme: &Theme) {
+        let specs = effect.kind.params();
+        let (gain, highpass) = (specs[0], specs[1]);
+        let card = Rect::from_xywh(area.left, area.top, area.width(), 20.0 + 3.0 * PARAM_ROW_H);
+        let rr = RRect::new_rect_xy(card, 12.0, 12.0);
+        canvas.draw_rrect(rr, &fill(graph_view::card_ground(theme)));
+        canvas.draw_rrect(rr, &stroke(theme.hairline, 1.0));
+        let label_w = 170.0;
+        let row_cy = |row: usize| card.top + 10.0 + PARAM_ROW_H * (row as f32 + 0.5);
+        let label = |canvas: &Canvas, text: &str, cy: f32| {
+            let font = styles::BODY.font();
+            Label::new(ellipsize(&font, text, label_w - 12.0))
+                .with_style(styles::BODY)
+                .with_color(theme.text_primary)
+                .centered_on(card.left + 18.0, cy)
+                .render(canvas);
+        };
+        let rule = |canvas: &Canvas, row: usize| {
+            let y = row_cy(row) + PARAM_ROW_H / 2.0;
+            canvas.draw_line(
+                Point::new(card.left + 18.0, y),
+                Point::new(card.right - 18.0, y),
+                &stroke(theme.hairline, 1.0),
+            );
+        };
+        let dragging = match self.effects.drag {
+            Some(EffectDrag::Param { index, .. }) => Some(index),
+            _ => None,
+        };
+
+        // The impulse response file, and Choose File….
+        let cy = row_cy(0);
+        label(canvas, t!("audio-effects-impulse"), cy);
+        let choose = t!("audio-effects-choose-file");
+        let w = push_button::width(choose);
+        let button = Rect::from_xywh(
+            card.right - 18.0 - w,
+            cy - push_button::HEIGHT / 2.0,
+            w,
+            push_button::HEIGHT,
+        );
+        self.button(
+            canvas,
+            button,
+            choose,
+            Action::Effect(EffectAction::ChooseImpulse),
+            true,
+            theme,
+        );
+        let (file, ink) = match &effect.impulse {
+            Some(name) => (file_name(name), theme.text_primary),
+            None => (
+                t!("audio-effects-impulse-none").to_string(),
+                theme.text_secondary,
+            ),
+        };
+        let left = card.left + 18.0 + label_w;
+        let font = styles::BODY.font();
+        Label::new(ellipsize(
+            &font,
+            &file,
+            (button.left - 12.0 - left).max(40.0),
+        ))
+        .with_style(styles::BODY)
+        .with_color(ink)
+        .centered_on(left, cy)
+        .render(canvas);
+        rule(canvas, 0);
+
+        // The high-pass: its switch, then its frequency.
+        let cy = row_cy(1);
+        label(canvas, t!("audio-effects-param-highpass"), cy);
+        let switch = Rect::from_xywh(
+            left,
+            cy - toggle::HEIGHT / 2.0,
+            toggle::WIDTH,
+            toggle::HEIGHT,
+        );
+        toggle::draw(
+            canvas,
+            switch,
+            toggle::knob_fraction_for(effect.highpass),
+            ToggleInteraction::Normal,
+            theme,
+        );
+        self.targets
+            .push((switch, Action::Effect(EffectAction::Highpass)));
+        let track = Rect::from_ltrb(
+            switch.right + 16.0,
+            cy - slider::KNOB_RADIUS,
+            card.right - 18.0 - PARAM_READOUT_W,
+            cy + slider::KNOB_RADIUS,
+        );
+        self.param_slider(
+            canvas,
+            track,
+            1,
+            &highpass,
+            effect,
+            effect.highpass,
+            dragging == Some(1),
+            theme,
+        );
+        rule(canvas, 1);
+
+        // The output gain.
+        let cy = row_cy(2);
+        label(canvas, param_label(effect.kind, &gain), cy);
+        let track = Rect::from_ltrb(
+            left,
+            cy - slider::KNOB_RADIUS,
+            card.right - 18.0 - PARAM_READOUT_W,
+            cy + slider::KNOB_RADIUS,
+        );
+        self.param_slider(
+            canvas,
+            track,
+            0,
+            &gain,
+            effect,
+            true,
+            dragging == Some(0),
+            theme,
+        );
+
+        let mut lines = Vec::new();
+        let font = styles::SUBHEADLINE.font();
+        if let Some(note) = &self.effects.note {
+            lines.extend(wrap(&font, note, area.width(), 3));
+        }
+        lines.extend(wrap(&font, kind_about(effect.kind), area.width(), 3));
+        for (i, line) in lines.iter().enumerate() {
+            Label::new(line)
+                .with_style(styles::SUBHEADLINE)
+                .with_color(theme.text_secondary)
+                .centered_on(area.left, card.bottom + 20.0 + i as f32 * 16.0)
+                .render(canvas);
+        }
+    }
+
+    /// One parameter's slider on `track` and its readout after it. An
+    /// inactive one is drawn but takes no presses.
+    #[expect(clippy::too_many_arguments, reason = "one call shape for every slider")]
+    fn param_slider(
+        &mut self,
+        canvas: &Canvas,
+        track: Rect,
+        index: usize,
+        spec: &ParamSpec,
+        effect: &Effect,
+        active: bool,
+        pressed: bool,
+        theme: &Theme,
+    ) {
+        let value = effect.param(spec);
+        let interaction = if pressed {
+            SliderInteraction::Pressed
         } else {
-            self.draw_params(canvas, rest, effect, theme);
+            SliderInteraction::Normal
+        };
+        if !active {
+            canvas.save_layer_alpha(None, 0x66);
+        }
+        slider::draw(
+            canvas,
+            track,
+            value,
+            spec.min,
+            spec.max,
+            None,
+            interaction,
+            theme,
+        );
+        if !active {
+            canvas.restore();
+        }
+        Label::new(param_text(spec, value))
+            .with_style(styles::SUBHEADLINE)
+            .with_color(if active {
+                theme.text_secondary
+            } else {
+                theme.text_tertiary
+            })
+            .centered_on(track.right + 16.0, track.center_y())
+            .render(canvas);
+        if active {
+            self.targets.push((
+                track.with_outset((slider::KNOB_RADIUS, 6.0)),
+                Action::Effect(EffectAction::Param(index)),
+            ));
         }
     }
 
@@ -512,7 +778,7 @@ impl Ui {
             steps.reverse();
         }
 
-        let font = styles::CAPTION_1.font();
+        let font = styles::SUBHEADLINE.font();
         let mut x = start.x;
         let mut previous: Option<Step> = None;
         for (text, step) in &steps {
@@ -545,9 +811,9 @@ impl Ui {
             canvas.draw_rrect(rr, &fill(ground));
             Label::new(text)
                 .with_style(if own {
-                    styles::CAPTION_1_EMPHASIZED
+                    styles::SUBHEADLINE_EMPHASIZED
                 } else {
-                    styles::CAPTION_1
+                    styles::SUBHEADLINE
                 })
                 .with_color(ink)
                 .centered_at(chip.center_x(), chip.center_y())
@@ -629,10 +895,10 @@ impl Ui {
             .note
             .clone()
             .unwrap_or_else(|| t!("audio-effects-hint").to_string());
-        let font = styles::FOOTNOTE.font();
+        let font = styles::SUBHEADLINE.font();
         for (i, line) in wrap(&font, &note, area.width(), 2).iter().enumerate() {
             Label::new(line)
-                .with_style(styles::FOOTNOTE)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_secondary)
                 .centered_on(area.left, bottom + 18.0 + i as f32 * 16.0)
                 .render(canvas);
@@ -653,18 +919,18 @@ impl Ui {
 
         // The preamp, scrubbed like a band's values.
         let value = db_text(effect.preamp);
-        let value_font = styles::FOOTNOTE_EMPHASIZED.font();
+        let value_font = styles::SUBHEADLINE_EMPHASIZED.font();
         let value_w = value_font.measure_str(&value, None).0;
         let label = t!("audio-effects-preamp");
-        let label_w = styles::FOOTNOTE.font().measure_str(label, None).0;
+        let label_w = styles::SUBHEADLINE.font().measure_str(label, None).0;
         let vx = card.right - 16.0 - value_w;
         Label::new(value)
-            .with_style(styles::FOOTNOTE_EMPHASIZED)
+            .with_style(styles::SUBHEADLINE_EMPHASIZED)
             .with_color(theme.text_primary)
             .centered_on(vx, card.top + 18.0)
             .render(canvas);
         Label::new(label)
-            .with_style(styles::FOOTNOTE)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_secondary)
             .centered_on(vx - 6.0 - label_w, card.top + 18.0)
             .render(canvas);
@@ -685,6 +951,15 @@ impl Ui {
             card.bottom - 26.0,
         );
         self.effects.plot = plot;
+        let fitted = plot_range(effect, plot);
+        // While a point is dragged the scale only grows, so the point stays
+        // under the pointer.
+        let range = if matches!(self.effects.drag, Some(EffectDrag::Point(_))) {
+            fitted.max(self.effects.range)
+        } else {
+            fitted
+        };
+        self.effects.range = range;
         self.targets
             .push((plot, Action::Effect(EffectAction::Plot)));
         let grid = stroke(theme.hairline, 1.0);
@@ -704,18 +979,34 @@ impl Ui {
             canvas.draw_line(Point::new(x, plot.top), Point::new(x, plot.bottom), &grid);
             caption(canvas, &freq_short(freq), x, plot.bottom + 12.0, true);
         }
-        for db in [-12.0, -6.0, 6.0, 12.0] {
-            let y = y_of(plot, db);
+        let lines = grid_step(range);
+        let marks = (range / lines).floor() as i32;
+        for db in (-marks..=marks)
+            .filter(|m| *m != 0)
+            .map(|m| m as f32 * lines)
+        {
+            let y = y_of(plot, range, db);
             canvas.draw_line(Point::new(plot.left, y), Point::new(plot.right, y), &grid);
         }
-        let zero = y_of(plot, 0.0);
+        let zero = y_of(plot, range, 0.0);
         canvas.draw_line(
             Point::new(plot.left, zero),
             Point::new(plot.right, zero),
             &stroke(theme.fill_secondary, 1.0),
         );
-        for (db, text) in [(12.0, "+12"), (0.0, "0"), (-12.0, "\u{2212}12")] {
-            caption(canvas, text, card.left + 12.0, y_of(plot, db), false);
+        let top = ((range - 0.01) / lines).floor() * lines;
+        for (db, text) in [
+            (top, format!("+{top:.0}")),
+            (0.0, "0".to_string()),
+            (-top, format!("\u{2212}{top:.0}")),
+        ] {
+            caption(
+                canvas,
+                &text,
+                card.left + 12.0,
+                y_of(plot, range, db),
+                false,
+            );
         }
 
         // The curve, and the area between it and 0 dB.
@@ -728,7 +1019,7 @@ impl Ui {
         for i in 0..=steps {
             let x = plot.left + plot.width() * i as f32 / steps as f32;
             let db = response_db(effect.preamp, &effect.bands, freq_at(plot, x));
-            let y = y_of(plot, db);
+            let y = y_of(plot, range, db);
             if i == 0 {
                 line.move_to((x, y));
             } else {
@@ -786,6 +1077,7 @@ impl Ui {
     /// on the curve for a filter with no gain.
     fn point_of(&self, effect: &Effect, band: &Band) -> Point {
         let plot = self.effects.plot;
+        let range = self.effects.range;
         let db = if band.kind.has_gain() {
             band.gain
         } else {
@@ -793,7 +1085,7 @@ impl Ui {
         };
         Point::new(
             x_of(plot, band.freq),
-            y_of(plot, db.clamp(-DB_RANGE, DB_RANGE)),
+            y_of(plot, range, db.clamp(-range, range)),
         )
     }
 
@@ -818,12 +1110,12 @@ impl Ui {
         let left = card.left + 12.0;
         let head = card.top + 18.0;
         let title = t_owned!("audio-effects-band", number = index + 1);
-        let title_w = styles::FOOTNOTE_EMPHASIZED
+        let title_w = styles::SUBHEADLINE_EMPHASIZED
             .font()
             .measure_str(&title, None)
             .0;
         Label::new(title)
-            .with_style(styles::FOOTNOTE_EMPHASIZED)
+            .with_style(styles::SUBHEADLINE_EMPHASIZED)
             .with_color(theme.text_primary)
             .centered_on(left, head)
             .render(canvas);
@@ -845,13 +1137,13 @@ impl Ui {
         );
         self.targets
             .push((close, Action::Effect(EffectAction::RemoveBand(index))));
-        let font = styles::CAPTION_1.font();
+        let font = styles::SUBHEADLINE.font();
         let kind = format!("{} ▾", band_label(band.kind));
         let kind = ellipsize(&font, &kind, close.left - 10.0 - left - title_w);
         let kind_w = font.measure_str(&kind, None).0;
         let kind_x = close.left - 4.0 - kind_w;
         Label::new(kind)
-            .with_style(styles::CAPTION_1)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_secondary)
             .centered_on(kind_x, head)
             .render(canvas);
@@ -873,12 +1165,12 @@ impl Ui {
         for (row, (label, value, field)) in rows.into_iter().enumerate() {
             let cy = card.top + 44.0 + row as f32 * 20.0;
             Label::new(label)
-                .with_style(styles::CAPTION_1)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_tertiary)
                 .centered_on(left, cy)
                 .render(canvas);
             Label::new(value)
-                .with_style(styles::FOOTNOTE)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_primary)
                 .centered_on(left + 44.0, cy)
                 .render(canvas);
@@ -899,7 +1191,6 @@ impl Ui {
         canvas.draw_rrect(rr, &fill(graph_view::card_ground(theme)));
         canvas.draw_rrect(rr, &stroke(theme.hairline, 1.0));
         let label_w = 170.0;
-        let readout_w = 84.0;
         let dragging = match self.effects.drag {
             Some(EffectDrag::Param { index, .. }) => Some(index),
             _ => None,
@@ -919,34 +1210,19 @@ impl Ui {
             let track = Rect::from_ltrb(
                 card.left + 18.0 + label_w,
                 cy - slider::KNOB_RADIUS,
-                card.right - 18.0 - readout_w,
+                card.right - 18.0 - PARAM_READOUT_W,
                 cy + slider::KNOB_RADIUS,
             );
-            let value = effect.param(spec);
-            let interaction = if dragging == Some(index) {
-                SliderInteraction::Pressed
-            } else {
-                SliderInteraction::Normal
-            };
-            slider::draw(
+            self.param_slider(
                 canvas,
                 track,
-                value,
-                spec.min,
-                spec.max,
-                None,
-                interaction,
+                index,
+                spec,
+                effect,
+                true,
+                dragging == Some(index),
                 theme,
             );
-            Label::new(param_text(spec, value))
-                .with_style(styles::FOOTNOTE)
-                .with_color(theme.text_secondary)
-                .centered_on(track.right + 16.0, cy)
-                .render(canvas);
-            self.targets.push((
-                track.with_outset((slider::KNOB_RADIUS, 6.0)),
-                Action::Effect(EffectAction::Param(index)),
-            ));
             if index + 1 < specs.len() {
                 let y = cy + PARAM_ROW_H / 2.0;
                 canvas.draw_line(
@@ -957,10 +1233,10 @@ impl Ui {
             }
         }
         if let Some(about) = about_effect(effect.kind) {
-            let font = styles::FOOTNOTE.font();
+            let font = styles::SUBHEADLINE.font();
             for (i, line) in wrap(&font, about, area.width(), 3).iter().enumerate() {
                 Label::new(line)
-                    .with_style(styles::FOOTNOTE)
+                    .with_style(styles::SUBHEADLINE)
                     .with_color(theme.text_secondary)
                     .centered_on(area.left, card.bottom + 20.0 + i as f32 * 16.0)
                     .render(canvas);
@@ -1021,9 +1297,9 @@ impl Ui {
                     t_owned!("audio-effects-missing", package = *package)
                 }
             };
-            let font = styles::FOOTNOTE.font();
+            let font = styles::SUBHEADLINE.font();
             Label::new(ellipsize(&font, &about, row.width() - 44.0))
-                .with_style(styles::FOOTNOTE)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(if ready {
                     theme.text_secondary
                 } else {
@@ -1038,10 +1314,10 @@ impl Ui {
             y += FORM_KIND_H;
         }
 
-        let label_font = styles::SUBHEADLINE.font();
+        let label_font = styles::BODY.font();
         let row_label = |canvas: &Canvas, text: &str, cy: f32| {
             Label::new(ellipsize(&label_font, text, FORM_LABEL_W - 8.0))
-                .with_style(styles::SUBHEADLINE)
+                .with_style(styles::BODY)
                 .with_color(theme.text_secondary)
                 .centered_on(left, cy)
                 .render(canvas);
@@ -1301,7 +1577,7 @@ impl Ui {
             EffectDrag::Point(band) => {
                 let plot = self.effects.plot;
                 let freq = freq_at(plot, p.x.clamp(plot.left, plot.right));
-                let gain = db_at(plot, p.y.clamp(plot.top, plot.bottom));
+                let gain = db_at(plot, self.effects.range, p.y.clamp(plot.top, plot.bottom));
                 self.change_effect(&id, true, |e| {
                     if let Some(b) = e.bands.get_mut(band) {
                         b.freq = freq;
@@ -1498,7 +1774,13 @@ impl Ui {
                 self.effects.band = None;
                 self.effects.note = None;
             }
-            EffectAction::Import => self.import_autoeq(&id),
+            EffectAction::Import => self.open_file_dialog(&id, ImportFor::AutoEq),
+            EffectAction::ChooseImpulse => {
+                self.effects.pending_preset = None;
+                self.open_file_dialog(&id, ImportFor::Impulse);
+            }
+            EffectAction::ImportPreset => self.open_file_dialog(&id, ImportFor::Preset),
+            EffectAction::Highpass => self.change_effect(&id, false, |e| e.highpass = !e.highpass),
             EffectAction::Band(band) => self.effects.band = Some(band),
             EffectAction::BandType(band, kind) => self.change_effect(&id, false, |e| {
                 if let Some(b) = e.bands.get_mut(band) {
@@ -1542,14 +1824,7 @@ impl Ui {
             return;
         };
         let kind = self.effects.form_kind;
-        let base = kind_label(kind);
-        let taken = |name: &str| self.routing.effects().iter().any(|e| e.name == name);
-        let mut name = base.to_string();
-        let mut n = 2;
-        while taken(&name) {
-            name = format!("{base} {n}");
-            n += 1;
-        }
+        let name = self.free_effect_name(kind_label(kind));
         let id = self
             .routing
             .add_effect(&name, kind, self.effects.form_side, &device);
@@ -1560,20 +1835,47 @@ impl Ui {
         self.effects.note = None;
     }
 
-    /// Ask for an AutoEQ file through the portal; the answer comes back in
+    /// `base`, or `base 2`, `base 3`… when an effect has that name.
+    fn free_effect_name(&self, base: &str) -> String {
+        let taken = |name: &str| self.routing.effects().iter().any(|e| e.name == name);
+        let mut name = base.to_string();
+        let mut n = 2;
+        while taken(&name) {
+            name = format!("{base} {n}");
+            n += 1;
+        }
+        name
+    }
+
+    /// Ask for a file through the portal: an AutoEQ profile, an impulse
+    /// response or an EasyEffects preset. The answer comes back in
     /// [`Ui::poll_import`].
-    fn import_autoeq(&mut self, id: &str) {
-        let answer = Arc::clone(&self.effects.import);
-        let id = id.to_string();
-        let spawned = Request::open_file(t!("audio-effects-import-title"))
-            .filter(
+    fn open_file_dialog(&mut self, id: &str, what: ImportFor) {
+        let request = match what {
+            ImportFor::AutoEq => Request::open_file(t!("audio-effects-import-title")).filter(
                 t!("audio-effects-import-filter"),
                 &[Rule::Glob("*.txt".into())],
-            )
+            ),
+            ImportFor::Impulse => Request::open_file(t!("audio-effects-impulse-title")).filter(
+                t!("audio-effects-impulse-filter"),
+                &[
+                    Rule::Glob("*.irs".into()),
+                    Rule::Glob("*.wav".into()),
+                    Rule::Glob("*.flac".into()),
+                ],
+            ),
+            ImportFor::Preset => Request::open_file(t!("audio-effects-easyeffects-title")).filter(
+                t!("audio-effects-easyeffects-filter"),
+                &[Rule::Glob("*.json".into())],
+            ),
+        };
+        let answer = Arc::clone(&self.effects.import);
+        let id = id.to_string();
+        let spawned = request
             .filter(t!("audio-effects-import-all"), &[Rule::Glob("*".into())])
             .spawn(move |outcome| {
                 if let Ok(mut answer) = answer.lock() {
-                    *answer = Some((id, outcome));
+                    *answer = Some((id, what, outcome));
                 }
             });
         if let Err(error) = spawned {
@@ -1584,24 +1886,176 @@ impl Ui {
     /// Apply an import the dialog answered; returns whether to redraw.
     pub fn poll_import(&mut self) -> bool {
         let answer = self.effects.import.lock().ok().and_then(|mut a| a.take());
-        let Some((id, outcome)) = answer else {
+        let Some((id, what, outcome)) = answer else {
             return false;
         };
         let path = match outcome {
             Outcome::Chosen(paths) => paths.into_iter().next(),
-            Outcome::Dismissed => None,
+            Outcome::Dismissed => {
+                tracing::debug!(?what, "the file dialog was dismissed");
+                None
+            }
             Outcome::Failed(why) => {
                 tracing::warn!(why, "the file dialog failed");
                 None
             }
         };
         let Some(path) = path else {
+            // A preset still waiting for its impulse response is dropped.
+            if what == ImportFor::Impulse && self.effects.pending_preset.take().is_some() {
+                self.effects.note = Some(t!("audio-effects-easyeffects-stopped").to_string());
+                return true;
+            }
             return false;
         };
-        let text = std::fs::metadata(&path)
+        match what {
+            ImportFor::AutoEq => self.apply_autoeq(&id, &path),
+            ImportFor::Preset => self.read_preset(&id, &path),
+            ImportFor::Impulse => match self.effects.pending_preset.take() {
+                Some((pending, preset)) if pending == id => {
+                    self.apply_preset(&id, &preset, &path);
+                }
+                _ => {
+                    if let Some(name) = self.copy_impulse(&path) {
+                        self.change_effect(&id, false, |e| e.impulse = Some(name));
+                        self.effects.note = None;
+                    }
+                }
+            },
+        }
+        true
+    }
+
+    /// Copy the impulse response at `path` into Otto's data folder; its
+    /// file name there, or `None` with a note saying why not.
+    fn copy_impulse(&mut self, path: &Path) -> Option<String> {
+        match import_impulse(path) {
+            Ok(name) => Some(name),
+            Err(error) => {
+                tracing::warn!(%error, path = %path.display(), "could not copy the impulse response");
+                self.effects.note = Some(t!("audio-effects-impulse-failed").to_string());
+                None
+            }
+        }
+    }
+
+    /// Read the EasyEffects preset at `path` for the effect `id`, and apply
+    /// it when its impulse response is found; otherwise ask for that file.
+    fn read_preset(&mut self, id: &str, path: &Path) {
+        let text = std::fs::metadata(path)
             .ok()
             .filter(|m| m.len() <= MAX_IMPORT_BYTES)
-            .and_then(|_| std::fs::read_to_string(&path).ok());
+            .and_then(|_| std::fs::read_to_string(path).ok());
+        let Some(text) = text else {
+            self.effects.note = Some(t!("audio-effects-import-unreadable").to_string());
+            return;
+        };
+        let preset = match parse_easyeffects(&text) {
+            Ok(preset) => preset,
+            Err(error) => {
+                tracing::warn!(%error, path = %path.display(), "not a usable EasyEffects preset");
+                self.effects.note = Some(t!("audio-effects-easyeffects-failed").to_string());
+                return;
+            }
+        };
+        match find_kernel(path, &preset.kernel) {
+            Some(kernel) => self.apply_preset(id, &preset, &kernel),
+            None => {
+                tracing::debug!(
+                    kernel = preset.kernel,
+                    "the preset's impulse response is not beside it"
+                );
+                self.effects.note = Some(t_owned!(
+                    "audio-effects-easyeffects-find-kernel",
+                    file = file_name(&preset.kernel)
+                ));
+                self.effects.pending_preset = Some((id.to_string(), preset));
+                self.open_file_dialog(id, ImportFor::Impulse);
+            }
+        }
+    }
+
+    /// Apply an EasyEffects preset to the speaker correction `id`, with the
+    /// impulse response at `kernel`: the file, the high-pass and the gain,
+    /// and its limiter as a Limiter after the effect.
+    fn apply_preset(&mut self, id: &str, preset: &EasyEffects, kernel: &Path) {
+        let Some(name) = self.copy_impulse(kernel) else {
+            return;
+        };
+        let highpass = preset.highpass;
+        let gain = preset.gain;
+        let file = name.clone();
+        self.change_effect(id, false, |e| {
+            e.impulse = Some(name);
+            e.highpass = highpass.is_some();
+            if let Some(freq) = highpass {
+                e.params.insert("highpass-freq".into(), freq);
+            }
+            e.params.insert("gain".into(), gain);
+        });
+        let mut skipped: Vec<String> = preset.skipped.iter().map(|p| plugin_label(p)).collect();
+        let mut limited = false;
+        if let Some(limiter) = preset.limiter {
+            if support(EffectKind::Limiter) == Support::Ready {
+                limited = self.limiter_after(id, |e| {
+                    e.params.insert("input-gain".into(), limiter.input_gain);
+                    e.params.insert("limit".into(), limiter.limit);
+                    e.params.insert("release".into(), limiter.release);
+                });
+            } else {
+                skipped.push(plugin_label("limiter"));
+            }
+        }
+        let imported = if limited {
+            t_owned!("audio-effects-easyeffects-imported-limiter", file = file)
+        } else {
+            t_owned!("audio-effects-easyeffects-imported", file = file)
+        };
+        self.effects.note = Some(if skipped.is_empty() {
+            imported
+        } else {
+            t_owned!(
+                "audio-effects-easyeffects-skipped",
+                imported = imported,
+                skipped = skipped.join(", ")
+            )
+        });
+    }
+
+    /// Set the Limiter right after the effect `id` with `change`, adding one
+    /// when there is none; `false` when there is no effect `id`.
+    fn limiter_after(&mut self, id: &str, change: impl FnOnce(&mut Effect)) -> bool {
+        let Some(effect) = self.routing.effect(id) else {
+            return false;
+        };
+        let existing = self
+            .effect_named(&effect.device)
+            .filter(|under| under.kind == EffectKind::Limiter)
+            .map(|under| under.id.clone());
+        let limiter = match existing {
+            Some(limiter) => limiter,
+            None => {
+                let name = self.free_effect_name(kind_label(EffectKind::Limiter));
+                let Some(limiter) = self
+                    .routing
+                    .add_effect_after(id, &name, EffectKind::Limiter)
+                else {
+                    return false;
+                };
+                limiter
+            }
+        };
+        self.routing.update_effect(&limiter, change);
+        self.save_routing_file();
+        true
+    }
+
+    /// Read the AutoEQ profile at `path` into the equaliser `id`.
+    fn apply_autoeq(&mut self, id: &str, path: &Path) {
+        let text = std::fs::metadata(path)
+            .ok()
+            .filter(|m| m.len() <= MAX_IMPORT_BYTES)
+            .and_then(|_| std::fs::read_to_string(path).ok());
         let parsed = text.as_deref().map(parse_autoeq);
         match parsed {
             Some(Ok(eq)) => {
@@ -1614,7 +2068,7 @@ impl Ui {
                     })
                     .unwrap_or_default();
                 let count = eq.bands.len();
-                self.change_effect(&id, false, |e| {
+                self.change_effect(id, false, |e| {
                     e.preamp = eq.preamp;
                     e.bands = eq.bands;
                     e.preset = Some(t_owned!("audio-effects-preset-autoeq", name = name));
@@ -1638,16 +2092,17 @@ impl Ui {
                 self.effects.note = Some(t!("audio-effects-import-unreadable").to_string());
             }
         }
-        true
     }
 
     /// Fill the section for the `--png` preview, without writing the
-    /// routing file: an equaliser like the design's, a limiter after it and
-    /// noise suppression on the microphone.
-    pub fn preview_effects(&mut self) {
+    /// routing file: an equaliser like the design's, a limiter after it,
+    /// noise suppression on the microphone and a speaker correction. Shows
+    /// the equaliser, or the sample at `select` in the routing's order.
+    pub fn preview_effects(&mut self, select: Option<usize>) {
         if !self.routing.effects().is_empty() {
             return;
         }
+        self.effects.previewing = true;
         let sink = self
             .graph
             .default_name(Endpoint::Output)
@@ -1699,8 +2154,43 @@ impl Ui {
             EffectSide::Input,
             &source,
         );
+        let speakers = self.routing.add_effect(
+            t!("audio-effects-kind-speaker"),
+            EffectKind::SpeakerCorrection,
+            EffectSide::Output,
+            &sink,
+        );
+        self.routing.update_effect(&speakers, |e| {
+            e.impulse = Some(SAMPLE_IMPULSE.to_string());
+            e.highpass = true;
+            e.params.insert("highpass-freq".into(), 60.0);
+            e.params.insert("gain".into(), 6.0);
+        });
         self.effects.selected = Some(eq);
         self.effects.band = Some(3);
+        if let Some(effect) = select.and_then(|i| self.routing.effects().get(i)) {
+            self.effects.selected = Some(effect.id.clone());
+            self.effects.band = None;
+        }
+    }
+}
+
+/// The last part of a path, as a file is shown.
+fn file_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+/// An EasyEffects plugin's name, as a skipped import lists it.
+fn plugin_label(plugin: &str) -> String {
+    match plugin {
+        "bass_enhancer" => t!("audio-effects-ee-bass-enhancer").to_string(),
+        "multiband_compressor" => t!("audio-effects-ee-multiband-compressor").to_string(),
+        "stereo_tools" => t!("audio-effects-ee-stereo-tools").to_string(),
+        "limiter" => t!("audio-effects-ee-limiter").to_string(),
+        "filter" => t!("audio-effects-ee-filter").to_string(),
+        other => other.replace('_', " "),
     }
 }
 
@@ -1773,12 +2263,41 @@ fn freq_at(plot: Rect, x: f32) -> f32 {
     MIN_FREQ * (MAX_FREQ / MIN_FREQ).powf(t)
 }
 
-fn y_of(plot: Rect, db: f32) -> f32 {
-    plot.center_y() - db / DB_RANGE * plot.height() / 2.0
+fn y_of(plot: Rect, range: f32, db: f32) -> f32 {
+    plot.center_y() - db / range * plot.height() / 2.0
 }
 
-fn db_at(plot: Rect, y: f32) -> f32 {
-    (plot.center_y() - y) / (plot.height() / 2.0).max(1.0) * DB_RANGE
+fn db_at(plot: Rect, range: f32, y: f32) -> f32 {
+    (plot.center_y() - y) / (plot.height() / 2.0).max(1.0) * range
+}
+
+/// The dB above and below 0 that shows all of `effect`'s curve across
+/// `plot` and every band's gain, with a little room, in [`DB_STEP`]s.
+fn plot_range(effect: &Effect, plot: Rect) -> f32 {
+    let steps = (plot.width() / 4.0).max(8.0) as usize;
+    let curve = (0..=steps)
+        .map(|i| {
+            let x = plot.left + plot.width() * i as f32 / steps as f32;
+            response_db(effect.preamp, &effect.bands, freq_at(plot, x)).abs()
+        })
+        .fold(0.0_f32, f32::max);
+    let gains = effect
+        .bands
+        .iter()
+        .filter(|b| b.kind.has_gain())
+        .map(|b| b.gain.abs())
+        .fold(0.0_f32, f32::max);
+    let needed = curve.max(gains) + 2.0;
+    ((needed / DB_STEP).ceil() * DB_STEP).clamp(DB_RANGE, MAX_DB_RANGE)
+}
+
+/// How far apart the plot's dB lines are: 6 dB, or 12 once the range is wide.
+fn grid_step(range: f32) -> f32 {
+    if range > 24.0 {
+        12.0
+    } else {
+        6.0
+    }
 }
 
 /// A gain as people read it: +4.0 dB, −3.0 dB, with a true minus sign.
@@ -1814,6 +2333,7 @@ fn param_text(spec: &ParamSpec, value: f32) -> String {
         Unit::Seconds => t_owned!("audio-effects-seconds", value = format!("{value:.2}")),
         Unit::Ratio => t_owned!("audio-effects-ratio", value = format!("{value:.1}")),
         Unit::Percent => t_owned!("audio-effects-percent", value = format!("{value:.0}")),
+        Unit::Hertz => freq_text(value),
     }
 }
 
@@ -1823,6 +2343,7 @@ fn kind_label(kind: EffectKind) -> &'static str {
         EffectKind::Limiter => t!("audio-effects-kind-limiter"),
         EffectKind::Compressor => t!("audio-effects-kind-compressor"),
         EffectKind::NoiseSuppression => t!("audio-effects-kind-noise"),
+        EffectKind::SpeakerCorrection => t!("audio-effects-kind-speaker"),
     }
 }
 
@@ -1832,6 +2353,7 @@ fn kind_about(kind: EffectKind) -> &'static str {
         EffectKind::Limiter => t!("audio-effects-about-limiter"),
         EffectKind::Compressor => t!("audio-effects-about-compressor"),
         EffectKind::NoiseSuppression => t!("audio-effects-about-noise"),
+        EffectKind::SpeakerCorrection => t!("audio-effects-about-speaker"),
     }
 }
 
@@ -1871,6 +2393,8 @@ fn param_label(kind: EffectKind, spec: &ParamSpec) -> &'static str {
         (EffectKind::Compressor, "makeup") => t!("audio-effects-param-makeup"),
         (EffectKind::NoiseSuppression, "threshold") => t!("audio-effects-param-voice-threshold"),
         (EffectKind::NoiseSuppression, "grace") => t!("audio-effects-param-grace"),
+        (EffectKind::SpeakerCorrection, "gain") => t!("audio-effects-param-output-gain"),
+        (EffectKind::SpeakerCorrection, "highpass-freq") => t!("audio-effects-param-highpass"),
         _ => spec.key,
     }
 }
@@ -1915,8 +2439,10 @@ mod tests {
         }
         assert_eq!(x_of(plot, 20.0), plot.left);
         assert_eq!(x_of(plot, 20_000.0), plot.right);
-        assert!((db_at(plot, y_of(plot, 6.0)) - 6.0).abs() < 1e-4);
-        assert_eq!(y_of(plot, DB_RANGE), plot.top);
+        for range in [DB_RANGE, 30.0] {
+            assert!((db_at(plot, range, y_of(plot, range, 6.0)) - 6.0).abs() < 1e-4);
+            assert_eq!(y_of(plot, range, range), plot.top);
+        }
     }
 
     #[test]

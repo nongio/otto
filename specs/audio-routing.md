@@ -84,8 +84,10 @@ and its output ports on the right, and links as wires between them.
   user has moved stays where it was put, remembered by the node's identity
   (see Identity), across launches. A new node with no remembered place is
   placed at the end of its column without moving any other card.
-- **Media filter.** Toggles for Audio, MIDI and Video show and hide those
-  nodes and their links. Audio and MIDI are on by default, Video off.
+- **Media filter.** Chips for Audio, MIDI and Video show and hide those
+  nodes and their links. Audio and MIDI are on by default, Video off. They
+  float at the canvas's top left on a rounded material, so the canvas pans
+  under them; pressing them, or between them, never pans or selects.
 - **Channels.** A node's ports are folded by default into one port per
   direction, and the links between two folded nodes into one wire labelled
   with the channel count when it is not two. Unfolding a card shows every
@@ -105,7 +107,8 @@ and its output ports on the right, and links as wires between them.
   latency, state (running, idle, suspended) and every PipeWire property in a
   collapsible list.
 - **Save.** A link made by hand is temporary until saved. Temporary wires
-  are drawn dashed, saved wires solid. **Save link** on a wire, or
+  are drawn dashed, saved wires solid; a small legend floating at the
+  canvas's bottom left says which is which. **Save link** on a wire, or
   **Save routing** for everything on the canvas, saves them into the current
   setup. A saved link can be **Forgotten**, which keeps the wire until it is
   removed but no longer restores it.
@@ -115,6 +118,11 @@ and its output ports on the right, and links as wires between them.
   description matches, dimming the others.
 - **Navigation.** The canvas pans with two-finger scroll or a middle-button
   drag and zooms with pinch or Cmd+scroll. Cmd+0 fits every visible card.
+- **Toolbar.** The view switch on the left and the actions on the right
+  (Save routing, Fit on the Patchbay, and a selected wire's Save, Forget
+  and Remove); nothing else. The service banner sits under it, and the
+  filter chips and legend inside the canvas below that, left of the details
+  panel.
 - **Views.** A switch in the toolbar shows the routing three ways:
   **Patchbay** (the canvas above), **Matrix** and **Lanes**. The view last
   chosen is remembered across launches. The media filter, the toolbar's
@@ -125,7 +133,9 @@ and its output ports on the right, and links as wires between them.
     ports, so it is per channel when the card is unfolded. Each cell marks
     whether the pair is linked: a filled dot when the link is saved, a ring
     when it is not, an empty ring when it is not linked; a node's own cell
-    is hatched, and pairs of different media are blank. Pressing an empty
+    is hatched, and pairs of different media are blank. The filter chips
+    sit in a band above the headers and the legend (filled dot, ring) in
+    one under the grid, so neither covers a header or cell. Pressing an empty
     ring links the pair with the channels paired as a patchbay drag pairs
     them; pressing a linked cell selects that wire. Pressing a header
     selects the node. The grid scrolls both ways when it does not fit, the
@@ -137,7 +147,9 @@ and its output ports on the right, and links as wires between them.
     not saved, and each lane says whether all of it is saved. A loop ends
     the lane where it would come back. Pressing a step selects the node.
     Lanes are read-only for linking: links are made on the Patchbay or the
-    Matrix. The list scrolls when it does not fit.
+    Matrix. The list scrolls when it does not fit, under a band at the top
+    that holds the filter chips; each lane says in words whether it is saved,
+    so Lanes have no legend.
 
 A link the app did not make, such as one WirePlumber made, is drawn like a
 temporary wire and can be saved like one.
@@ -230,8 +242,9 @@ The kinds are:
 - **Dynamics**: compressor and limiter, for loudness levelling.
 - **Noise suppression**: for microphones. Offered only when a suppression
   plugin is installed; otherwise the kind says which package provides it.
-- **Convolution**: an impulse response file, for room correction or
-  headphone virtualisation.
+- **Speaker correction**: an impulse response file (convolution), for the
+  speaker tuning a laptop maker ships, room correction or headphone
+  virtualisation, with an optional high-pass before it.
 
 Effects can be chained: an effect's output can be another effect. Every
 parameter change is heard immediately, without a gap in the sound. Each
@@ -450,9 +463,9 @@ only the sections that exist. Where it consciously differs from the above:
   list does not scroll. The section lists each device's state from its node;
   with the service off it says the devices need it, and they are still
   added, renamed and removed in the file.
-- **Effects.** Four kinds: a parametric *equaliser* of up to 10 bands (low
+- **Effects.** Five kinds: a parametric *equaliser* of up to 10 bands (low
   shelf, peak, high shelf, low-pass, high-pass) and a preamp, a *limiter*, a
-  *compressor* and *noise suppression*; no convolution yet. Each is a filter
+  *compressor*, *noise suppression* and *speaker correction*. Each is a filter
   chain (`libpipewire-module-filter-chain`) the service loads into its own
   context, kept in the routing file as `[[effect]]` with its kind, name,
   side, the `node.name` of the device it sits on, On, and its values
@@ -475,6 +488,26 @@ only the sections that exist. Where it consciously differs from the above:
     on the node itself and writes the file when the drag ends; the service
     sets them from the file otherwise. Only a new name, kind, side or device
     makes the chain again, which interrupts the sound on it for a moment.
+  - **Speaker correction.** PipeWire's builtins only: per channel two
+    `bq_raw` biquads (a 24 dB/octave Butterworth high-pass, passing sound
+    unchanged while the high-pass is off), then the `convolver` builtin,
+    then the wet/dry mixer, whose wet gain is the output gain (±12 dB). The
+    high-pass switch and frequency (20 to 300 Hz), the output gain and On
+    are controls; the impulse response is the convolver's `config`
+    (`filename`, `channel` = the chain's channel, a mono file's one channel
+    for both), read when the chain is made, so choosing another file makes
+    the chain again. PipeWire resamples the file to the chain's rate. With
+    no file chosen the convolver is PipeWire's `/dirac`, which passes sound
+    unchanged. A chosen file is copied into
+    `$XDG_DATA_HOME/otto/audio/impulses/` (a clash with other bytes gets a
+    free name, `room-2.wav`) and `[[effect]]` keeps its file name as
+    `impulse` (an absolute path written by hand is read where it is), with
+    `highpass = true` while the high-pass is on and `gain` and
+    `highpass-freq` under `params`; both fields are optional, so files
+    without them still read. A file missing from that folder is not made,
+    and the editor says so. The kind is offered when the installed filter
+    chain's builtins (`libspa-filter-graph-plugin-builtin.so`, or the
+    module before PipeWire 1.4) have the convolver.
   - **Plugins.** The equaliser uses PipeWire's builtins. The limiter is SWH's
     `fast_lookahead_limiter_1913` and the compressor SWH's `sc4_1882`
     (`swh-plugins`), noise suppression RNNoise's `librnnoise_ladspa`
@@ -482,7 +515,7 @@ only the sections that exist. Where it consciously differs from the above:
     LADSPA directories. PipeWire's builtins have no compressor or limiter. A
     kind whose plugin is missing is offered dimmed in the New effect form
     with the package it needs, and an effect of that kind in the file says
-    so and is not made.
+    so and is not made. Speaker correction needs no plugin.
   - **Streams.** The service moves the app streams playing to an output
     effect's device (or recording from an input effect's device) onto the
     effect by setting each stream's `target.object` in the `default`
@@ -509,7 +542,22 @@ only the sections that exist. Where it consciously differs from the above:
     and the preamp, scrubbed in the curve's header. Presets are *Flat* and
     an AutoEQ `ParametricEQ.txt` imported through the file chooser portal;
     presets cannot be saved yet. The other kinds have a slider per
-    parameter. With the service off the section says effects need it.
+    parameter. A speaker correction shows its impulse response's file name
+    with Choose File… (the file chooser portal, filtered to `.irs`, `.wav`
+    and `.flac`), the high-pass switch and frequency, and the output gain.
+    *Import EasyEffects Preset…* reads an EasyEffects output preset (JSON):
+    its active convolver's `kernel-name` (or an older preset's
+    `kernel-path`), found as `<kernel-name>.irs` beside the preset, in an
+    `irs/` folder beside it or one level up, or in EasyEffects' own `irs/`
+    folders, and otherwise asked for with the file chooser; its convolver's
+    input and output gain; an active high-pass filter before the convolver;
+    and an active limiter after it, which sets the Limiter right after the
+    effect or adds one there (when its plugin is installed). Plugins
+    switched off in the preset are ignored; the active ones the effect
+    cannot do (bass enhancer, multiband compressor, stereo tools, other
+    filters) are named in the note line, like an AutoEQ import's. The
+    convolver's autogain and stereo width are not taken over. With the
+    service off the section says effects need it.
     There is no meter or spectrum under the curve, and no rename.
 - **AirPlay speakers.** Kept in the routing file as `airplay = true` (left
   out while off). The service loads `libpipewire-module-raop-discover` into
@@ -558,11 +606,12 @@ updates this spec's First version notes.
    owned by the service, kept in the routing file, shown on Graph in
    column 1.
 7. **Effects.** A parametric equaliser with presets and AutoEQ import, a
-   limiter, a compressor, and noise suppression, hosted by the service as
+   limiter, a compressor, noise suppression, and speaker correction, hosted by the service as
    filter chains, each inserted between streams and a device. This covers
-   what JamesDSP does for most people. Built; see First version for what is
-   still to come (saved presets, convolution, a spectrum under the curve,
-   rename, up to 16 bands).
+   what JamesDSP does for most people, and speaker correction with
+   EasyEffects preset import. Built; see First version for what is still to
+   come (saved presets, a spectrum under the curve, rename, up to 16
+   bands).
 8. **Rules.** Which device an app goes to, as session manager targets,
    with the app picked from what has played.
 9. **AirPlay speakers.** Discovery through PipeWire's RAOP module, switched

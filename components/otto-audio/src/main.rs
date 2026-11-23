@@ -4,8 +4,8 @@
 //! its events land in an inbox the run loop drains in `on_update`, so the
 //! window repaints when the graph changes and never polls.
 //!
-//! `otto-audio --png OUT [--engine | --devices | --effects | --virtual |
-//! --matrix | --lanes]` draws the window offscreen instead.
+//! `otto-audio --png OUT [--engine | --devices | --effects [--effect N] |
+//! --virtual | --matrix | --lanes]` draws the window offscreen instead.
 
 mod preview;
 mod ui;
@@ -19,6 +19,7 @@ use otto_audio_graph::{Connection, Event};
 use otto_kit::components::dropdown::DropdownMenu;
 use otto_kit::events::{KeyEvent, KeyState, WindowConfigure};
 use otto_kit::prelude::*;
+use otto_kit::protocols::otto_surface_style_v1;
 use otto_kit::t;
 
 use crate::ui::Ui;
@@ -39,6 +40,17 @@ struct AudioApp {
     ui: Option<Arc<Mutex<Ui>>>,
     inbox: Arc<Mutex<Vec<Event>>>,
     window: Option<Window>,
+}
+
+/// Put the sidebar's material on the compositor's layer for the window: the
+/// colour the frost behind the surface is tinted with. Re-applied when the
+/// colour scheme changes, since the layer keeps the last one it was given.
+fn apply_material(window: &Window) {
+    window.set_material(if AppContext::current_theme().is_dark() {
+        Theme::dark_palette().material_sidebar
+    } else {
+        Theme::light_palette().material_sidebar
+    });
 }
 
 impl AudioApp {
@@ -68,7 +80,14 @@ impl App for AudioApp {
 
         let mut window = Window::new(t!("audio-title"), WINDOW_W, WINDOW_H)?;
         window.set_min_size(MIN_W, MIN_H);
-        window.set_background(ui::ground(&AppContext::current_theme()));
+        // The sidebar is the compositor's frost, tinted on its layer for the
+        // surface; the buffer leaves it clear and paints only the content.
+        window.set_background(Color::TRANSPARENT);
+        if let Some(style) = window.surface_style() {
+            style.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
+        }
+        apply_material(&window);
+        window.set_background_blur(true);
         if let Some(surface) = window.surface() {
             surface.xdg_window().set_app_id(APP_ID.to_string());
         }
@@ -95,10 +114,16 @@ impl App for AudioApp {
                 open_menu(&menu, &pointed, &handle, request);
             }
             if redraw {
+                if let Ok(ui) = pointed.lock() {
+                    handle.set_title(&ui.title());
+                }
                 handle.request_frame();
             }
         });
 
+        if let Ok(ui) = ui.lock() {
+            window.set_title(&ui.title());
+        }
         AppContext::register_window(window.clone());
         self.ui = Some(ui);
         self.window = Some(window);
@@ -115,6 +140,9 @@ impl App for AudioApp {
             }
             ui.variant = window.decoration_variant();
             ui.active = window.is_activated();
+            // The window drops its blur while unfocused.
+            ui.frosted = window.background_blur() && ui.active;
+            window.set_opaque_region(&ui.opaque_region(window.frame_corner_radius()));
         });
         window.sync_frame_corners();
         window.request_frame();
@@ -133,13 +161,16 @@ impl App for AudioApp {
                 .unwrap_or_else(|| ui.key(event.keysym))
         });
         if redraw.unwrap_or(false) {
+            if let (Some(window), Some(title)) = (&self.window, self.with_ui(|ui| ui.title())) {
+                window.set_title(&title);
+            }
             self.redraw();
         }
     }
 
     fn on_theme_changed(&mut self, _ctx: &AppContext) {
-        if let Some(window) = &mut self.window {
-            window.set_background(ui::ground(&AppContext::current_theme()));
+        if let Some(window) = &self.window {
+            apply_material(window);
         }
         self.redraw();
     }
@@ -261,7 +292,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             GraphMode::Patchbay
         };
-        return preview::render(out, pane, mode);
+        let effect = match args.iter().position(|a| a == "--effect") {
+            Some(at) => Some(
+                args.get(at + 1)
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .ok_or("--effect needs a sample's number, from 0")?,
+            ),
+            None => None,
+        };
+        return preview::render(out, pane, mode, effect);
     }
     tokio::runtime::Runtime::new()?.block_on(async {
         AppRunner::new(AudioApp {

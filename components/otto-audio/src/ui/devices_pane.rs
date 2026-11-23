@@ -28,8 +28,6 @@ const DEVICE_ROW_H: f32 = 42.0;
 const DEVICE_NOTE_H: f32 = 30.0;
 /// The label column of a card's rows.
 const DEVICE_LABEL_W: f32 = 130.0;
-/// The controls' height.
-const DEVICE_CONTROL_H: f32 = 28.0;
 /// The title and intro above the cards, which stay put while they scroll.
 const DEVICES_HEADER_H: f32 = 72.0;
 /// The most choices a segmented control holds before a pop-up takes over.
@@ -201,10 +199,10 @@ impl Ui {
         let right = rect.right - DEVICE_PAD;
 
         let badge_w = card.badge.as_ref().map_or(0.0, |badge| {
-            let font = styles::FOOTNOTE.font();
+            let font = styles::SUBHEADLINE.font();
             let w = font.measure_str(badge, None).0;
             Label::new(badge)
-                .with_style(styles::FOOTNOTE)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_secondary)
                 .centered_on(right - w, rect.top + 28.0)
                 .render(canvas);
@@ -216,14 +214,14 @@ impl Ui {
             .with_color(theme.text_primary)
             .centered_on(left, rect.top + 28.0)
             .render(canvas);
-        let kind_font = styles::FOOTNOTE.font();
+        let kind_font = styles::SUBHEADLINE.font();
         Label::new(ellipsize(&kind_font, &card.kind, right - left))
-            .with_style(styles::FOOTNOTE)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_secondary)
             .centered_on(left, rect.top + 48.0)
             .render(canvas);
 
-        let label_font = styles::CALLOUT.font();
+        let label_font = styles::BODY.font();
         let control_left = left + DEVICE_LABEL_W;
         let control_w = (right - control_left).max(1.0);
         for (index, row) in card.rows.iter().enumerate() {
@@ -232,20 +230,20 @@ impl Ui {
                 Row::Pick { label, .. } | Row::Fact { label, .. } => label,
             };
             Label::new(ellipsize(&label_font, label, DEVICE_LABEL_W - 12.0))
-                .with_style(styles::CALLOUT)
+                .with_style(styles::BODY)
                 .with_color(theme.text_secondary)
                 .centered_on(left, cy)
                 .render(canvas);
             let control = Rect::from_xywh(
                 control_left,
-                cy - DEVICE_CONTROL_H / 2.0,
+                cy - dropdown::HEIGHT / 2.0,
                 control_w,
-                DEVICE_CONTROL_H,
+                dropdown::HEIGHT,
             );
             match row {
                 Row::Fact { value, .. } => {
                     Label::new(ellipsize(&label_font, value, control_w))
-                        .with_style(styles::CALLOUT)
+                        .with_style(styles::BODY)
                         .with_color(theme.text_primary)
                         .centered_on(control_left, cy)
                         .render(canvas);
@@ -271,9 +269,9 @@ impl Ui {
         }
         if let Some(note) = &card.note {
             let cy = rect.top + DEVICE_HEAD_H + card.rows.len() as f32 * DEVICE_ROW_H + 12.0;
-            let font = styles::FOOTNOTE.font();
+            let font = styles::SUBHEADLINE.font();
             Label::new(ellipsize(&font, note, right - left))
-                .with_style(styles::FOOTNOTE)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_secondary)
                 .centered_on(left, cy)
                 .render(canvas);
@@ -290,7 +288,8 @@ impl Ui {
         viewport: Rect,
         theme: &Theme,
     ) {
-        let font = styles::CALLOUT.font();
+        // Measured at the chosen weight, the wider of the two.
+        let font = segmented::LABEL_CHOSEN.font();
         let widest = choices
             .iter()
             .map(|c| font.measure_str(&c.label, None).0 + SEGMENT_PAD)
@@ -315,15 +314,15 @@ impl Ui {
         );
         for (index, choice) in choices.iter().enumerate() {
             let cell = segmented::segment_rect(track, choices.len(), index);
-            let color = if Some(index) == chosen {
-                theme.text_primary
-            } else if choice.dimmed {
+            let is_chosen = Some(index) == chosen;
+            let color = if !is_chosen && choice.dimmed {
                 theme.text_tertiary
             } else {
-                theme.text_secondary
+                segmented::label_color(theme, is_chosen, SegmentedInteraction::Normal)
             };
-            Label::new(ellipsize(&font, &choice.label, cell.width() - 8.0))
-                .with_style(styles::CALLOUT)
+            let style = segmented::label_style(is_chosen);
+            Label::new(ellipsize(&style.font(), &choice.label, cell.width() - 8.0))
+                .with_style(style)
                 .with_color(color)
                 .centered_at(cell.center_x(), cell.center_y())
                 .render(canvas);
@@ -593,13 +592,13 @@ impl Ui {
         .with_color(theme.text_primary)
         .centered_on(left, rect.top + 28.0)
         .render(canvas);
-        let kind_font = styles::FOOTNOTE.font();
+        let kind_font = styles::SUBHEADLINE.font();
         Label::new(ellipsize(
             &kind_font,
             t!("audio-airplay-intro"),
             switch.left - left - 12.0,
         ))
-        .with_style(styles::FOOTNOTE)
+        .with_style(styles::SUBHEADLINE)
         .with_color(theme.text_secondary)
         .centered_on(left, rect.top + 48.0)
         .render(canvas);
@@ -630,7 +629,7 @@ impl Ui {
             y += NOTICE_H + 12.0;
         }
         if card.lists_speakers() {
-            let font = styles::CALLOUT.font();
+            let font = styles::BODY.font();
             if card.speakers.is_empty() {
                 caption(
                     canvas,
@@ -655,22 +654,22 @@ impl Ui {
                 } else {
                     t!("audio-airplay-tag")
                 };
-                let tag_w = styles::FOOTNOTE.font().measure_str(tag, None).0;
+                let tag_w = styles::SUBHEADLINE.font().measure_str(tag, None).0;
                 Label::new(tag)
-                    .with_style(styles::FOOTNOTE)
+                    .with_style(styles::SUBHEADLINE)
                     .with_color(theme.text_secondary)
                     .centered_on(right - tag_w, cy)
                     .render(canvas);
                 Label::new(ellipsize(&font, name, width - tag_w - 12.0))
-                    .with_style(styles::CALLOUT)
+                    .with_style(styles::BODY)
                     .with_color(theme.text_primary)
                     .centered_on(left, cy)
                     .render(canvas);
                 y += SPEAKER_ROW_H;
             }
-            let font = styles::FOOTNOTE.font();
+            let font = styles::SUBHEADLINE.font();
             Label::new(ellipsize(&font, t!("audio-airplay-delay"), width))
-                .with_style(styles::FOOTNOTE)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_secondary)
                 .centered_on(left, y + 12.0)
                 .render(canvas);
@@ -864,7 +863,7 @@ fn fits_as_segments(choices: &[Choice], width: f32) -> bool {
     if choices.is_empty() || choices.len() > MAX_SEGMENTS {
         return false;
     }
-    let font = styles::CALLOUT.font();
+    let font = styles::BODY.font();
     let widest = choices
         .iter()
         .map(|c| font.measure_str(&c.label, None).0 + SEGMENT_PAD)

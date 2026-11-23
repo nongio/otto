@@ -242,7 +242,7 @@ impl Ui {
 
         // The corner, and the rules that frame the cells.
         Label::new(t!("audio-matrix-corner"))
-            .with_style(styles::CAPTION_1)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_tertiary)
             .centered_on(viewport.left + 16.0, viewport.top + COLUMN_HEADER_H - 16.0)
             .render(canvas);
@@ -283,15 +283,15 @@ impl Ui {
             3.5,
             &fill(media_color(theme, line.key.media)),
         );
-        let title_font = styles::FOOTNOTE_EMPHASIZED.font();
+        let title_font = styles::SUBHEADLINE_EMPHASIZED.font();
         Label::new(ellipsize(&title_font, &line.title, width))
-            .with_style(styles::FOOTNOTE_EMPHASIZED)
+            .with_style(styles::SUBHEADLINE_EMPHASIZED)
             .with_color(theme.text_primary)
             .centered_on(left + 12.0, bottom - 7.0)
             .render(canvas);
-        let kind_font = styles::CAPTION_1.font();
+        let kind_font = styles::SUBHEADLINE.font();
         Label::new(ellipsize(&kind_font, &line.kind, width))
-            .with_style(styles::CAPTION_1)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_secondary)
             .centered_on(left + 12.0, bottom + 9.0)
             .render(canvas);
@@ -329,9 +329,9 @@ impl Ui {
         let left = viewport.left + LANES_MARGIN;
         let width = viewport.width() - 2.0 * LANES_MARGIN;
 
-        let note_font = styles::FOOTNOTE.font();
+        let note_font = styles::SUBHEADLINE.font();
         Label::new(ellipsize(&note_font, t!("audio-lanes-note"), width))
-            .with_style(styles::FOOTNOTE)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_secondary)
             .centered_on(left, top + LANES_NOTE_H / 2.0 + 4.0)
             .render(canvas);
@@ -395,8 +395,8 @@ impl Ui {
         let cy = rect.center_y();
 
         // Each pill as wide as its text, all narrowed alike to fit.
-        let title_font = styles::FOOTNOTE_EMPHASIZED.font();
-        let kind_font = styles::CAPTION_1.font();
+        let title_font = styles::SUBHEADLINE_EMPHASIZED.font();
+        let kind_font = styles::SUBHEADLINE.font();
         let natural: Vec<f32> = steps
             .iter()
             .map(|s| {
@@ -441,12 +441,12 @@ impl Ui {
             }
             let text_w = w - 20.0;
             Label::new(ellipsize(&title_font, &step.title, text_w))
-                .with_style(styles::FOOTNOTE_EMPHASIZED)
+                .with_style(styles::SUBHEADLINE_EMPHASIZED)
                 .with_color(theme.text_primary)
                 .centered_on(pill.left + 10.0, cy - 7.0)
                 .render(canvas);
             Label::new(ellipsize(&kind_font, &step.kind, text_w))
-                .with_style(styles::CAPTION_1)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_secondary)
                 .centered_on(pill.left + 10.0, cy + 9.0)
                 .render(canvas);
@@ -473,7 +473,7 @@ impl Ui {
             canvas.draw_circle(dot, 3.5, &stroke(color, 1.8));
         }
         Label::new(label)
-            .with_style(styles::CAPTION_1)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_secondary)
             .centered_on(text_x, cy)
             .render(canvas);

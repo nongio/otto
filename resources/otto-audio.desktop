@@ -1,6 +1,16 @@
 [Desktop Entry]
 Type=Application
-Name=Audio
+Name=Audio Settings
+Name[de]=Audioeinstellungen
+Name[es]=Configuración de audio
+Name[fr]=Réglages audio
+Name[it]=Impostazioni audio
+Name[ja]=オーディオ設定
+Name[pl]=Ustawienia dźwięku
+Name[pt_BR]=Configurações de áudio
+Name[ru]=Настройки звука
+Name[uk]=Налаштування звуку
+Name[zh_CN]=音频设置
 GenericName=Audio Routing
 Comment=See how sound moves between apps and devices, link them by hand and keep the links
 Exec=otto-audio

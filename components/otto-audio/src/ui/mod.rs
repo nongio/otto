@@ -24,7 +24,9 @@ use otto_audio_graph::{
 use otto_kit::components::push_button::{self, PushButton, Role as ButtonRole};
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::components::segmented::{self, Segment, SegmentedInteraction};
-use otto_kit::components::source_list::{self, SourceListItem, SourceListLayout};
+use otto_kit::components::source_list::{
+    self, GlyphSlot, SourceListItem, SourceListLayout, SourceListSize,
+};
 use otto_kit::components::titlebar::{
     DecorationVariant, WindowControl, WindowControlsState, WindowDecoration,
 };
@@ -40,8 +42,12 @@ use otto_audio::graph_view::{
 };
 
 /// The sidebar's width.
-const SIDEBAR_W: f32 = 196.0;
-/// The strip above the canvas with the filters and the save actions.
+const SIDEBAR_W: f32 = 216.0;
+/// How much of the icon square a sidebar glyph fills, as in Settings.
+const SIDEBAR_GLYPH_SHARE: f32 = 0.9;
+/// The sidebar's row size: a handful of sections, so the large rows.
+const SIDEBAR_SIZE: SourceListSize = SourceListSize::Large;
+/// The strip above the canvas with the view switch and the save actions.
 const TOOLBAR_H: f32 = 48.0;
 /// The service banner under the toolbar.
 const BANNER_H: f32 = 44.0;
@@ -57,8 +63,27 @@ const FACT_H: f32 = 24.0;
 const CONNECTION_H: f32 = 34.0;
 /// The most connections the details panel lists.
 const MAX_CONNECTIONS: usize = 6;
-/// The toolbar's filter chips.
+/// The filter chips, and the room between them.
 const CHIP_H: f32 = 26.0;
+const CHIP_GAP: f32 = 6.0;
+/// How far the canvas overlays (filter chips, legend) sit from its edges.
+const OVERLAY_INSET: f32 = 12.0;
+/// The padding around the chips on their material.
+const OVERLAY_PAD: f32 = 4.0;
+/// The filter chips' material.
+const FILTERS_H: f32 = CHIP_H + 2.0 * OVERLAY_PAD;
+/// The legend's material, its padding, and the room between its entries.
+const LEGEND_H: f32 = 24.0;
+const LEGEND_PAD: f32 = 12.0;
+const LEGEND_GAP: f32 = 14.0;
+/// A legend entry's mark (a wire or a cell's dot) and the gap to its label.
+const LEGEND_MARK_W: f32 = 18.0;
+const LEGEND_MARK_GAP: f32 = 6.0;
+/// The room the Matrix and Lanes keep above their content for the filter
+/// chips, and the Matrix below its cells for the legend: they scroll under
+/// fixed headers, so the overlays get a band rather than float.
+const FILTERS_BAND_H: f32 = OVERLAY_INSET + FILTERS_H + 6.0;
+const LEGEND_BAND_H: f32 = LEGEND_H + OVERLAY_INSET + 6.0;
 /// The Engine section's cards.
 const ENGINE_CARD_MIN_W: f32 = 280.0;
 const ENGINE_CARD_H: f32 = 180.0;
@@ -168,6 +193,9 @@ pub struct Ui {
     pub size: (f32, f32),
     pub variant: DecorationVariant,
     pub active: bool,
+    /// Whether the compositor is frosting the window right now, so the
+    /// sidebar is left to its material instead of painted flat.
+    pub frosted: bool,
     pub controls: WindowControlsState,
     pub modifiers: Modifiers,
     pane: Pane,
@@ -219,6 +247,7 @@ impl Ui {
             size: (1100.0, 700.0),
             variant: DecorationVariant::Floating,
             active: true,
+            frosted: false,
             controls: WindowControlsState::new(),
             modifiers: Modifiers::default(),
             pane: Pane::Graph,
@@ -267,15 +296,16 @@ impl Ui {
     // -----------------------------------------------------------------------
 
     fn titlebar_h(&self) -> f32 {
-        WindowDecoration::height_for(self.variant)
+        WindowDecoration::sidebar_height_for(self.variant)
     }
 
     pub fn decoration(&self) -> WindowDecoration {
         let mut decoration = WindowDecoration::new(t!("audio-title"), self.size.0)
             .with_variant(self.variant)
+            .with_height(self.titlebar_h())
             .with_active(self.active)
             .with_dark(self.dark)
-            .with_blurred(false);
+            .with_controls_only(true);
         decoration.controls_hovered = self.controls.hovered();
         decoration.pressed = self.controls.pressed();
         decoration
@@ -301,7 +331,8 @@ impl Ui {
     }
 
     /// The canvas: under the toolbar and banner, left of the details panel.
-    fn viewport(&self) -> Rect {
+    /// The filter chips and legend float inside it.
+    fn canvas_rect(&self) -> Rect {
         let content = self.content();
         let mut top = content.top + TOOLBAR_H;
         if self.service_down() {
@@ -316,13 +347,56 @@ impl Ui {
         )
     }
 
-    fn sidebar_layout(&self) -> SourceListLayout {
-        SourceListLayout::compute(PANES.len(), 0.0, self.titlebar_h() + 12.0, SIDEBAR_W)
+    /// Where the current view draws: the whole canvas for the patchbay,
+    /// which pans under the overlays; the Matrix and Lanes leave bands for
+    /// them.
+    fn viewport(&self) -> Rect {
+        let canvas = self.canvas_rect();
+        let (top, bottom) = match self.view.mode {
+            GraphMode::Patchbay => (0.0, 0.0),
+            GraphMode::Matrix => (FILTERS_BAND_H, LEGEND_BAND_H),
+            GraphMode::Lanes => (FILTERS_BAND_H, 0.0),
+        };
+        Rect::from_ltrb(
+            canvas.left,
+            (canvas.top + top).min(canvas.bottom),
+            canvas.right,
+            (canvas.bottom - bottom).max(canvas.top + top + 1.0),
+        )
+    }
+
+    /// Fit the patchbay to the canvas, clear of the filter chips above and
+    /// the legend below.
+    fn fit_patchbay(&mut self, scene: &Scene) {
+        let viewport = self.viewport();
+        let inner = Rect::from_ltrb(
+            viewport.left,
+            viewport.top + FILTERS_H,
+            viewport.right,
+            (viewport.bottom - LEGEND_H).max(viewport.top + FILTERS_H + 1.0),
+        );
+        self.view.fit(scene, inner);
+        self.view.pan.y += inner.top - viewport.top;
+    }
+
+    fn sidebar_layout(&self, items: &[SourceListItem]) -> SourceListLayout {
+        SourceListLayout::for_items(
+            SIDEBAR_SIZE,
+            items,
+            0.0,
+            self.titlebar_h() + 12.0,
+            SIDEBAR_W,
+        )
     }
 
     // -----------------------------------------------------------------------
     // Drawing
     // -----------------------------------------------------------------------
+
+    /// What the window is called: the app, then the pane you are in.
+    pub fn title(&self) -> String {
+        t_owned!("audio-window-title", pane = pane_label(self.pane))
+    }
 
     /// Open on `pane`.
     pub fn show(&mut self, pane: Pane) {
@@ -339,7 +413,11 @@ impl Ui {
     pub fn draw(&mut self, canvas: &Canvas, theme: &Theme) {
         self.targets.clear();
         self.dark = theme.is_dark();
-        canvas.clear(ground(theme));
+        canvas.clear(Color::TRANSPARENT);
+        canvas.draw_rect(
+            Rect::from_ltrb(SIDEBAR_W, 0.0, self.size.0, self.size.1),
+            &fill(ground(theme)),
+        );
         self.draw_sidebar(canvas, theme);
         if !self.graph.is_connected() {
             self.draw_no_server(canvas, theme);
@@ -353,8 +431,53 @@ impl Ui {
             }
         }
         let decoration = self.decoration();
+        self.draw_title(canvas, theme);
         decoration.draw(canvas);
         self.draw_readout(canvas, &decoration, theme);
+    }
+
+    /// The window's opaque part: the content, short of its rounded
+    /// bottom-right corner. The sidebar is the compositor's frost.
+    pub fn opaque_region(&self, corner: f32) -> [Rect; 2] {
+        let (w, h) = self.size;
+        [
+            Rect::from_ltrb(SIDEBAR_W, 0.0, w, h - corner),
+            Rect::from_ltrb(SIDEBAR_W, h - corner, w - corner, h),
+        ]
+    }
+
+    /// The title over the content, with a hairline under the band. The
+    /// sidebar runs the full height beside it, under the window controls.
+    fn draw_title(&self, canvas: &Canvas, theme: &Theme) {
+        let h = self.titlebar_h();
+        if h <= 0.0 {
+            return;
+        }
+        let x = SIDEBAR_W + 16.0;
+        let font = WindowDecoration::title_style_for(self.variant).font();
+        let readout = if self.graph.is_connected() && self.graph.is_synced() {
+            180.0
+        } else {
+            16.0
+        };
+        Label::new(ellipsize(
+            &font,
+            &self.title(),
+            (self.size.0 - x - readout).max(0.0),
+        ))
+        .with_style(WindowDecoration::title_style_for(self.variant))
+        .with_color(if self.active {
+            theme.text_primary
+        } else {
+            theme.text_secondary
+        })
+        .centered_on(x, h / 2.0)
+        .render(canvas);
+        canvas.draw_line(
+            Point::new(SIDEBAR_W, h - 0.5),
+            Point::new(self.size.0, h - 0.5),
+            &stroke(theme.hairline, 1.0),
+        );
     }
 
     /// What the engine runs at now: rate, quantum, and whether each is forced.
@@ -393,7 +516,7 @@ impl Ui {
             frames = now.frames,
             ms = format!("{:.1}", now.latency_ms())
         );
-        let font = styles::CAPTION_1.font();
+        let font = styles::SUBHEADLINE.font();
         let w = font.measure_str(&text, None).0 + 16.0;
         let h = 22.0;
         let cy = self.titlebar_h() / 2.0;
@@ -404,31 +527,30 @@ impl Ui {
         let pill = Rect::from_xywh(x, cy - h / 2.0, w, h);
         canvas.draw_rrect(
             RRect::new_rect_xy(pill, 6.0, 6.0),
-            &fill(theme.fill_quaternary),
+            &fill(theme.control_track),
         );
         Label::new(text)
-            .with_style(styles::CAPTION_1)
-            .with_color(theme.text_secondary)
+            .with_style(styles::SUBHEADLINE)
+            .with_color(theme.text_primary)
             .centered_at(pill.center_x(), cy)
             .render(canvas);
     }
 
     fn draw_sidebar(&mut self, canvas: &Canvas, theme: &Theme) {
-        let top = self.titlebar_h();
-        canvas.draw_rect(
-            Rect::from_ltrb(0.0, top, SIDEBAR_W, self.size.1),
-            &fill(sidebar_ground(theme)),
-        );
+        let top = 0.0;
+        if !self.frosted {
+            canvas.draw_rect(
+                Rect::from_ltrb(0.0, top, SIDEBAR_W, self.size.1),
+                &fill(sidebar_ground(theme)),
+            );
+        }
         canvas.draw_line(
-            Point::new(SIDEBAR_W, top),
-            Point::new(SIDEBAR_W, self.size.1),
+            Point::new(SIDEBAR_W - 0.5, top),
+            Point::new(SIDEBAR_W - 0.5, self.size.1),
             &stroke(theme.hairline, 1.0),
         );
-        let items: Vec<SourceListItem> = PANES
-            .iter()
-            .map(|pane| SourceListItem::new(pane_label(*pane)))
-            .collect();
-        let layout = self.sidebar_layout();
+        let items = sidebar_items();
+        let layout = self.sidebar_layout(&items);
         let selected = PANES.iter().position(|p| *p == self.pane);
         source_list::draw(
             canvas,
@@ -436,7 +558,11 @@ impl Ui {
             &items,
             selected,
             theme,
-            |canvas, index, rect, tint| draw_pane_glyph(canvas, PANES[index], rect, tint),
+            |canvas, index, slot, rect, tint| {
+                if slot == GlyphSlot::Leading {
+                    draw_pane_glyph(canvas, PANES[index], rect, tint);
+                }
+            },
         );
         for (pane, rect) in PANES.iter().zip(&layout.item_rects) {
             self.targets.push((*rect, Action::Pane(*pane)));
@@ -451,9 +577,9 @@ impl Ui {
             };
             let cy = self.size.1 - 22.0;
             canvas.draw_circle(Point::new(20.0, cy), 4.0, &fill(dot));
-            let font = styles::CAPTION_1.font();
+            let font = styles::SUBHEADLINE.font();
             Label::new(ellipsize(&font, text, SIDEBAR_W - 44.0))
-                .with_style(styles::CAPTION_1)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_secondary)
                 .centered_on(32.0, cy)
                 .render(canvas);
@@ -526,11 +652,22 @@ impl Ui {
     fn draw_graph(&mut self, canvas: &Canvas, theme: &Theme) {
         let scene = self.view.scene(&self.graph, &self.routing);
         let viewport = self.viewport();
+        // The Matrix and Lanes bands for the overlays take their view's ground.
+        match self.view.mode {
+            GraphMode::Patchbay => {}
+            GraphMode::Matrix => {
+                canvas.draw_rect(self.canvas_rect(), &fill(graph_view::card_ground(theme)));
+            }
+            GraphMode::Lanes => {
+                canvas.draw_rect(self.canvas_rect(), &fill(graph_view::canvas_ground(theme)));
+            }
+        }
         match self.view.mode {
             GraphMode::Patchbay => self.draw_patchbay(canvas, &scene, viewport, theme),
             GraphMode::Matrix => self.draw_matrix(canvas, &scene, viewport, theme),
             GraphMode::Lanes => self.draw_lanes(canvas, &scene, viewport, theme),
         }
+        self.draw_overlays(canvas, &scene, theme);
         self.draw_toolbar(canvas, &scene, theme);
         if self.service_down() {
             self.draw_banner(canvas, theme);
@@ -542,7 +679,7 @@ impl Ui {
 
     fn draw_patchbay(&mut self, canvas: &Canvas, scene: &Scene, viewport: Rect, theme: &Theme) {
         if self.view.auto_fit {
-            self.view.fit(scene, viewport);
+            self.fit_patchbay(scene);
         }
         let link_drag = match self.drag {
             Some(Drag::Link(drag)) => Some(drag),
@@ -696,6 +833,7 @@ impl Ui {
             && self.pane == Pane::Graph
             && self.view.mode == GraphMode::Patchbay
             && self.viewport().contains(p)
+            && !self.overlay_at(p)
         {
             self.drag = Some(Drag::Pan {
                 from: p,
@@ -738,6 +876,11 @@ impl Ui {
             }
             self.pressed = Some(action);
             return true;
+        }
+        if self.overlay_at(p) {
+            // The overlays' own ground: a press between chips or on the
+            // legend does nothing, rather than reaching the view under it.
+            return false;
         }
         if self.pane == Pane::Graph && self.graph.is_connected() && self.viewport().contains(p) {
             return self.press_canvas(p);
@@ -922,7 +1065,7 @@ impl Ui {
             Keysym::_0 | Keysym::KP_0 if command => {
                 if self.pane == Pane::Graph {
                     let scene = self.view.scene(&self.graph, &self.routing);
-                    self.view.fit(&scene, self.viewport());
+                    self.fit_patchbay(&scene);
                 }
                 true
             }
@@ -988,7 +1131,7 @@ impl Ui {
             }
             Action::Fit => {
                 let scene = self.view.scene(&self.graph, &self.routing);
-                self.view.fit(&scene, self.viewport());
+                self.fit_patchbay(&scene);
             }
             Action::ToggleProperties => {
                 self.props_open = !self.props_open;
@@ -1124,6 +1267,14 @@ fn spawn(argv: &[&str]) {
     }
 }
 
+/// The sidebar's rows, one per section.
+fn sidebar_items() -> Vec<SourceListItem> {
+    PANES
+        .iter()
+        .map(|pane| SourceListItem::new(pane_label(*pane)))
+        .collect()
+}
+
 fn pane_label(pane: Pane) -> &'static str {
     match pane {
         Pane::Graph => t!("audio-pane-graph"),
@@ -1243,7 +1394,7 @@ pub fn ground(theme: &Theme) -> Color {
     if theme.is_dark() {
         Color::from_rgb(0x1c, 0x1c, 0x1e)
     } else {
-        Color::from_rgb(0xf5, 0xf5, 0xf7)
+        Color::from_rgb(0xfb, 0xfb, 0xfc)
     }
 }
 
@@ -1256,11 +1407,12 @@ fn panel_ground(theme: &Theme) -> Color {
     }
 }
 
+/// The flat sidebar, for a window the compositor is not frosting.
 fn sidebar_ground(theme: &Theme) -> Color {
     if theme.is_dark() {
         Color::from_rgb(0x24, 0x24, 0x26)
     } else {
-        Color::from_rgb(0xeb, 0xeb, 0xee)
+        Color::from_rgb(0xe3, 0xe3, 0xe7)
     }
 }
 
@@ -1280,10 +1432,43 @@ fn stroke(color: Color, width: f32) -> Paint {
 
 /// The sidebar glyphs: three linked nodes for Graph, a dial for Engine, a
 /// speaker for Devices, three faders for Effects.
+///
+/// Drawn on a 16-point grid around the centre and scaled to fill `rect`.
+/// A pane's sidebar glyph: Otto's Solar one, the same set the Settings
+/// sidebar draws, with a drawing of its own where the set isn't installed.
 fn draw_pane_glyph(canvas: &Canvas, pane: Pane, rect: Rect, tint: Color) {
-    let mut paint = stroke(tint, 1.5);
+    let name = match pane {
+        Pane::Graph => "otto-pane-graph-symbolic",
+        Pane::Devices => "otto-pane-devices-symbolic",
+        Pane::Engine => "otto-pane-engine-symbolic",
+        Pane::Effects => "otto-pane-effects-symbolic",
+        Pane::VirtualDevices => "otto-pane-virtual-devices-symbolic",
+    };
+    // Rasterised in device pixels, so it stays sharp on a scaled output.
+    let size = rect.width() * SIDEBAR_GLYPH_SHARE;
+    let scale = canvas.local_to_device_as_3x3().scale_x().abs().max(1.0);
+    let px = (size * scale).round() as i32;
+    if let Some(image) =
+        otto_kit::icons::solar_icon(name, px, otto_kit::icons::SolarStyle::Linear, tint)
+    {
+        let half = size / 2.0;
+        let (cx, cy) = (rect.center_x(), rect.center_y());
+        let dst = Rect::from_ltrb(cx - half, cy - half, cx + half, cy + half);
+        otto_kit::icons::draw_icon(canvas, &image, dst, &Paint::default());
+        return;
+    }
+    draw_pane_glyph_fallback(canvas, pane, rect, tint);
+}
+
+fn draw_pane_glyph_fallback(canvas: &Canvas, pane: Pane, rect: Rect, tint: Color) {
+    const GRID: f32 = 16.0;
+    let scale = rect.width() / GRID;
+    canvas.save();
+    canvas.translate((rect.center_x(), rect.center_y()));
+    canvas.scale((scale, scale));
+    let mut paint = stroke(tint, 1.4);
     paint.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
-    let c = Point::new(rect.center_x(), rect.center_y());
+    let c = Point::new(0.0, 0.0);
     match pane {
         Pane::Graph => {
             let a = Point::new(c.x - 6.0, c.y - 4.0);
@@ -1335,4 +1520,5 @@ fn draw_pane_glyph(canvas: &Canvas, pane: Pane, rect: Rect, tint: Color) {
             canvas.draw_circle(Point::new(c.x, c.y - 4.0), 0.9, &fill(tint));
         }
     }
+    canvas.restore();
 }

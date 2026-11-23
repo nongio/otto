@@ -1,7 +1,11 @@
-//! The Graph section's chrome: the toolbar, the service banner and the
-//! details panel. The canvas itself is `graph_view`.
+//! The Graph section's chrome: the toolbar (the view switch and the actions),
+//! the service banner, the filter chips and legend floating in the canvas,
+//! and the details panel. The canvas itself is `graph_view`.
+
+// Rust guideline compliant 2026-02-21
 
 use super::*;
+use otto_audio::graph_view::Filter;
 
 impl Ui {
     pub(super) fn draw_toolbar(&mut self, canvas: &Canvas, scene: &Scene, theme: &Theme) {
@@ -14,14 +18,14 @@ impl Ui {
             &stroke(theme.hairline, 1.0),
         );
         let cy = bar.center_y();
-        let mut x = bar.left + 12.0;
+        let x = bar.left + 12.0;
 
         // The view switch: patchbay, matrix or lanes.
         let labels: Vec<String> = GraphMode::ALL
             .iter()
             .map(|mode| mode_label(*mode).to_string())
             .collect();
-        let font = styles::CALLOUT.font();
+        let font = styles::BODY.font();
         let segment_w = labels
             .iter()
             .map(|l| font.measure_str(l, None).0 + 24.0)
@@ -44,24 +48,17 @@ impl Ui {
             &GraphMode::ALL.map(Action::GraphMode),
             theme,
         );
-        x = track.right + 14.0;
+        let actions_left = track.right + 14.0;
 
-        let filter = self.view.filter;
-        for (media, label, on) in [
-            (MediaType::Audio, t!("audio-filter-audio"), filter.audio),
-            (MediaType::Midi, t!("audio-filter-midi"), filter.midi),
-            (MediaType::Video, t!("audio-filter-video"), filter.video),
-        ] {
-            let rect = self.chip(canvas, x, cy, label, media, on, theme);
-            x = rect.right + 6.0;
-        }
-
-        // The actions, from the right edge in.
+        // The actions, from the right edge in, as many as fit.
         let mut right = bar.right - 12.0;
         let top = cy - push_button::HEIGHT / 2.0;
         let mut put = |ui: &mut Self, label: &str, action: Action, enabled: bool, role| {
             let w = push_button::width(label);
             let rect = Rect::from_xywh(right - w, top, w, push_button::HEIGHT);
+            if rect.left < actions_left {
+                return;
+            }
             ui.role_button(canvas, rect, label, action, enabled, role, theme);
             right = rect.left - 8.0;
         };
@@ -107,46 +104,105 @@ impl Ui {
                 );
             }
         }
+    }
 
-        // What solid and dashed wires mean, when there is room for it; the
-        // matrix marks a cell with a filled dot or a ring instead.
-        let font = styles::CAPTION_1.font();
-        let entries = [
-            (t!("audio-legend-saved"), true),
-            (t!("audio-legend-unsaved"), false),
-        ];
-        let widths: Vec<f32> = entries
-            .iter()
-            .map(|(label, _)| 28.0 + font.measure_str(label, None).0)
-            .collect();
-        let legend_w = widths.iter().sum::<f32>() + 14.0;
-        let mut lx = right - legend_w;
-        if lx > x + 16.0 {
-            let color = media_color(theme, MediaType::Audio);
-            let dots = self.view.mode == GraphMode::Matrix;
-            for ((label, saved), w) in entries.iter().zip(&widths) {
-                if dots {
-                    let c = Point::new(lx + 14.0, cy);
-                    if *saved {
-                        canvas.draw_circle(c, 5.0, &fill(color));
-                    } else {
-                        canvas.draw_circle(c, 4.5, &stroke(color, 2.0));
-                    }
-                } else {
-                    let mut paint = stroke(color, 2.0);
-                    if !saved {
-                        paint.set_path_effect(otto_kit::skia::PathEffect::dash(&[4.0, 3.0], 0.0));
-                    }
-                    canvas.draw_line(Point::new(lx, cy), Point::new(lx + 20.0, cy), &paint);
-                }
-                Label::new(*label)
-                    .with_style(styles::CAPTION_1)
-                    .with_color(theme.text_secondary)
-                    .centered_on(lx + 26.0, cy)
-                    .render(canvas);
-                lx += w + 14.0;
-            }
+    /// The filter chips and the legend, floating in the canvas over the view.
+    ///
+    /// Both sit on a rounded material so they read over the dot grid and the
+    /// wires; `overlay_at` keeps presses on them from reaching the view.
+    pub(super) fn draw_overlays(&mut self, canvas: &Canvas, scene: &Scene, theme: &Theme) {
+        let filters = self.filters_rect();
+        draw_material(canvas, filters, theme);
+        let cy = filters.center_y();
+        let mut x = filters.left + OVERLAY_PAD;
+        for (media, label, on) in filter_chips(self.view.filter) {
+            let rect = self.chip(canvas, x, cy, label, media, on, theme);
+            x = rect.right + CHIP_GAP;
         }
+
+        let Some(legend) = self.legend_rect() else {
+            return;
+        };
+        if scene.cards.is_empty() {
+            return;
+        }
+        draw_material(canvas, legend, theme);
+        let cy = legend.center_y();
+        let color = media_color(theme, MediaType::Audio);
+        let dots = self.view.mode == GraphMode::Matrix;
+        let mut lx = legend.left + LEGEND_PAD;
+        for (label, saved) in legend_entries() {
+            if dots {
+                let c = Point::new(lx + LEGEND_MARK_W / 2.0, cy);
+                if saved {
+                    canvas.draw_circle(c, 4.5, &fill(color));
+                } else {
+                    canvas.draw_circle(c, 4.0, &stroke(color, 1.8));
+                }
+            } else {
+                let mut paint = stroke(color, 2.0);
+                if !saved {
+                    paint.set_path_effect(otto_kit::skia::PathEffect::dash(&[4.0, 3.0], 0.0));
+                }
+                canvas.draw_line(
+                    Point::new(lx, cy),
+                    Point::new(lx + LEGEND_MARK_W, cy),
+                    &paint,
+                );
+            }
+            Label::new(label)
+                .with_style(styles::SUBHEADLINE)
+                .with_color(theme.text_secondary)
+                .centered_on(lx + LEGEND_MARK_W + LEGEND_MARK_GAP, cy)
+                .render(canvas);
+            lx += legend_entry_w(label) + LEGEND_GAP;
+        }
+    }
+
+    /// The material under the filter chips: top-left in the canvas.
+    pub(super) fn filters_rect(&self) -> Rect {
+        let canvas = self.canvas_rect();
+        let chips = filter_chips(self.view.filter);
+        let w = chips.iter().map(|(_, label, _)| chip_w(label)).sum::<f32>()
+            + CHIP_GAP * (chips.len() - 1) as f32
+            + 2.0 * OVERLAY_PAD;
+        Rect::from_xywh(
+            canvas.left + OVERLAY_INSET,
+            canvas.top + OVERLAY_INSET,
+            w.min(canvas.width() - 2.0 * OVERLAY_INSET).max(0.0),
+            FILTERS_H,
+        )
+    }
+
+    /// The material under the legend: bottom-left in the canvas, in the
+    /// views that mark links saved or not with the legend's marks (solid and
+    /// dashed wires, filled and ringed cells). Lanes say it in words.
+    pub(super) fn legend_rect(&self) -> Option<Rect> {
+        if self.view.mode == GraphMode::Lanes {
+            return None;
+        }
+        let canvas = self.canvas_rect();
+        let entries = legend_entries();
+        let w = entries
+            .iter()
+            .map(|(label, _)| legend_entry_w(label))
+            .sum::<f32>()
+            + LEGEND_GAP * (entries.len() - 1) as f32
+            + 2.0 * LEGEND_PAD;
+        Some(Rect::from_xywh(
+            canvas.left + OVERLAY_INSET,
+            canvas.bottom - OVERLAY_INSET - LEGEND_H,
+            w.min(canvas.width() - 2.0 * OVERLAY_INSET).max(0.0),
+            LEGEND_H,
+        ))
+    }
+
+    /// Whether `p` is on one of the canvas overlays, where a press belongs to
+    /// them rather than to the view under them.
+    pub(super) fn overlay_at(&self, p: Point) -> bool {
+        self.pane == Pane::Graph
+            && (self.filters_rect().contains(p)
+                || self.legend_rect().is_some_and(|r| r.contains(p)))
     }
 
     /// A filter chip: tinted in its media's colour while on.
@@ -164,9 +220,7 @@ impl Ui {
         on: bool,
         theme: &Theme,
     ) -> Rect {
-        let font = styles::FOOTNOTE_EMPHASIZED.font();
-        let w = font.measure_str(label, None).0 + 36.0;
-        let rect = Rect::from_xywh(x, cy - CHIP_H / 2.0, w, CHIP_H);
+        let rect = Rect::from_xywh(x, cy - CHIP_H / 2.0, chip_w(label), CHIP_H);
         let rr = RRect::new_rect_xy(rect, CHIP_H / 2.0, CHIP_H / 2.0);
         let color = media_color(theme, media);
         let action = Action::Filter(media);
@@ -193,7 +247,7 @@ impl Ui {
             theme.text_secondary
         };
         Label::new(label)
-            .with_style(styles::FOOTNOTE_EMPHASIZED)
+            .with_style(styles::SUBHEADLINE_EMPHASIZED)
             .with_color(text)
             .centered_on(rect.left + 24.0, cy)
             .render(canvas);
@@ -332,9 +386,9 @@ impl Ui {
             .centered_on(left, y)
             .render(canvas);
         y += 22.0;
-        let body_font = styles::FOOTNOTE.font();
+        let body_font = styles::SUBHEADLINE.font();
         Label::new(ellipsize(&body_font, &subtitle, width))
-            .with_style(styles::FOOTNOTE)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_secondary)
             .centered_on(left, y)
             .render(canvas);
@@ -345,7 +399,7 @@ impl Ui {
         let value_w = width - FACT_LABEL_W;
         let fact = |label: &str, y: f32| {
             Label::new(ellipsize(&body_font, label, FACT_LABEL_W - 8.0))
-                .with_style(styles::FOOTNOTE)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_secondary)
                 .centered_on(left, y)
                 .render(canvas);
@@ -353,7 +407,7 @@ impl Ui {
         fact(t!("audio-detail-state"), y);
         canvas.draw_circle(Point::new(value_x + 4.0, y), 4.0, &fill(state_dot));
         Label::new(state)
-            .with_style(styles::FOOTNOTE)
+            .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_primary)
             .centered_on(value_x + 14.0, y)
             .render(canvas);
@@ -361,7 +415,7 @@ impl Ui {
         for (label, value) in &facts {
             fact(label, y);
             Label::new(ellipsize(&body_font, value, value_w))
-                .with_style(styles::FOOTNOTE)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_primary)
                 .centered_on(value_x, y)
                 .render(canvas);
@@ -371,7 +425,7 @@ impl Ui {
 
         // What it is linked to, each with whether it is kept.
         Label::new(t!("audio-detail-links"))
-            .with_style(styles::FOOTNOTE_EMPHASIZED)
+            .with_style(styles::SUBHEADLINE_EMPHASIZED)
             .with_color(theme.text_primary)
             .centered_on(left, y)
             .render(canvas);
@@ -379,7 +433,7 @@ impl Ui {
         if connections.is_empty() {
             y += CONNECTION_H / 2.0;
             Label::new(t!("audio-detail-no-links"))
-                .with_style(styles::FOOTNOTE)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_secondary)
                 .centered_on(left, y)
                 .render(canvas);
@@ -396,18 +450,18 @@ impl Ui {
             let saved_label = t!("audio-detail-saved");
             let save_label = t!("audio-save");
             let tail_w = if *saved {
-                styles::CAPTION_1.font().measure_str(saved_label, None).0
+                styles::SUBHEADLINE.font().measure_str(saved_label, None).0
             } else {
                 push_button::width(save_label)
             };
             Label::new(ellipsize(&body_font, name, width - tail_w - 12.0))
-                .with_style(styles::FOOTNOTE)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_primary)
                 .centered_on(left, cy)
                 .render(canvas);
             if *saved {
                 Label::new(saved_label)
-                    .with_style(styles::CAPTION_1)
+                    .with_style(styles::SUBHEADLINE)
                     .with_color(theme.text_secondary)
                     .centered_on(right - tail_w, cy)
                     .render(canvas);
@@ -432,7 +486,7 @@ impl Ui {
         if connections.len() > shown {
             let more = t_owned!("audio-detail-more-links", count = connections.len() - shown);
             Label::new(more)
-                .with_style(styles::CAPTION_1)
+                .with_style(styles::SUBHEADLINE)
                 .with_color(theme.text_secondary)
                 .centered_on(left, y + 12.0)
                 .render(canvas);
@@ -453,7 +507,7 @@ impl Ui {
             "audio-detail-properties-count",
             count = props.len()
         ))
-        .with_style(styles::FOOTNOTE_EMPHASIZED)
+        .with_style(styles::SUBHEADLINE_EMPHASIZED)
         .with_color(theme.text_primary)
         .centered_on(left + 16.0, cy)
         .render(canvas);
@@ -482,7 +536,7 @@ impl Ui {
                             .centered_on(x, y)
                             .render(canvas);
                         Label::new(ellipsize(&body_font, value, width))
-                            .with_style(styles::FOOTNOTE)
+                            .with_style(styles::SUBHEADLINE)
                             .with_color(theme.text_primary)
                             .centered_on(x, y + 15.0)
                             .render(canvas);
@@ -493,6 +547,49 @@ impl Ui {
         }
         canvas.restore();
     }
+}
+
+/// The filter chips: each media type, its label and whether it is shown.
+fn filter_chips(filter: Filter) -> [(MediaType, &'static str, bool); 3] {
+    [
+        (MediaType::Audio, t!("audio-filter-audio"), filter.audio),
+        (MediaType::Midi, t!("audio-filter-midi"), filter.midi),
+        (MediaType::Video, t!("audio-filter-video"), filter.video),
+    ]
+}
+
+/// A filter chip's width for `label`.
+fn chip_w(label: &str) -> f32 {
+    styles::SUBHEADLINE_EMPHASIZED
+        .font()
+        .measure_str(label, None)
+        .0
+        + 36.0
+}
+
+/// The legend's entries: a label and whether it shows the saved mark.
+fn legend_entries() -> [(&'static str, bool); 2] {
+    [
+        (t!("audio-legend-saved"), true),
+        (t!("audio-legend-unsaved"), false),
+    ]
+}
+
+/// One legend entry's width: its mark, a gap and its label.
+fn legend_entry_w(label: &str) -> f32 {
+    LEGEND_MARK_W + LEGEND_MARK_GAP + styles::SUBHEADLINE.font().measure_str(label, None).0
+}
+
+/// The rounded, slightly see-through ground under a canvas overlay.
+fn draw_material(canvas: &Canvas, rect: Rect, theme: &Theme) {
+    let radius = rect.height() / 2.0;
+    let rr = RRect::new_rect_xy(rect, radius, radius);
+    let ground = panel_ground(theme);
+    canvas.draw_rrect(
+        rr,
+        &fill(Color::from_argb(0xeb, ground.r(), ground.g(), ground.b())),
+    );
+    canvas.draw_rrect(rr, &stroke(theme.hairline, 1.0));
 }
 
 /// The view switch's label for `mode`.
