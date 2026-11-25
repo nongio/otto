@@ -73,6 +73,9 @@ so the composer's agent list carries none.
 icon would go: the theme's accent while the session is working, its yellow
 while it waits for input, and its faint text colour (`text_tertiary`) when it
 is idle or stopped (a failed session included — the subtitle says it failed).
+A session the service keeps but nothing runs (`_meta.otto.running` is
+`false`, such as a herdr session whose agent quit) has a ring of that faint
+colour instead of a dot; opening it starts the agent again.
 The colours come from the theme, so the dot follows the user's accent and the
 colour scheme.
 

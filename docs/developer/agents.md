@@ -3,7 +3,8 @@
 **Status: proof of concept.** The service runs real agents and the launcher
 talks to it, but the pieces are moving and the plans in
 `components/otto-agents/docs/plans/` are ahead of the code. This page describes
-what exists today.
+what exists today. Sessions in herdr ([below](#sessions-in-herdr)) are in the
+nightly builds and not in a release yet.
 
 Otto can put a coding agent behind the launcher: you press the launcher
 shortcut, type a request instead of an app name, and the answer streams back in
@@ -23,6 +24,12 @@ closing the launcher mid-answer harmless.
 
 ## Two protocols, back to back
 
+The service has two backends for running a session. With herdr installed,
+the **herdr backend** runs each session as the agent's own program in a herdr
+terminal ([Sessions in herdr](#sessions-in-herdr)). Otherwise the **ACP
+backend** runs each agent as a child process, which is what this section
+draws. Clients see no difference: AHP is the same over both.
+
 ```
 ┌───────────────────┐   AHP over WebSocket    ┌──────────────┐   ACP over stdio   ┌───────┐
 │ otto-launcher     │ ──────────────────────▶ │ otto-agents  │ ─────────────────▶ │ agent │
@@ -37,8 +44,8 @@ closing the launcher mid-answer harmless.
 
 - **ACP** ([Agent Client Protocol](https://agentclientprotocol.com)) is what the
   agent speaks. Each session runs its agent as a child process on stdio
-  (`src/acp.rs`). Claude Code through its ACP adapter is the default, and uses
-  your existing login.
+  (`src/acp.rs`). Claude Code through its ACP adapter is the default agent
+  there, and uses your existing login.
 - **AHP** ([Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/))
   is what clients speak: JSON-RPC 2.0, one message per WebSocket text frame
   (`src/server.rs`, `src/rpc.rs`). It is a coordination layer over ACP: the
@@ -111,7 +118,8 @@ The unit is hardened: `NoNewPrivileges`, `PrivateTmp`, `RestrictSUIDSGID` and
 agents it runs write under the home and runtime directories and nowhere else.
 `ProtectHome` stays off because the home directory is where agents work.
 
-Sessions are stored in `$XDG_STATE_HOME/otto-agents/sessions`. They are the
+Sessions are stored in `$XDG_STATE_HOME/otto-agents/sessions`, or
+`herdr-sessions` beside it under the herdr backend. They are the
 person's conversations: the directory is created 0700 and each record 0600,
 and a store written with wider permissions is tightened to the same on the next
 start.
@@ -119,6 +127,144 @@ start.
 The launcher does **not** depend on that crate. It uses the upstream `ahp` and
 `ahp-ws` client crates from crates.io, so the two sides are only coupled
 through the protocol.
+
+## Sessions in herdr
+
+**In nightly builds, not yet in a release.** The design is
+[plan 0016](../../components/otto-agents/docs/plans/0016-herdr-sessions.md).
+
+[herdr](https://herdr.dev) is a terminal workspace for coding agents. Its
+runtime, herdr-core (`hc`), keeps terminals alive with no window attached,
+knows which agent runs in each and what it is doing, and streams that as
+events; herdr-app is its window. Under the herdr backend (`src/herdr.rs`)
+every session is the agent's own program in a herdr terminal: Claude Code, pi
+or OpenCode (`Harness`). otto-agents mirrors those sessions over AHP to Ask,
+Sessions and Studio, and sends what Otto does back to the terminal. The host,
+the store and every client are the same as with ACP.
+
+```
+                       hc events, labels, transcript
+  herdr-core  ──────────────────────────────────────────▶  otto-agents ──AHP──▶ Ask,
+  (agent TUI in a tab) ◀──────────────────────────────────  (herdr backend)       Sessions, …
+                       hc run / send / interrupt / label
+```
+
+ACP and a real terminal interface can't share one live agent: the ACP adapter
+runs its own agent with no screen, and a running TUI takes no second client.
+So under herdr the agent is its TUI, and otto-agents reads and drives it from
+outside.
+
+| | ACP backend | herdr backend |
+|---|---|---|
+| Runs the agent | otto-agents, a child process | herdr-core, a terminal |
+| Interface | Otto's chat | the agent's own TUI, and Otto's chat |
+| Conversation | ACP updates | the agent's transcript |
+| State | ACP turns | `hc events` |
+| Questions | ACP elicitation | the `ask` MCP tool (Claude Code) |
+| Permissions | ACP permission requests | a `PermissionRequest` hook (Claude Code) |
+| Otto → agent | ACP requests | `hc send`, `hc interrupt`, `hc kill` |
+| Survives the service and Otto's windows | no | yes |
+
+**Which backend.** `backend` in `agents.toml` is `"herdr"` or `"acp"`; unset,
+it is herdr when `hc` is on `PATH`, else ACP (`Config::backend` in
+`config.rs`, `herdr::installed`). `serve --herdr` and `serve --acp` override
+it. Settings › Agents › Sessions run in writes the key (Automatic leaves it
+unset), and `otto-setup` offers the same choice.
+
+**Which agents.** Every `[[agents]]` entry whose command runs Claude Code, pi
+or OpenCode, directly or as the package `npx` (or `bunx`, `pnpx`, `uvx`)
+starts, is offered (`Harness::of_agent`); the rest, such as Codex, Hermes or
+Gemini, are left out and logged. A default agent, Otto on Claude Code with id
+`claude`, comes first unless an entry with that id replaces it. Of an entry,
+the herdr backend reads `id`, `name`, `description`, `model`, `folder`,
+`agent`, `colour` and `space`. `permissions`, `mode`, `env`, `config`,
+`enter` and `enter_new` are ignored: what the agent may do on its own is its
+own setting.
+
+**herdr is the source of truth.** `watch_sessions` follows `hc events` over
+every terminal. A terminal labelled `otto.session=<id>`, running or finished,
+is a session; when the last terminal of one is removed, the session leaves
+Otto too. A Claude Code started by hand in herdr is taken up as well: its id
+and folder come from `~/.claude/sessions/<pid>.json`, and its terminal is
+labelled as Otto's from then on. The service keeps its records in
+`$XDG_STATE_HOME/otto-agents/herdr-sessions`, apart from the ACP service's;
+a stored session herdr no longer has is hidden, not deleted.
+
+**herdr owns the process.** A session starts with `hc run --bg --keep`,
+labelled `otto.session`, `otto.agent` and `otto.harness`. Claude Code takes
+`--session-id <uuid>` (`--resume` when taken up again), pi `--session-id`,
+and OpenCode `-s <id>` on a session Otto first makes with `opencode import`.
+A finished terminal is a dormant session: each summary carries
+`_meta.otto.running`, clients draw it with the dormant ring, and opening it
+starts the agent again. Closing every Otto window, or restarting the
+service, leaves the agents running. Removing a session (`forget`) kills and
+removes its terminals, except a shell where Claude was started by hand, which
+is only unlabelled.
+
+**Where it shows.** A session's terminal carries `herdr.space` and
+`herdr.tab`, which herdr-app uses to place it. The space is the one whose
+folder is the session's; with none, `herdr-app do space.new` makes one there,
+named after the agent's `space`, or the folder. The session's `otto.terminal`
+is `otto-agents herdr-show <id>` with `window = "herdr-app"`, so Ctrl+O runs
+it and focuses herdr-app without releasing the session. `herdr::show` opens
+herdr-app when it is closed, gives a terminal with no pane a tab
+(`terminal.keep`) and focuses it (`agent.focus`); a session not running is
+opened through the service first, which starts it again.
+
+**State, conversation and prompts.** `hc events` gives the terminal's
+`status` (`working`, `idle`, `done`, `blocked`, `error`), for Claude Code;
+herdr reports none for pi or OpenCode, so the backend waits for them to
+start before the first prompt and takes turns from the transcript alone. The
+conversation comes from each agent's transcript: Claude's
+`~/.claude/projects/<cwd>/<uuid>.jsonl`, pi's JSONL under
+`~/.pi/agent/sessions`, OpenCode's SQLite database (read with the `sqlite3`
+CLI). pi's and OpenCode's are turned into Claude's shape, which the rest of
+the backend reads, and a session taken up again loads its history from it
+(`SessionEvent::HistoryLoaded`). A prompt from Ask is typed in with `hc send`,
+only while the agent is the program in front; attachments go as `@/path`
+mentions. Stop is `hc interrupt`.
+
+**Questions and permissions** (Claude Code only, for now). A Claude session
+starts with two of this binary's hidden commands (`src/herdr_tools.rs`):
+`otto-agents herdr-ask`, a stdio MCP server whose one tool, `ask`, takes
+`AskUserQuestion`'s input (`AskUserQuestion` itself is disallowed), and
+`otto-agents herdr-permission`, Claude's `PermissionRequest` hook. Both run
+inside the session's terminal and talk to Otto through labels on it:
+
+| Request | Answer |
+|---|---|
+| `otto.ask` `{id, questions}` | `otto.answer` `{id, answers}` |
+| `otto.permission` `{id, tool_name, tool_input, cwd, suggestions}` | `otto.permission.answer` `{id, allow, always}` |
+
+The backend sees the request label in `hc events`, raises it in the chat as
+an input request, which reaches Ask or the island the way an agent's question
+does (see [Where an agent's question goes](#where-an-agents-question-goes)),
+and writes the answer label back. A permission card offers Claude's
+own `permission_suggestions`, its "don't ask again" choices, beside allow and
+deny. The hook gives up after nine minutes and Claude then asks in the
+terminal. pi and OpenCode ask in their own terminals.
+
+**What a client brings.** What a session is created with in `_meta.otto`
+(Studio's document tools as `mcpServers`, its `instructions`, the plugin
+`agent` to run as) reaches Claude on its command line (`--mcp-config` beside
+`ask`, `--append-system-prompt`, `--agents`) and OpenCode through
+`OPENCODE_CONFIG_CONTENT`, set with `env` in front of it since `hc run` takes
+no environment. pi has no MCP, so it gets the instructions and the agent's
+prompt (`--append-system-prompt`) but no document tools. The service stores
+all of it with the session, so a session started again after a restart has
+it too.
+
+**Development knobs**, from the environment while this is a prototype:
+`OTTO_HERDR_SPACE`, `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT` (`none` for
+plain Claude) shape the default agent; `OTTO_HERDR_PERMISSION_MODE` is
+Claude's `--permission-mode` for every session; `OTTO_HERDR_ASK_MCP` and
+`OTTO_HERDR_PERMISSION_HOOK` replace the two commands above.
+
+**Not there yet.** herdr-core is not packaged or bundled with Otto: it is
+installed from herdr.dev. The ACP backend stays for `otto-agents acp`
+clients and for agents herdr does not run. Labels are not authenticated: any
+herdr terminal can write another's, so one session could answer another's
+question. The plan's open questions list the rest.
 
 ## Inside otto-agents
 
@@ -128,14 +274,16 @@ through the protocol.
 | `server.rs` | The WebSocket listener, one task per connection |
 | `rpc.rs` | JSON-RPC framing and error shapes |
 | `agent.rs` | The `Backend` trait: what actually runs a turn, plus the echo backend |
-| `acp.rs` | The real backend: an ACP agent per session, on stdio |
+| `acp.rs` | The ACP backend: an ACP agent per session, on stdio |
+| `herdr.rs` | The herdr backend: each session the agent's own program in a herdr terminal; also `herdr-show`, what Ctrl+O runs |
+| `herdr_tools.rs` | `herdr-ask` and `herdr-permission`, which a herdr session's Claude Code runs to reach Otto |
 | `dialog.rs` | Permission and question prompts, and the `org.otto.Dialog1` prompter |
 | `attached.rs` | What a session's prompts attached, and the reads that need no permission |
 | `elicitation.rs` | ACP form elicitations (Claude's AskUserQuestion) as AHP input requests |
 | `images.rs` | Pictures agents send, written to a cache so they travel as URIs |
 | `config.rs` | `agents.toml`: which agents exist, their models and permissions |
 | `store.rs` | Sessions on disk, so they survive a restart |
-| `cli.rs` | `otto-agents sessions`, `show`, `new` and `enter`, for the terminal |
+| `cli.rs` | `otto-agents sessions`, `show`, `new`, `enter` and `doctor`, for the terminal |
 
 **One lock, one sequence.** Every mutation goes through `Host::lock`, which
 reduces the action with the same `ahp::reducers` the clients use, stamps it with
@@ -704,6 +852,7 @@ the agent an unconfigured desktop starts is a known one rather than whatever
 the registry serves that day.
 
 ```toml
+backend = "herdr"                        # or "acp"; unset: herdr when hc is on PATH
 terminal = ["ghostty", "--class=otto.agent.s{session}", "--title={title}", "--working-directory={cwd}", "-e"]
 
 [[agents]]
@@ -721,7 +870,13 @@ skills = "claude"                        # "claude" or false (the default)
 agent = "otto"                           # optional; a plugin agent to run as (needs skills = "claude")
 colour = "orange"                        # optional; `color` works too
 config = { collaboration_mode = "plan" } # optional; the agent's own session options
+space = "Work"                           # optional, herdr only; the name of a space made for its sessions
 ```
+
+Under the herdr backend only some of these keys count; see
+[Sessions in herdr](#sessions-in-herdr). There, `command` is the agent's own
+program (`claude`, `pi`, `opencode`) with no `args`, and `terminal`, `enter`
+and `enter_new` go unused, since Ctrl+O shows the session in herdr-app.
 
 `folder` is the folder an agent's sessions start in when the client names none,
 published to clients as `_meta.otto.folders.<id>` on the root state. It is the
@@ -812,7 +967,8 @@ tell which one to use when none is asked for.
 - [`components/otto-agents/docs/plans/`](../../components/otto-agents/docs/plans/README.md)
   covers one plan per milestone, with status. [0010](../../components/otto-agents/docs/plans/0010-poc.md)
   is the proof of concept, [0011](../../components/otto-agents/docs/plans/0011-launcher-ask-v2.md)
-  the launcher's ask mode.
+  the launcher's ask mode, [0016](../../components/otto-agents/docs/plans/0016-herdr-sessions.md)
+  sessions in herdr.
 - [`specs/launcher.md`](../../specs/launcher.md): the launcher's behavioural contract.
 - [`specs/portal-access-dialog.md`](../../specs/portal-access-dialog.md): the dialog
   contract the permission prompts reuse.

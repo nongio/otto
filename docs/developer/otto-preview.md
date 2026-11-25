@@ -57,7 +57,10 @@ process per session that serves every Studio window, plus a short-lived
 - **The chat.** The panel uses otto-agents-kit's `Ask` and `ChatView`, which
   talk to the `otto-agents` service. A session started from Studio carries the
   file as its subject, and `_meta.otto.mcpServers` naming this program with
-  `--mcp`, so the agent gets the document tools. See [Agents](agents.md).
+  `--mcp`, so the agent gets the document tools. When sessions run in herdr,
+  those tools, Studio's instructions and its `studio` agent reach Claude Code
+  and opencode; pi gets the instructions and the agent but no document tools.
+  See [Agents](agents.md#sessions-in-herdr).
 - **The MCP server.** `otto-preview --mcp` speaks MCP over stdio, with the
   document's path in `OTTO_PREVIEW_DOC`. It holds no state and never touches
   the display: each `preview_*` tool (info, render, marks, draw, clear,

@@ -178,7 +178,10 @@ Underneath it is still `otto-preview` (the program, its app id and the
   Otto's desktop helper stays out of it; `instructions`, which otto-agents hands the agent ahead of its first
   turn (it is working on the file shown beside the chat, edits it in place
   and calls `preview_reload`); and `mcpServers`, this program in `--mcp` mode
-  with the file in `OTTO_PREVIEW_DOC` (see *Document tools*).
+  with the file in `OTTO_PREVIEW_DOC` (see *Document tools*). When sessions
+  run in herdr (nightly builds), all three reach Claude Code and opencode,
+  and are kept with the session so a restarted one has them; pi gets the
+  instructions and the agent but not the document tools.
 - The file goes with the first message, but is never shown as an attachment,
   since it is open beside the chat. Marks going with a message are not shown
   as attachments either.

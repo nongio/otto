@@ -93,7 +93,7 @@ applications share:
 | `otto-network` | The network through NetworkManager: a snapshot model and its actions, shared by the top bar's indicator and Settings' Network pane |
 | `otto-search` | File search over the desktop's index: the query language, shared by Files, and the `otto-search` command |
 | `otto-audio-graph` | The PipeWire graph followed live: nodes, ports, links, node identity and the saved routing, shared by Audio and its service |
-| `otto-agents` | Runs ACP agents and serves them over the Agent Host Protocol |
+| `otto-agents` | Runs agents, in herdr or over ACP, and serves them over the Agent Host Protocol |
 | `otto-foundations` | Library: the UI-free base, XDG directories, `file://` URIs and name matching; see [otto-foundations.md](otto-foundations.md) |
 | `otto-agents-client` | Library: talking to `otto-agents`, its socket, session URIs and file URIs, and the harness presets |
 | `otto-media-kit` | Library: video playback for Otto apps; a sandboxed GStreamer worker plus the player view that draws its frames |

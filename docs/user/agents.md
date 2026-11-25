@@ -9,6 +9,12 @@ you when it needs permission or has a question.
 Otto does not ship an agent of its own. It runs the ones you already have
 installed and logged in, and answers as **Otto** whichever one is underneath.
 
+There are two ways your sessions can run. With [herdr](https://herdr.dev)
+installed, each one is the agent's own program in a herdr terminal, and Ask
+shows the same conversation (see [Where sessions run](#where-sessions-run)).
+Without it, Otto runs the agents itself. Sessions in herdr are in Otto's
+nightly builds; the latest release runs every agent in Otto.
+
 ## Before it works
 
 The quickest way is `otto-setup`, in a terminal. It finds what you have
@@ -24,6 +30,8 @@ is left. By hand:
 
 1. **Install an agent** and log it in: Claude Code, OpenCode, Codex, Hermes or
    pi. Otto runs the command you name; it does not manage accounts or keys.
+   For sessions in herdr, install herdr too (`hc` and `herdr-app`); there it
+   runs Claude Code, pi and OpenCode.
 2. **Start the service**, which is off until you ask for it:
 
    ```sh
@@ -42,7 +50,8 @@ is left. By hand:
    the launcher, the field says who the request is going to: "Ask @Otto…",
    your default agent. `Down` lists the others and `Return` takes the
    highlighted one. `Ctrl+L` switches between your sessions and a fresh
-   request, and `Ctrl+O` continues the session in a terminal.
+   request, and `Ctrl+O` continues the session in a terminal (in herdr, it
+   shows the session's tab).
    `otto-launcher --agents` opens straight on the list of sessions you have
    going.
 
@@ -78,14 +87,16 @@ an agent, and the agent talks to whoever it is logged into. Worth knowing:
 - **The first line of your request names the session**, which means it shows in
   the window title if you continue in a terminal, where other programs you run
   can read it.
-- **`npx` fetches from npm.** The default Claude entry, and the Codex one, run
-  their adapters through `npx`, which downloads the package the first time.
-  Point `command` at an installed binary if you would rather it did not.
+- **`npx` fetches from npm.** When Otto runs the agents, the default Claude
+  entry and the Codex one run their adapters through `npx`, which downloads
+  the package the first time. Point `command` at an installed binary if you
+  would rather it did not. herdr runs the agents' own programs, so nothing is
+  fetched there.
 - **What is written down.** Sessions are listed in
-  `~/.local/state/otto-agents/sessions/`, readable only by you. They hold the
-  session's folder, its title and its status, not the conversation, which
-  stays with the agent. Nothing prunes them yet; delete a session in Ask to
-  remove its record.
+  `~/.local/state/otto-agents/sessions/` (`herdr-sessions/` beside it for
+  sessions in herdr), readable only by you. They hold the session's folder,
+  its title and its status, not the conversation, which stays with the agent.
+  Nothing prunes them yet; delete a session in Ask to remove its record.
 - **Pictures an agent sends are kept on disk.** An agent can answer with a
   picture (a screenshot, a diagram) and Ask shows it. The file goes in
   `~/.cache/otto/agents/images`, readable only by you, and the folder is trimmed
@@ -104,7 +115,9 @@ titles or screenshots.
 ## What each agent can do
 
 Not every agent can do everything, and the differences are worth knowing
-before you pick one. This is what each was checked to do here:
+before you pick one. This is what each was checked to do here, with Otto
+running the agents; in herdr it is a little different (see
+[Where sessions run](#where-sessions-run)):
 
 | Agent | Otto's knowledge | Answers as Otto | Asks you questions | Modes on `Shift+Tab` | Continue in a terminal | Model from `agents.toml` |
 |---|---|---|---|---|---|---|
@@ -168,17 +181,54 @@ goes to when you do not choose.
 
 ## Where sessions run
 
-When [herdr](https://herdr.dev) is installed, each session runs in it as the
-agent's own terminal: Ask shows the conversation, and Ctrl+O opens the
-terminal in herdr. herdr runs Claude Code, pi and opencode, so other agents
-are not offered there. Settings › Agents › Sessions run in picks herdr or Otto
-by hand; in `agents.toml` that is `backend = "herdr"` or `backend = "acp"`.
-`otto-setup` offers the same choice, and writes it only when it differs from
-what would happen anyway.
+Sessions in herdr are new, and in Otto's nightly builds only. Otto doesn't
+install herdr for you yet: get it from [herdr.dev](https://herdr.dev).
+
+When [herdr](https://herdr.dev) is installed, every session runs in it, as
+the agent's own program in a herdr terminal: Claude Code, pi or OpenCode, with
+the screen you know from using it by hand. Ask, Sessions and Studio show the
+same session: what you write in Ask is typed into the terminal, and what you
+write in the terminal shows up in Ask. Work in whichever is closer.
+
+- **It keeps running.** Close Ask, Studio, even herdr-app, and the agent
+  carries on in herdr. The sessions are still listed the next time you look.
+  One whose agent has quit shows a grey ring; opening it starts the agent
+  again where it left off.
+- **`Ctrl+O` shows the session in herdr-app**, in its own tab, opening the app
+  if it is closed and starting the agent again if it had quit. Unlike a
+  terminal opened from Otto, the session stays in Ask too.
+- **Sessions open where you work.** A session goes in the herdr-app space
+  whose folder is the session's. With none, a space is made there, named
+  after the agent's `space` in `agents.toml`, or after the folder.
+- **Claude Code you start yourself is picked up.** Run `claude` in a herdr
+  tab and the session appears in Ask, like one started from Otto.
+- **Removing a session in Ask** ends its agent and closes its terminal. A
+  Claude Code you started by hand in a shell is only let go: the shell stays.
+- **Questions and permission requests** from Claude Code come to Otto, as
+  they do when Otto runs the agent: in Ask, or on the island when no window
+  is watching. A permission request offers Claude's own "don't ask again"
+  choices. Left unanswered for about nine minutes, Claude asks in its terminal
+  instead. pi and OpenCode ask in their terminal for now, so press `Ctrl+O`
+  when one stops to ask.
+
+herdr runs Claude Code, pi and OpenCode, so only those agents are offered
+there. Codex, Hermes and Gemini run only when Otto runs the agents. If no
+agent of yours has the id `claude`, herdr also offers Otto on Claude Code.
 
 In herdr an agent's `command` is the agent's own program, `claude`, `pi` or
-`opencode`, with no `args`: herdr starts it with the PATH a login shell gets,
-so a program that runs in a new terminal runs there too.
+`opencode`, with no `args` (the `npx` adapter line of an agent set up for Otto
+works too). herdr starts it with the PATH a login shell gets, so a program
+that runs in a new terminal runs there too. Some keys in `agents.toml` have no
+effect in herdr: `permissions`, `mode`, `env`, `config` and the `enter`
+lines. What an agent may do without asking is up to the agent's own settings.
+`name`, `model`, `folder`, `agent`, `colour` and `space` are used.
+
+**Picking where they run.** Settings › Agents › **Sessions run in** has
+Automatic (herdr when it is installed, else Otto), herdr and Otto. In
+`agents.toml` that is `backend = "herdr"` or `backend = "acp"`, with no
+`backend` for Automatic. `otto-setup` offers the same choice, and writes it
+only when it differs from what would happen anyway. Sessions in herdr and
+sessions Otto ran are listed apart, so switching shows the other set.
 
 ## Add an agent of your own
 
@@ -240,6 +290,10 @@ enter_new = ["claude", "--session-id", "{session}"]
 `folder` is worth a moment: it is the reach you are handing over, so name the
 narrowest folder the agent needs rather than your home.
 
+In herdr, `command = "claude"` with no `args` is enough, and the `enter`
+lines and `permissions` are not used (see
+[Where sessions run](#where-sessions-run)).
+
 **3. Restart the service.** Run `systemctl --user restart otto-agents`. The
 configuration is read when it starts, so nothing changes until you do.
 
@@ -275,4 +329,11 @@ that names the file.
   else uses.
 - **No dialog appears when it needs you.** Permission requests and questions
   are drawn by otto-islands; without it, a permission request is denied and a
-  question waits in the conversation.
+  question waits in the conversation. In herdr, pi and OpenCode ask in their
+  terminal: press `Ctrl+O` to answer there.
+- **An agent is missing from the list in herdr.** herdr runs Claude Code, pi
+  and OpenCode only. Switch Sessions run in to Otto for the others.
+- **Sessions in herdr don't start.** `otto-agents doctor` says whether the
+  service finds `hc`, `herdr-app` and each agent's program (and `sqlite3`,
+  which it reads OpenCode's sessions with). The service needs `hc` and
+  `herdr-app` on its own PATH; `otto-setup` adds them.

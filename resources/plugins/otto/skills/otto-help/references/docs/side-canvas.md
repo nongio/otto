@@ -16,7 +16,8 @@ agent sessions the agent service has, the same list the launcher shows with
 Each row is a session: its title, the agent it belongs to, what it is doing
 and the folder it works in. The dot on the left is in your accent colour
 while the agent works, yellow when it is waiting for an answer, and grey when
-it is idle.
+it is idle. A grey ring is a session whose agent has quit, in herdr; opening
+it starts the agent again.
 
 Click a session to carry it on: the launcher opens on that conversation and
 the canvas slides away.

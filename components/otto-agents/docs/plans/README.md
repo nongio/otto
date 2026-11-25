@@ -15,7 +15,7 @@ the code and the tests remain the source of truth for behaviour.
 
 ## Architecture in one line
 
-otto-agents is the agents service: it runs ACP agents and serves them over AHP. The launcher is the GUI, and every Otto surface is an AHP client (see 0003 and 0007).
+otto-agents is the agents service: it runs agents, in herdr (0016) or over ACP (0003), and serves them over AHP. The launcher is the GUI, and every Otto surface is an AHP client (see 0003 and 0007).
 
 | # | Plan | Status | Depends on |
 |---|---|---|---|

@@ -127,6 +127,11 @@ agent service only reads it when it starts, so changes here wait: press
 Both stay greyed out until there is something to save. The **Agent service**
 row at the top says whether the service is running, with **Start** or
 **Restart**.
+**Sessions run in** says what runs your sessions: **herdr**, where each agent
+runs in its own terminal (Claude Code, pi and OpenCode only), or **Otto**,
+which runs every agent itself. **Automatic** picks herdr when it is installed.
+herdr is in Otto's nightly builds; see
+[Where sessions run](agents.md#where-sessions-run).
 Apply also runs `otto-agents plugins install`, which gives every harness
 other than Claude Code its own copy of the instructions. Hermes is the one it
 can't finish: it needs a profile for each set of instructions, and the pane
@@ -139,7 +144,7 @@ they say; nothing is written until you apply.
 
 Picking another **Harness** (Claude Code, Codex, OpenCode, Hermes or pi) sets
 the agent up for it: the command, how it finds Otto's instructions, and how
-`Ctrl+O` continues a session in a terminal. It also clears the model, since
+`Ctrl+O` continues a session in a terminal when Otto runs it. It also clears the model, since
 each harness names models differently.
 The **Command** field changes the command alone.
 

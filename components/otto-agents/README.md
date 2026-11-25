@@ -5,12 +5,28 @@ A Rust server for the [Agent Host Protocol](https://microsoft.github.io/agent-ho
 sessions.
 
 **Status:** proof of concept ([plan 0010](docs/plans/0010-poc.md)). otto-agents runs
-agents over ACP, serves sessions over AHP, and lists them in the terminal.
+agents, serves sessions over AHP, and lists them in the terminal.
+
+Sessions run in one of two backends:
+
+- **herdr** ([plan 0016](docs/plans/0016-herdr-sessions.md)), in nightly builds and not
+  yet in a release. With [herdr](https://herdr.dev) installed (`hc` on `PATH`), each
+  session is the agent's own program, Claude Code, pi or opencode, in a herdr-core
+  terminal. otto-agents mirrors it: state from `hc events`, the conversation from the
+  agent's transcript, prompts typed in with `hc send`. The agents keep running when
+  Otto's windows close or the service restarts, and Ctrl+O shows a session's tab in
+  herdr-app. Only Claude Code, pi and opencode agents are offered.
+- **ACP**, everywhere else: each agent runs as a child process speaking the Agent
+  Client Protocol on stdio. Codex, Hermes and Gemini run only here.
+
+`backend = "herdr"` or `"acp"` in `agents.toml` picks one; unset, it is herdr when `hc`
+is on `PATH`. `serve --herdr` and `serve --acp` override it.
 
 ## Quick start
 
 ```sh
 cargo run -p otto-agents -- serve                      # on $XDG_RUNTIME_DIR/otto-agents/agents.sock
+cargo run -p otto-agents -- serve --acp                # run the agents here, even with herdr installed
 cargo run -p otto-agents --example ask -- "summarise the README"
 cargo run -p otto-agents -- sessions                   # ID, status, agent, age, folder, title
 cargo run -p otto-agents -- show                       # transcript of the newest session
@@ -20,12 +36,13 @@ cargo run -p otto-agents -- enter 1a2b                 # take a session up in th
 cargo run -p otto-agents -- plugins install            # link Otto's skills into ~/.agents/skills, render its agent per harness
 cargo run -p otto-agents -- plugins status             # what was found, and where each harness's copy stands
 cargo run -p otto-agents -- acp --agent claude         # be one ACP agent on stdio whose sessions are the desktop's
+cargo run -p otto-agents -- doctor                     # what stops Ask working
 ```
 
 - **Agents.** They come from `[[agents]]` in `~/.config/otto/agents.toml` (after
   `/etc/otto/agents.toml`), or from `serve --config <file>`. With none configured,
-  `claude` runs through `npx -y @agentclientprotocol/claude-agent-acp@0.79.0`, using
-  your existing Claude login.
+  under ACP `claude` runs through `npx -y @agentclientprotocol/claude-agent-acp@0.79.0`,
+  using your existing Claude login; under herdr the default is Otto on Claude Code.
 
   ```toml
   [[agents]]
@@ -39,7 +56,14 @@ cargo run -p otto-agents -- acp --agent claude         # be one ACP agent on std
   skills = "claude"      # optional: Claude loads Otto's skills as a plugin
   agent = "otto"         # optional: run as the plugin's `otto` agent (needs skills = "claude")
   config = { collaboration_mode = "plan" }  # optional: the agent's own session options, e.g. pi's thought_level = "high"
+  space = "Work"         # optional, herdr only: the name of a herdr-app space made for its sessions
   ```
+
+  Under herdr, `command` is the agent's own program (`claude`, `pi`, `opencode`) and
+  `permissions`, `mode`, `env`, `config` and the `enter` lines are ignored. Claude Code's
+  questions and permission requests come to Otto through `otto-agents herdr-ask` (an
+  MCP `ask` tool) and `otto-agents herdr-permission` (its `PermissionRequest` hook); pi
+  and opencode ask in their own terminals for now.
 
 - **Skills and the Otto agent.** Otto's skills (`/usr/share/otto/plugins/otto`)
   are off for an agent unless `skills` says otherwise. Claude takes them as a
@@ -73,11 +97,14 @@ journalctl --user -u otto-agents -f    # its log
 
 What it needs:
 
-- **An agent to run.** Each entry in `agents.toml` names a command that speaks ACP.
-  The default, Claude, runs through `npx -y @agentclientprotocol/claude-agent-acp@0.79.0`,
-  so it needs Node.js and a Claude login.
+- **An agent to run.** Under herdr: herdr-core (`hc`, `herdr-app`), not packaged
+  with Otto yet, and the agents' own programs, logged in; `sqlite3` for opencode.
+  Under ACP: each entry in `agents.toml` names a command that speaks ACP. The default,
+  Claude, runs through `npx -y @agentclientprotocol/claude-agent-acp@0.79.0`, so it
+  needs Node.js and a Claude login.
 - **Those commands on its PATH.** The unit does not get a login shell's PATH, so
-  anything under nvm or `~/.local/bin` is not found. Give the full path in
+  anything under nvm or `~/.local/bin` is not found. Under herdr that means `hc` and
+  `herdr-app` (herdr starts the agents with a login shell's PATH). Give the full path in
   `agents.toml`, or add the directories with `systemctl --user edit otto-agents`:
 
   ```ini
