@@ -18,7 +18,6 @@ use std::time::Duration;
 use ahp_types::state::{AgentInfo, ChatInputResponseKind, SessionStatus};
 use elicitation_content::to_labels;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot};
 
@@ -27,6 +26,7 @@ use crate::agent::{
     SessionEvent, SessionSpec, TurnOutcome, agent_info,
 };
 use crate::elicitation;
+use crate::herdr_core;
 use crate::skills;
 
 /// The provider id Ask sees.
@@ -253,19 +253,26 @@ impl HerdrBackend {
     /// The command line that starts or resumes `session`. What the client
     /// asked for goes in: its MCP servers (Studio's document tools), its
     /// instructions, and the plugin agent to run as.
-    fn argv(
+    fn launch(
         &self,
         agent: &HerdrAgent,
         session: &str,
         resume: bool,
         spec: &SessionSpec,
-    ) -> Vec<String> {
+    ) -> Launch {
         let profile = self.profile(agent, spec);
         match agent.harness {
-            Harness::Pi => return pi_argv(agent, session, profile, spec.instructions.as_deref()),
+            Harness::Pi => {
+                return Launch::argv(pi_argv(
+                    agent,
+                    session,
+                    profile,
+                    spec.instructions.as_deref(),
+                ));
+            }
             Harness::OpenCode => {
                 let config = opencode_config(session, profile, spec);
-                return opencode_argv(agent, session, agent.mode.as_deref(), config);
+                return opencode_launch(agent, session, agent.mode.as_deref(), config);
             }
             Harness::Claude => {}
         }
@@ -343,7 +350,24 @@ impl HerdrBackend {
                 profile.name.clone(),
             ]);
         }
-        argv
+        Launch::argv(argv)
+    }
+}
+
+/// How a session's agent is started: its command line, and what goes in its
+/// environment.
+#[derive(Debug, Default)]
+struct Launch {
+    argv: Vec<String>,
+    env: serde_json::Map<String, Value>,
+}
+
+impl Launch {
+    fn argv(argv: Vec<String>) -> Self {
+        Self {
+            argv,
+            ..Self::default()
+        }
     }
 }
 
@@ -417,13 +441,12 @@ impl Backend for HerdrBackend {
                 };
                 // A shell where Claude Code was started by hand is the
                 // person's: it is let go, never ended.
-                let item = hc_json(&["get", address]).await;
-                if item.as_ref().is_some_and(|item| !runs_agent_itself(item)) {
+                if !runs_agent_itself(&terminal) {
                     let_go(address).await;
                     continue;
                 }
                 if terminal.get("state").and_then(Value::as_str) == Some("live") {
-                    let _ = hc().args(["kill", address]).output().await;
+                    let _ = herdr_core::call("terminal.kill", json!({ "terminal": address })).await;
                 }
                 remove(address).await;
             }
@@ -471,13 +494,15 @@ impl Backend for HerdrBackend {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(session.clone());
-        let argv = self.argv(agent, &session, resume.is_some(), &spec);
+        let launch = self.launch(agent, &session, resume.is_some(), &spec);
         let space = agent.space.clone();
         let harness = agent.harness;
-        let labels = vec![
-            format!("otto.agent={}", agent.id),
-            format!("otto.harness={}", harness.label()),
-        ];
+        let labels = json!({
+            "otto": "agent",
+            "otto.session": session,
+            "otto.agent": agent.id,
+            "otto.harness": harness.label(),
+        });
         let ours = self.started.clone();
         let placing = self.placing.clone();
         tokio::spawn(async move {
@@ -494,8 +519,14 @@ impl Backend for HerdrBackend {
                         }
                     }
                     let placement = place(&placing, space, &spec.cwd).await;
-                    let started =
-                        run(&session, &labels, &spec.cwd, placement.space.clone(), &argv).await;
+                    let started = run(
+                        &session,
+                        labels,
+                        &spec.cwd,
+                        placement.space.clone(),
+                        &launch,
+                    )
+                    .await;
                     if let (Ok(_), Some(space), Some(tab)) =
                         (&started, &placement.space, &placement.first_tab)
                     {
@@ -554,23 +585,6 @@ pub fn agent_program(command: &str, args: &[String]) -> Option<&'static str> {
 /// Whether herdr is installed: `hc`, herdr-core's command, is on `PATH`.
 pub fn installed() -> bool {
     crate::cli::which("hc").is_some()
-}
-
-/// `hc`, with this process's own hc identity removed: sends from inside an hc
-/// terminal are wrapped in `<hc from=…>` tags, sends from outside arrive plain.
-fn hc() -> Command {
-    let mut command = Command::new("hc");
-    command
-        .env_remove("HC_TERMINAL_ID")
-        .env_remove("HC_SCOPE")
-        .stdin(Stdio::null())
-        .kill_on_drop(true);
-    command
-}
-
-async fn hc_json(args: &[&str]) -> Option<Value> {
-    let output = hc().args(args).arg("--json").output().await.ok()?;
-    serde_json::from_slice(&output.stdout).ok()
 }
 
 /// A model as a person reads it: `opus` as "Opus"; the agent's own default
@@ -751,40 +765,11 @@ async fn close_first_tab(space: &str, tab: &str) {
         .await;
 }
 
-/// A document herdr-core keeps, read through its API: `hc connect` takes
-/// JSON-RPC on stdin.
+/// A document herdr-core keeps.
 async fn doc(name: &str) -> Option<Value> {
-    use tokio::io::AsyncWriteExt;
-    let mut child = hc()
-        .arg("connect")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .ok()?;
-    let request =
-        json!({ "jsonrpc": "2.0", "id": 1, "method": "doc.get", "params": { "name": name } });
-    let mut stdin = child.stdin.take()?;
-    stdin
-        .write_all(format!("{request}\n").as_bytes())
+    herdr_core::call("doc.get", json!({ "name": name }))
         .await
-        .ok()?;
-    let mut lines = BufReader::new(child.stdout.take()?).lines();
-    let reply = tokio::time::timeout(Duration::from_secs(5), async {
-        while let Ok(Some(line)) = lines.next_line().await {
-            let Ok(reply) = serde_json::from_str::<Value>(&line) else {
-                continue;
-            };
-            if reply.get("id") == Some(&json!(1)) {
-                return reply.get("result").cloned();
-            }
-        }
-        None
-    })
-    .await
-    .ok()
-    .flatten();
-    drop(stdin);
-    reply
+        .ok()
 }
 
 /// Shows `session`'s running terminal in herdr-app, in its space and tab.
@@ -863,34 +848,36 @@ pub async fn show(session: &str, url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// What `terminal.list` asks for to find `session`'s terminals, running or
+/// finished.
+fn session_filter(session: &str) -> Value {
+    json!({ "all": true, "labels": { "otto.session": session } })
+}
+
 /// Every terminal herdr keeps for `session`, running or finished; `None`
-/// when hc cannot be asked.
+/// when herdr-core cannot be asked.
 async fn terminals(session: &str) -> Option<Vec<Value>> {
-    let filter = format!("otto.session={session}");
-    let list = hc_json(&["ls", "--all", "--label", &filter]).await?;
+    herdr_core::list(session_filter(session)).await.ok()
+}
+
+/// [`terminals`], for the backend's synchronous questions: given up after a
+/// moment, so a herdr-core that does not answer does not hold the service.
+fn terminals_blocking(session: &str) -> Option<Vec<Value>> {
+    let list = herdr_core::call_blocking("terminal.list", session_filter(session)).ok()?;
     list.get("terminals")?.as_array().cloned()
 }
 
-/// [`terminals`], for the backend's synchronous questions.
-fn terminals_blocking(session: &str) -> Option<Vec<Value>> {
-    let filter = format!("otto.session={session}");
-    let output = std::process::Command::new("hc")
-        .env_remove("HC_TERMINAL_ID")
-        .env_remove("HC_SCOPE")
-        .args(["ls", "--all", "--json", "--label", &filter])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let list: Value = serde_json::from_slice(&output.stdout).ok()?;
-    list.get("terminals")?.as_array().cloned()
+/// One terminal's facts; `None` when herdr has no such terminal.
+async fn get(terminal: &str) -> Option<Value> {
+    herdr_core::call("terminal.get", json!({ "terminal": terminal }))
+        .await
+        .ok()
 }
 
 /// Removes a terminal, waiting a moment for one just killed to finish.
 async fn remove(address: &str) {
     for _ in 0..20 {
-        let finished = hc_json(&["get", address])
+        let finished = get(address)
             .await
             .is_none_or(|item| item.get("state").and_then(Value::as_str) != Some("live"));
         if finished {
@@ -898,7 +885,7 @@ async fn remove(address: &str) {
         }
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
-    let _ = hc().args(["rm", address]).output().await;
+    let _ = herdr_core::call("terminal.rm", json!({ "terminal": address })).await;
 }
 
 /// Removes `session`'s finished terminals other than `keep`.
@@ -907,47 +894,40 @@ async fn prune(session: &str, keep: &str) {
         let address = terminal.get("address").and_then(Value::as_str);
         let finished = terminal.get("state").and_then(Value::as_str) == Some("finished");
         if let Some(address) = address.filter(|address| finished && *address != keep) {
-            let _ = hc().args(["rm", address]).output().await;
+            let _ = herdr_core::call("terminal.rm", json!({ "terminal": address })).await;
         }
     }
 }
 
-/// One run of `hc events` over every terminal, reporting the sessions in
-/// them as they are found and removed; `sessions` is each terminal's session.
-/// Returns when the stream ends: whether it said anything.
+/// One subscription to every terminal, reporting the sessions in them as
+/// they are found and removed; `sessions` is each terminal's session. Returns
+/// when herdr-core goes: whether it answered at all.
 async fn follow_sessions(
     changes: &mpsc::UnboundedSender<SessionChange>,
     adopt_as: &[(String, Option<PathBuf>)],
     started: &Started,
-    sessions: &mut std::collections::HashMap<String, String>,
+    sessions: &mut HashMap<String, String>,
 ) -> bool {
-    let Ok(mut child) = hc()
-        .args(["events", "--json"])
-        .stdout(Stdio::piped())
-        .spawn()
-    else {
+    let Ok(mut subscription) = herdr_core::subscribe(json!({})).await else {
         return false;
     };
-    let Some(stdout) = child.stdout.take() else {
-        return false;
-    };
-    let mut lines = BufReader::new(stdout).lines();
-    let mut heard = false;
-    while let Ok(Some(line)) = lines.next_line().await {
-        heard = true;
-        let Ok(event) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if let Some(snapshot) = event.get("terminals").and_then(Value::as_array) {
-            // Terminals gone while the stream was down are forgotten here,
+    // Each terminal's facts, kept current from the changes.
+    let mut items: HashMap<String, Value> = HashMap::new();
+    let mut snapshot = Some(std::mem::take(&mut subscription.snapshot));
+    loop {
+        if let Some(snapshot) = snapshot.take() {
+            items = snapshot
+                .into_iter()
+                .filter_map(|item| {
+                    let address = item.get("address")?.as_str()?.to_owned();
+                    Some((address, item))
+                })
+                .collect();
+            // Terminals gone while herdr was not followed are forgotten here,
             // not reported removed: a herdr-core that started afresh has
             // none, and its sessions are hidden at the next start instead.
-            sessions.retain(|address, _| {
-                snapshot
-                    .iter()
-                    .any(|item| item.get("address").and_then(Value::as_str) == Some(address))
-            });
-            for item in snapshot {
+            sessions.retain(|address, _| items.contains_key(address));
+            for item in items.values() {
                 let known = item
                     .get("address")
                     .and_then(Value::as_str)
@@ -966,21 +946,36 @@ async fn follow_sessions(
                     None => consider(item, sessions, changes, adopt_as, started).await,
                 }
             }
-            continue;
         }
-        let Some(params) = event.get("params") else {
+        let (address, kind) = match subscription.next().await {
+            None => return true,
+            Some(herdr_core::Event::Missed(terminals)) => {
+                snapshot = Some(terminals);
+                continue;
+            }
+            Some(herdr_core::Event::Changed {
+                terminal,
+                kind,
+                data,
+            }) => {
+                let item = items
+                    .entry(terminal.clone())
+                    .or_insert_with(|| json!({ "address": terminal }));
+                herdr_core::Event::apply(item, &kind, &data);
+                (terminal, kind)
+            }
+        };
+        let address = address.as_str();
+        let Some(item) = items.get(address).cloned() else {
             continue;
         };
-        let Some(address) = params.get("terminal").and_then(Value::as_str) else {
-            continue;
-        };
-        match params.get("type").and_then(Value::as_str) {
+        match kind.as_str() {
             // The agent named its session, or named it anew.
-            Some("title") => {
+            "title" => {
                 let Some(session) = sessions.get(address) else {
                     continue;
                 };
-                let title = params.pointer("/data/title").and_then(Value::as_str);
+                let title = item.get("title").and_then(Value::as_str);
                 if let Some(title) = title.and_then(agent_title) {
                     let _ = changes.send(SessionChange::Titled {
                         agent_session: session.clone(),
@@ -988,7 +983,8 @@ async fn follow_sessions(
                     });
                 }
             }
-            Some("removed") => {
+            "removed" => {
+                items.remove(address);
                 let Some(session) = sessions.remove(address) else {
                     continue;
                 };
@@ -1003,11 +999,8 @@ async fn follow_sessions(
             // that finds it.
             // A shell Otto let go of, its Claude gone: the session leaves
             // with it, and the shell may hold another later.
-            Some("labels") if sessions.contains_key(address) => {
-                let labelled = hc_json(&["get", address])
-                    .await
-                    .is_some_and(|item| item.pointer("/labels/otto.session").is_some());
-                if labelled {
+            "labels" if sessions.contains_key(address) => {
+                if item.pointer("/labels/otto.session").is_some() {
                     continue;
                 }
                 let Some(session) = sessions.remove(address) else {
@@ -1018,24 +1011,19 @@ async fn follow_sessions(
                     let _ = changes.send(SessionChange::Removed(session));
                 }
             }
-            Some("created" | "foreground" | "labels" | "status")
-                if !sessions.contains_key(address) =>
-            {
-                if let Some(item) = hc_json(&["get", address]).await {
-                    consider(&item, sessions, changes, adopt_as, started).await;
-                }
+            "created" | "foreground" | "labels" | "status" if !sessions.contains_key(address) => {
+                consider(&item, sessions, changes, adopt_as, started).await;
             }
             _ => {}
         }
     }
-    heard
 }
 
 /// Reports the session a terminal holds: an Otto session by its label, or a
 /// Claude Code started by hand, which is labelled as Otto's from then on.
 async fn consider(
     item: &Value,
-    sessions: &mut std::collections::HashMap<String, String>,
+    sessions: &mut HashMap<String, String>,
     changes: &mpsc::UnboundedSender<SessionChange>,
     adopt_as: &[(String, Option<PathBuf>)],
     started: &Started,
@@ -1057,11 +1045,11 @@ async fn consider(
             };
             let provider = adopted_agent(adopt_as, &cwd);
             let labels = [
-                "otto=agent".to_owned(),
-                format!("otto.session={session}"),
-                format!("otto.agent={provider}"),
+                ("otto", "agent"),
+                ("otto.session", session.as_str()),
+                ("otto.agent", provider.as_str()),
             ];
-            let _ = hc().arg("label").arg(address).args(&labels).output().await;
+            let _ = herdr_core::label(address, labels).await;
             tracing::info!(%address, %session, "a Claude Code started in herdr");
             (session, provider, cwd)
         }
@@ -1134,22 +1122,9 @@ fn provider_is_pi(item: &Value) -> bool {
         || program(item).is_some_and(|program| Harness::of(program) == Some(Harness::Pi))
 }
 
-/// The program a terminal was started with, past an `env VAR=value` in
-/// front of it, as opencode is started with its config.
+/// The program a terminal was started with.
 fn program(item: &Value) -> Option<&str> {
-    let mut words = item
-        .get("argv")?
-        .as_array()?
-        .iter()
-        .filter_map(Value::as_str);
-    let first = words.next()?;
-    if Path::new(first)
-        .file_name()
-        .is_some_and(|name| name == "env")
-    {
-        return words.find(|word| !word.contains('='));
-    }
-    Some(first)
+    item.pointer("/argv/0").and_then(Value::as_str)
 }
 
 /// The session of the Claude Code in front in a terminal, and its folder:
@@ -1200,11 +1175,10 @@ fn holds_agent(item: &Value) -> bool {
     if item.get("state").and_then(Value::as_str) != Some("live") {
         return false;
     }
-    // `hc ls` names the agent in front as `agent`: its program, or the kind
-    // herdr has recognised (`claude-code`). An opencode Otto started through
-    // `env` it names `env`.
+    // A listing names the agent in front as `agent`: its program, or the
+    // kind herdr has recognised (`claude-code`).
     if let Some(name) = item.get("agent").and_then(Value::as_str) {
-        return name == "env" || Harness::of(name).is_some();
+        return Harness::of(name).is_some();
     }
     runs_agent_itself(item)
         || item.pointer("/foreground/name").and_then(Value::as_str) == Some("claude")
@@ -1221,20 +1195,16 @@ fn runs_agent_itself(item: &Value) -> bool {
 /// shell holds no session any more, and a Claude started there again is
 /// found afresh.
 async fn let_go(terminal: &str) {
-    let _ = hc()
-        .args(["label", terminal])
-        .args(["otto=", "otto.session=", "otto.agent=", "otto.harness="])
-        .output()
-        .await;
+    let labels = ["otto", "otto.session", "otto.agent", "otto.harness"].map(|key| (key, ""));
+    let _ = herdr_core::label(terminal, labels).await;
 }
 
 /// The live terminal already running `session`, as after an otto-agents
 /// restart: herdr kept it.
 async fn find(session: &str) -> Option<String> {
-    let filter = format!("otto.session={session}");
-    let list = hc_json(&["ls", "--label", &filter]).await?;
-    list.get("terminals")?
-        .as_array()?
+    herdr_core::list(json!({ "labels": { "otto.session": session } }))
+        .await
+        .ok()?
         .iter()
         .find(|terminal| holds_agent(terminal))?
         .get("address")?
@@ -1242,51 +1212,35 @@ async fn find(session: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Starts `session`'s agent in a new terminal, in the background, kept
+/// running on its own: its address.
 async fn run(
     session: &str,
-    labels: &[String],
+    mut labels: Value,
     cwd: &Path,
     space: Option<String>,
-    argv: &[String],
+    launch: &Launch,
 ) -> Result<String, String> {
-    let mut command = hc();
-    command.args([
-        "run",
-        "--bg",
-        "--keep",
-        "--no-parent",
-        "--no-notify",
-        "--json",
-    ]);
-    command.args([
-        "--name",
-        &format!("otto-{}", session.chars().take(8).collect::<String>()),
-    ]);
-    command.arg("--cwd").arg(cwd);
-    command.args([
-        "--label",
-        "otto=agent",
-        "--label",
-        &format!("otto.session={session}"),
-    ]);
-    for label in labels {
-        command.args(["--label", label]);
-    }
     // herdr-app opens a terminal whose tab id it has not seen in a new tab.
-    if let Some(space) = space {
+    if let (Some(space), Some(labels)) = (space, labels.as_object_mut()) {
         let tab = format!("tb{}", uuid::Uuid::new_v4().simple());
-        command.args(["--label", &format!("herdr.space={space}")]);
-        command.args(["--label", &format!("herdr.tab={tab}")]);
+        labels.insert("herdr.space".to_owned(), json!(space));
+        labels.insert("herdr.tab".to_owned(), json!(tab));
     }
-    command.arg("--").args(argv);
-    let output = command
-        .output()
+    let params = json!({
+        "argv": launch.argv,
+        "env": launch.env,
+        "name": format!("otto-{}", session.chars().take(8).collect::<String>()),
+        "cwd": cwd,
+        "labels": labels,
+        "keep": true,
+        "no_parent": true,
+        "no_notify": true,
+        "wait": false,
+    });
+    let started = herdr_core::call("terminal.run", params)
         .await
-        .map_err(|error| format!("could not run hc: {error}"))?;
-    let started: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
-        String::from_utf8_lossy(&output.stderr).trim().to_owned()
-            + &String::from_utf8_lossy(&output.stdout)
-    })?;
+        .map_err(|error| error.to_string())?;
     started
         .get("address")
         .and_then(Value::as_str)
@@ -1346,22 +1300,19 @@ impl Transcript {
 
 /// opencode in a herdr terminal: the session by its id, with the agent's
 /// model; with Otto's permission mode `auto`, it approves what it may. A
-/// `config` goes in through `OPENCODE_CONFIG_CONTENT`, which opencode adds
-/// to the person's own config; `hc run` takes no environment, so `env` sets it.
-fn opencode_argv(
+/// `config` goes in its environment as `OPENCODE_CONFIG_CONTENT`, which
+/// opencode adds to the person's own config.
+fn opencode_launch(
     agent: &HerdrAgent,
     session: &str,
     permission_mode: Option<&str>,
     config: Option<OpencodeConfig>,
-) -> Vec<String> {
-    let mut argv = Vec::new();
+) -> Launch {
+    let mut env = serde_json::Map::new();
     if let Some(config) = &config {
-        argv.extend([
-            "env".to_owned(),
-            format!("OPENCODE_CONFIG_CONTENT={}", config.content),
-        ]);
+        env.insert("OPENCODE_CONFIG_CONTENT".to_owned(), json!(config.content));
     }
-    argv.extend(["opencode".to_owned(), "-s".to_owned(), session.to_owned()]);
+    let mut argv = vec!["opencode".to_owned(), "-s".to_owned(), session.to_owned()];
     if let Some(model) = &agent.model {
         argv.extend(["-m".to_owned(), model.clone()]);
     }
@@ -1371,7 +1322,7 @@ fn opencode_argv(
     if let Some(name) = config.and_then(|config| config.agent) {
         argv.extend(["--agent".to_owned(), name]);
     }
-    argv
+    Launch { argv, env }
 }
 
 /// What a client asked for, as opencode config.
@@ -1914,7 +1865,7 @@ async fn drive(
                     }
                 }
                 Some(SessionCommand::Cancel { .. }) => {
-                    let _ = hc().args(["interrupt", &terminal]).output().await;
+                    let _ = herdr_core::call("terminal.interrupt", json!({ "terminal": terminal })).await;
                 }
                 Some(SessionCommand::SetMode { .. }) => {}
                 // The session is closed in Otto; herdr keeps the terminal.
@@ -2067,9 +2018,9 @@ async fn drive(
                 if !permitting.remove(&id) {
                     continue;
                 }
-                let reply = json!({ "id": id, "allow": allow, "always": always });
-                let label = format!("{}={reply}", Request::Permission.answer_key(&id));
-                let _ = hc().args(["label", &terminal, &label]).output().await;
+                let reply = json!({ "id": id, "allow": allow, "always": always }).to_string();
+                let key = Request::Permission.answer_key(&id);
+                let _ = herdr_core::label(&terminal, [(key.as_str(), reply.as_str())]).await;
             }
             Some((id, answer, labels)) = answers.recv() => {
                 if !asked.remove(&id) {
@@ -2081,8 +2032,9 @@ async fn drive(
                 } else {
                     json!({ "id": id, "answers": {}, "declined": true })
                 };
-                let label = format!("{}={reply}", Request::Ask.answer_key(&id));
-                let _ = hc().args(["label", &terminal, &label]).output().await;
+                let reply = reply.to_string();
+                let key = Request::Ask.answer_key(&id);
+                let _ = herdr_core::label(&terminal, [(key.as_str(), reply.as_str())]).await;
             }
         }
     }
@@ -2299,8 +2251,15 @@ const OPENCODE_READY: &str = "ctrl+p commands";
 async fn shows(terminal: String, text: &str, limit: Duration) {
     let deadline = tokio::time::Instant::now() + limit;
     while tokio::time::Instant::now() < deadline {
-        let screen = hc().args(["read", &terminal]).output().await;
-        if screen.is_ok_and(|screen| String::from_utf8_lossy(&screen.stdout).contains(text)) {
+        let screen =
+            herdr_core::call("terminal.read", json!({ "terminal": terminal, "lines": 0 })).await;
+        let shown = screen.is_ok_and(|screen| {
+            screen
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|screen| screen.contains(text))
+        });
+        if shown {
             return;
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -2309,27 +2268,19 @@ async fn shows(terminal: String, text: &str, limit: Duration) {
 
 /// Types `prompt` into the terminal, once it is sure the agent is in front.
 async fn send(terminal: &str, prompt: &str) -> Result<(), String> {
-    let item = hc_json(&["get", terminal])
+    let item = get(terminal)
         .await
         .ok_or_else(|| "herdr no longer has the terminal".to_owned())?;
     if !holds_agent(&item) {
         return Err("the agent is no longer running in its terminal".to_owned());
     }
-    // `--`, so a prompt starting with `-` is text rather than an option.
-    let output = hc()
-        .args(["send", "--", terminal, prompt])
-        .output()
-        .await
-        .map_err(|error| format!("could not run hc: {error}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let error = String::from_utf8_lossy(&output.stdout);
-    let error = serde_json::from_str::<Value>(&error)
-        .ok()
-        .and_then(|reply| reply.pointer("/error/message")?.as_str().map(str::to_owned))
-        .unwrap_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_owned());
-    Err(format!("the prompt did not reach the agent: {error}"))
+    herdr_core::call(
+        "terminal.send",
+        json!({ "terminal": terminal, "text": prompt }),
+    )
+    .await
+    .map(drop)
+    .map_err(|error| format!("the prompt did not reach the agent: {}", error.message))
 }
 
 /// [`send`], ending the turn as failed when the prompt does not get there.
@@ -2350,40 +2301,25 @@ async fn deliver(
     }
 }
 
-/// herdr's view of the terminal: its status and its `otto.ask` label.
+/// herdr's view of the terminal: its status and the requests in its labels,
+/// kept current from the changes herdr-core reports.
 async fn follow_events(terminal: String, seen: mpsc::UnboundedSender<Seen>) {
-    let Ok(mut child) = hc()
-        .args(["events", "--json", "--terminal", &terminal])
-        .stdout(Stdio::piped())
-        .spawn()
-    else {
+    let Ok(mut subscription) = herdr_core::subscribe(json!({ "terminal": terminal })).await else {
         let _ = seen.send(Seen::Gone);
         return;
     };
-    let Some(stdout) = child.stdout.take() else {
-        return;
-    };
-    let mut lines = BufReader::new(stdout).lines();
     let mut state = String::new();
     let mut waiting: HashSet<(Request, String)> = HashSet::new();
-    while let Ok(Some(line)) = lines.next_line().await {
-        let Ok(event) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        // The first line is a snapshot of the terminal; later ones are
-        // notifications carrying only the fact that changed. Each is a cue to
-        // read the terminal whole, so no event type needs its own parsing.
-        let items = match event.get("terminals").and_then(Value::as_array) {
-            Some(terminals) => terminals.clone(),
-            None => match hc_json(&["get", &terminal]).await {
-                Some(item) => vec![item],
-                None => continue,
-            },
-        };
-        for item in &items {
-            if item.get("address").and_then(Value::as_str) != Some(terminal.as_str()) {
-                continue;
+    let mut item = json!({ "address": terminal });
+    let mut items = std::mem::take(&mut subscription.snapshot);
+    loop {
+        for fresh in items.drain(..) {
+            if fresh.get("address").and_then(Value::as_str) == Some(terminal.as_str()) {
+                item = fresh;
             }
+        }
+        {
+            let item = &item;
             if item.get("state").and_then(Value::as_str) == Some("finished") {
                 let _ = seen.send(Seen::Gone);
                 return;
@@ -2427,6 +2363,14 @@ async fn follow_events(terminal: String, seen: mpsc::UnboundedSender<Seen>) {
                         let _ = seen.send(Seen::Asked(kind, request));
                     }
                 }
+            }
+        }
+        match subscription.next().await {
+            None => break,
+            Some(herdr_core::Event::Missed(terminals)) => items = terminals,
+            Some(herdr_core::Event::Changed { kind, .. }) if kind == "removed" => break,
+            Some(herdr_core::Event::Changed { kind, data, .. }) => {
+                herdr_core::Event::apply(&mut item, &kind, &data)
             }
         }
     }
@@ -2697,7 +2641,9 @@ mod tests {
             runs_as: None,
             subject: Vec::new(),
         };
-        let argv = backend.argv(backend.agent(PROVIDER), "s1", false, &spec);
+        let argv = backend
+            .launch(backend.agent(PROVIDER), "s1", false, &spec)
+            .argv;
         let after = |flag: &str| {
             let at = argv.iter().position(|word| word == flag)?;
             argv.get(at + 1).cloned()
@@ -2751,10 +2697,10 @@ mod tests {
             path: PathBuf::from("/tmp/studio.md"),
         };
         let config = opencode_config(&session, Some(&profile), &spec);
-        let argv = opencode_argv(backend.agent(PROVIDER), &session, None, config);
+        let Launch { argv, env } = opencode_launch(backend.agent(PROVIDER), &session, None, config);
 
-        assert_eq!(argv[0], "env");
-        let content = argv[1].strip_prefix("OPENCODE_CONFIG_CONTENT=").unwrap();
+        assert_eq!(argv[0], "opencode");
+        let content = env["OPENCODE_CONFIG_CONTENT"].as_str().unwrap();
         let config: Value = serde_json::from_str(content).unwrap();
         let preview = &config["mcp"]["preview"];
         assert_eq!(
@@ -2770,9 +2716,6 @@ mod tests {
             "You are editing /tmp/a.pdf."
         );
         let _ = std::fs::remove_file(file);
-
-        let started = json!({ "state": "live", "argv": argv });
-        assert!(runs_agent_itself(&started), "still known as opencode");
     }
 
     #[test]
@@ -2790,8 +2733,9 @@ mod tests {
         };
         let config = opencode_config("ses_x", None, &spec);
         assert!(config.is_none());
-        let argv = opencode_argv(backend.agent(PROVIDER), "ses_x", None, config);
-        assert_eq!(argv, ["opencode", "-s", "ses_x"]);
+        let launch = opencode_launch(backend.agent(PROVIDER), "ses_x", None, config);
+        assert_eq!(launch.argv, ["opencode", "-s", "ses_x"]);
+        assert!(launch.env.is_empty());
     }
 
     #[test]
@@ -2941,7 +2885,6 @@ mod tests {
         // As `hc ls` lists them: the program in front as `agent`.
         assert!(holds_agent(&json!({"state": "live", "agent": "claude"})));
         assert!(holds_agent(&json!({"state": "live", "agent": "pi"})));
-        assert!(holds_agent(&json!({"state": "live", "agent": "env"})));
         assert!(holds_agent(
             &json!({"state": "live", "agent": "claude-code"})
         ));
