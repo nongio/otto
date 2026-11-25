@@ -183,6 +183,8 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             StateAction::ChatDelta(delta) => write!(stdout, "{}", delta.content)?,
+            StateAction::ChatToolCallStart(tool) => writeln!(stdout, "\n› {}", tool.display_name)?,
+            StateAction::ChatToolCallComplete(tool) => writeln!(stdout, "✓ {}", tool.tool_call_id)?,
             StateAction::ChatTurnComplete(end) if end.turn_id == turn_id => break,
             StateAction::ChatTurnCancelled(end) if end.turn_id == turn_id => bail!("cancelled"),
             StateAction::ChatError(error) if error.turn_id == turn_id => {

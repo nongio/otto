@@ -1776,12 +1776,25 @@ fn requests(item: &Value, kind: Request) -> HashMap<String, Value> {
 /// What the terminal tells us, merged from herdr's events and the transcript.
 enum Seen {
     State(String),
+    /// herdr's turn counter, which moves on as each turn of the agent ends.
+    Turn(u64),
     /// A request in the terminal's labels: an `ask` question or the
     /// `PermissionRequest` hook's, by [`Request`].
     Asked(Request, Value),
     /// A request gone from the labels: answered, or given up.
     Settled(Request, String),
     Text(String),
+    /// The agent called a tool, by the transcript.
+    ToolStarted {
+        id: String,
+        name: String,
+        input: Value,
+    },
+    /// A tool's result came back, by the transcript.
+    ToolFinished {
+        id: String,
+        success: bool,
+    },
     /// The transcript says the agent finished its turn.
     Ended,
     /// A prompt in the transcript: Otto's own, or typed in the terminal.
@@ -1800,9 +1813,10 @@ async fn drive(
     let watch_events = tokio::spawn(follow_events(terminal.clone(), seen_tx.clone()));
     let watch_transcript = tokio::spawn(follow_transcript(transcript.clone(), seen_tx));
 
-    // The turn Ask started, and whether herdr has seen the agent work on it.
+    // The turn Ask started, and herdr's count of the agent's turns when its
+    // prompt went in: the count moving past it ends the turn.
     let mut turn: Option<String> = None;
-    let mut worked = false;
+    let mut went_in: Option<u64> = None;
     // The questions and permission requests waiting in the terminal's labels.
     let mut asked: HashSet<String> = HashSet::new();
     let mut permitting: HashSet<String> = HashSet::new();
@@ -1827,17 +1841,25 @@ async fn drive(
         )),
     };
     tokio::pin!(patience);
-    // herdr says `done` a little before the transcript has the last words:
-    // the transcript ends the turn, herdr's word only after a grace period.
+    // When herdr's count says the turn ended, the transcript has a grace
+    // period to end it first.
     let mut fallback: Option<tokio::time::Instant> = None;
     // Prompts Otto typed in and has not yet seen in the transcript: any
     // other prompt there was typed in the terminal.
     let mut sent: Vec<String> = Vec::new();
     // herdr's latest word on the agent, and the status last reported from it.
     let mut herdr_state = String::new();
+    let mut herdr_turn: Option<u64> = None;
     let mut reported: u32 = 0;
     let (answer_tx, mut answers) =
         mpsc::unbounded_channel::<(String, Option<InputAnswer>, Value)>();
+    // Claude writes a tool call to its transcript before its permission hook
+    // asks about it: a tool call waits this long before it shows, so a
+    // permission request can claim it and show as the question instead.
+    let claimable = matches!(transcript, Transcript::Claude(_));
+    let mut unclaimed = Unclaimed::new();
+    // The tool call each permission request claimed, by the request's id.
+    let mut claimed: HashMap<String, String> = HashMap::new();
 
     loop {
         let now = status_bits(&herdr_state, !asked.is_empty() || !permitting.is_empty());
@@ -1857,9 +1879,9 @@ async fn drive(
                     prompt.push_str(&text);
                     sent.push(prompt.trim().to_owned());
                     turn = Some(turn_id);
-                    worked = false;
+                    went_in = None;
                     if ready {
-                        deliver(&terminal, &prompt, &mut turn, &events).await;
+                        went_in = deliver(&terminal, &prompt, &mut turn, &events).await;
                     } else {
                         held.push(prompt);
                     }
@@ -1877,28 +1899,49 @@ async fn drive(
                     end(&mut turn, &events);
                 }
             }
+            () = async {
+                let due = unclaimed.values().map(|(.., due)| *due).min();
+                tokio::time::sleep_until(due.unwrap_or_else(tokio::time::Instant::now)).await
+            }, if !unclaimed.is_empty() => {
+                let now = tokio::time::Instant::now();
+                let due: Vec<String> = unclaimed
+                    .iter()
+                    .filter(|(_, (.., due))| *due <= now)
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for id in due {
+                    if let Some((name, input, _)) = unclaimed.remove(&id) {
+                        show_tool(&events, &turn, id, &name, &input);
+                    }
+                }
+            }
             () = &mut patience, if !ready => {
                 ready = true;
                 for prompt in held.drain(..) {
-                    deliver(&terminal, &prompt, &mut turn, &events).await;
+                    went_in = deliver(&terminal, &prompt, &mut turn, &events).await;
                 }
             }
             Some(item) = seen.recv() => match item {
                 Seen::State(state) => {
                     herdr_state = state.clone();
-                    tracing::debug!(%terminal, %state, ready, worked, turn = ?turn, asked = ?asked, "herdr state");
+                    tracing::debug!(%terminal, %state, ready, turn = ?turn, went_in = ?went_in, asked = ?asked, "herdr state");
                     if !ready && matches!(state.as_str(), "idle" | "done") {
                         ready = true;
                         for prompt in held.drain(..) {
-                            deliver(&terminal, &prompt, &mut turn, &events).await;
+                            went_in = deliver(&terminal, &prompt, &mut turn, &events).await;
                         }
-                        continue;
                     }
-                    if state == "working" {
-                        worked = true;
-                    } else if worked && matches!(state.as_str(), "done" | "idle") && (asked.is_empty() && permitting.is_empty()) {
-                        fallback = Some(tokio::time::Instant::now() + Duration::from_secs(3));
-                        worked = false;
+                }
+                Seen::Turn(count) => {
+                    herdr_turn = Some(count);
+                    // herdr counts the turn ended a little before the
+                    // transcript has the last words: the transcript ends the
+                    // turn, herdr's count only after a grace period.
+                    if went_in.is_some_and(|went_in| count > went_in) {
+                        went_in = None;
+                        if asked.is_empty() && permitting.is_empty() {
+                            fallback = Some(tokio::time::Instant::now() + Duration::from_secs(3));
+                        }
                     }
                 }
                 Seen::Prompt(prompt) => {
@@ -1916,7 +1959,7 @@ async fn drive(
                             });
                             let _ = events.send(SessionEvent::Active);
                             turn = Some(turn_id);
-                            worked = false;
+                            went_in = herdr_turn;
                         }
                         None => {}
                     }
@@ -1924,8 +1967,28 @@ async fn drive(
                 Seen::Ended => {
                     if asked.is_empty() && permitting.is_empty() {
                         fallback = None;
-                        worked = false;
+                        went_in = None;
                         end(&mut turn, &events);
+                    }
+                }
+                Seen::ToolStarted { id, name, input } => {
+                    if claimable {
+                        let due = tokio::time::Instant::now() + Duration::from_secs(1);
+                        unclaimed.insert(id, (name, input, due));
+                    } else {
+                        show_tool(&events, &turn, id, &name, &input);
+                    }
+                }
+                Seen::ToolFinished { id, success } => {
+                    if let Some((name, input, _)) = unclaimed.remove(&id) {
+                        show_tool(&events, &turn, id.clone(), &name, &input);
+                    }
+                    if let Some(turn_id) = &turn {
+                        let _ = events.send(SessionEvent::ToolCallFinished {
+                            turn_id: turn_id.clone(),
+                            tool_call_id: id,
+                            success,
+                        });
                     }
                 }
                 Seen::Text(text) => {
@@ -1972,7 +2035,9 @@ async fn drive(
                     if !permitting.insert(id.clone()) {
                         continue;
                     }
-                    let question = permission_question(&id, &request, &cwd);
+                    let tool_call_id = claim(&mut unclaimed, &request).unwrap_or_else(|| id.clone());
+                    claimed.insert(id.clone(), tool_call_id.clone());
+                    let question = permission_question(&tool_call_id, &request, &cwd);
                     let (reply, wait) = oneshot::channel();
                     let _ = events.send(SessionEvent::PermissionRequested {
                         turn_id: turn.clone().unwrap_or_default(),
@@ -1999,6 +2064,7 @@ async fn drive(
                         Request::Permission => &mut permitting,
                     };
                     if pending.remove(&id) {
+                        let id = claimed.remove(&id).unwrap_or(id);
                         let _ = events.send(SessionEvent::RequestWithdrawn(id));
                     }
                 }
@@ -2015,6 +2081,7 @@ async fn drive(
             },
             Some((id, allow, always)) = decided.recv() => {
                 // A request no longer waiting gets no answer: it would stay.
+                claimed.remove(&id);
                 if !permitting.remove(&id) {
                     continue;
                 }
@@ -2068,11 +2135,7 @@ fn permission_question(id: &str, request: &Value, cwd: &Path) -> crate::agent::Q
         _ => ToolKind::Other,
     });
     let path = text("file_path").or_else(|| text("notebook_path"));
-    fields.title = Some(match (tool, text("command"), path) {
-        (_, Some(command), _) => command.to_owned(),
-        (_, None, Some(path)) => format!("{tool} {path}"),
-        _ => tool.to_owned(),
-    });
+    fields.title = Some(tool_title(tool, &input));
     if let Some(path) = path {
         fields.locations = Some(vec![ToolCallLocation::new(path)]);
         let diff = match tool {
@@ -2183,6 +2246,45 @@ fn status_bits(state: &str, asking: bool) -> u32 {
     }
 }
 
+/// Tool calls from the transcript not shown yet: name, input, and when
+/// they show.
+type Unclaimed = HashMap<String, (String, Value, tokio::time::Instant)>;
+
+/// Takes the tool call a permission request asks about out of `unclaimed`:
+/// the one with its tool and input (as the hook passes it on, shortened).
+fn claim(unclaimed: &mut Unclaimed, request: &Value) -> Option<String> {
+    let name = request.get("tool_name").and_then(Value::as_str)?;
+    let input = request.get("tool_input").unwrap_or(&Value::Null);
+    let call = unclaimed
+        .iter()
+        .find(|(_, (called, given, _))| {
+            called == name && crate::herdr_tools::shortened(given.clone()) == *input
+        })
+        .map(|(call, _)| call.clone())?;
+    unclaimed.remove(&call);
+    Some(call)
+}
+
+/// Shows a tool call that needs no permission in `turn`, if there is one.
+fn show_tool(
+    events: &mpsc::UnboundedSender<SessionEvent>,
+    turn: &Option<String>,
+    id: String,
+    name: &str,
+    input: &Value,
+) {
+    let Some(turn_id) = turn else {
+        return;
+    };
+    let _ = events.send(SessionEvent::ToolCallStarted {
+        turn_id: turn_id.clone(),
+        tool_call_id: id,
+        tool_name: name.to_owned(),
+        title: tool_title(name, input),
+        input: (!input.is_null()).then(|| input.to_string()),
+    });
+}
+
 fn end(turn: &mut Option<String>, events: &mpsc::UnboundedSender<SessionEvent>) {
     if let Some(turn_id) = turn.take() {
         let _ = events.send(SessionEvent::TurnEnded {
@@ -2266,8 +2368,9 @@ async fn shows(terminal: String, text: &str, limit: Duration) {
     }
 }
 
-/// Types `prompt` into the terminal, once it is sure the agent is in front.
-async fn send(terminal: &str, prompt: &str) -> Result<(), String> {
+/// Types `prompt` into the terminal, once it is sure the agent is in front;
+/// herdr's count of the agent's turns when it went in.
+async fn send(terminal: &str, prompt: &str) -> Result<Option<u64>, String> {
     let item = get(terminal)
         .await
         .ok_or_else(|| "herdr no longer has the terminal".to_owned())?;
@@ -2279,7 +2382,7 @@ async fn send(terminal: &str, prompt: &str) -> Result<(), String> {
         json!({ "terminal": terminal, "text": prompt }),
     )
     .await
-    .map(drop)
+    .map(|sent| sent.get("turn").and_then(Value::as_u64))
     .map_err(|error| format!("the prompt did not reach the agent: {}", error.message))
 }
 
@@ -2289,14 +2392,18 @@ async fn deliver(
     prompt: &str,
     turn: &mut Option<String>,
     events: &mpsc::UnboundedSender<SessionEvent>,
-) {
-    if let Err(error) = send(terminal, prompt).await {
-        tracing::warn!(%terminal, %error, "a prompt was not sent");
-        if let Some(turn_id) = turn.take() {
-            let _ = events.send(SessionEvent::TurnEnded {
-                turn_id,
-                outcome: TurnOutcome::Failed(error),
-            });
+) -> Option<u64> {
+    match send(terminal, prompt).await {
+        Ok(went_in) => went_in,
+        Err(error) => {
+            tracing::warn!(%terminal, %error, "a prompt was not sent");
+            if let Some(turn_id) = turn.take() {
+                let _ = events.send(SessionEvent::TurnEnded {
+                    turn_id,
+                    outcome: TurnOutcome::Failed(error),
+                });
+            }
+            None
         }
     }
 }
@@ -2309,6 +2416,7 @@ async fn follow_events(terminal: String, seen: mpsc::UnboundedSender<Seen>) {
         return;
     };
     let mut state = String::new();
+    let mut count: Option<u64> = None;
     let mut waiting: HashSet<(Request, String)> = HashSet::new();
     let mut item = json!({ "address": terminal });
     let mut items = std::mem::take(&mut subscription.snapshot);
@@ -2346,6 +2454,13 @@ async fn follow_events(terminal: String, seen: mpsc::UnboundedSender<Seen>) {
             if now != state {
                 state = now.clone();
                 let _ = seen.send(Seen::State(now));
+            }
+            let turn = item.get("turn").and_then(Value::as_u64);
+            if turn != count {
+                count = turn;
+                if let Some(turn) = turn {
+                    let _ = seen.send(Seen::Turn(turn));
+                }
             }
             for kind in [Request::Ask, Request::Permission] {
                 let now = requests(item, kind);
@@ -2409,6 +2524,11 @@ async fn follow_transcript(transcript: Transcript, seen: mpsc::UnboundedSender<S
             }
             for text in assistant_text(line) {
                 if seen.send(Seen::Text(text)).is_err() {
+                    return;
+                }
+            }
+            for tool in tool_calls(line) {
+                if seen.send(tool).is_err() {
                     return;
                 }
             }
@@ -2519,6 +2639,55 @@ fn history(transcript: &str) -> Vec<HistoryTurn> {
     turns
 }
 
+/// The tools one transcript line starts (the assistant's `tool_use` blocks)
+/// or settles (the `tool_result` blocks of a user line).
+fn tool_calls(line: &str) -> Vec<Seen> {
+    let Ok(entry) = serde_json::from_str::<Value>(line) else {
+        return Vec::new();
+    };
+    let flag = |name: &str| entry.get(name).and_then(Value::as_bool) == Some(true);
+    if flag("isSidechain") {
+        return Vec::new();
+    }
+    let kind = entry.get("type").and_then(Value::as_str);
+    let blocks = entry
+        .pointer("/message/content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    let text = |block: &Value, key: &str| block.get(key).and_then(Value::as_str).map(str::to_owned);
+    blocks
+        .filter_map(
+            |block| match (kind, block.get("type").and_then(Value::as_str)) {
+                (Some("assistant"), Some("tool_use")) => Some(Seen::ToolStarted {
+                    id: text(block, "id")?,
+                    name: text(block, "name").unwrap_or_default(),
+                    input: block.get("input").cloned().unwrap_or(Value::Null),
+                }),
+                (Some("user"), Some("tool_result")) => Some(Seen::ToolFinished {
+                    id: text(block, "tool_use_id")?,
+                    success: block.get("is_error").and_then(Value::as_bool) != Some(true),
+                }),
+                _ => None,
+            },
+        )
+        .collect()
+}
+
+/// How the chat names a tool call: its command, the tool and its file, or
+/// the tool alone.
+fn tool_title(tool: &str, input: &Value) -> String {
+    let text = |key: &str| input.get(key).and_then(Value::as_str);
+    let path = ["file_path", "notebook_path", "filePath", "path"]
+        .into_iter()
+        .find_map(text);
+    match (text("command"), path) {
+        (Some(command), _) => command.to_owned(),
+        (None, Some(path)) => format!("{tool} {path}"),
+        _ => tool.to_owned(),
+    }
+}
+
 /// The text blocks of one transcript line, when it is the assistant's.
 fn assistant_text(line: &str) -> Vec<String> {
     let Ok(entry) = serde_json::from_str::<Value>(line) else {
@@ -2622,6 +2791,63 @@ mod elicitation_content {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_calls_come_from_the_transcript() {
+        let called = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Looking"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#;
+        let [Seen::ToolStarted { id, name, input }] = &tool_calls(called)[..] else {
+            panic!("one tool call");
+        };
+        assert_eq!((id.as_str(), name.as_str()), ("t1", "Bash"));
+        assert_eq!(tool_title(name, input), "ls");
+
+        let failed = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true}]}}"#;
+        let [Seen::ToolFinished { id, success }] = &tool_calls(failed)[..] else {
+            panic!("one result");
+        };
+        assert_eq!((id.as_str(), *success), ("t1", false));
+
+        let subagent = r#"{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"tool_use","id":"t2","name":"Read","input":{}}]}}"#;
+        assert!(tool_calls(subagent).is_empty());
+        assert_eq!(tool_title("Read", &json!({"file_path": "/a"})), "Read /a");
+        assert_eq!(tool_title("read", &json!({"path": "b"})), "read b");
+    }
+
+    #[test]
+    fn a_permission_request_claims_its_tool_call() {
+        let due = tokio::time::Instant::now();
+        let long = "x".repeat(crate::herdr_tools::LONGEST_TEXT * 2);
+        let mut unclaimed = Unclaimed::from([
+            (
+                "ls".to_owned(),
+                ("Bash".to_owned(), json!({"command": "ls"}), due),
+            ),
+            (
+                "big".to_owned(),
+                ("Write".to_owned(), json!({"content": long}), due),
+            ),
+        ]);
+        let asked = |tool: &str, input: Value| json!({"tool_name": tool, "tool_input": input});
+
+        assert_eq!(
+            claim(&mut unclaimed, &asked("Bash", json!({"command": "pwd"}))),
+            None
+        );
+        assert_eq!(
+            claim(&mut unclaimed, &asked("Read", json!({"command": "ls"}))),
+            None
+        );
+        let shortened = crate::herdr_tools::shortened(json!({"content": long}));
+        assert_eq!(
+            claim(&mut unclaimed, &asked("Write", shortened)).as_deref(),
+            Some("big")
+        );
+        assert_eq!(
+            claim(&mut unclaimed, &asked("Bash", json!({"command": "ls"}))).as_deref(),
+            Some("ls")
+        );
+        assert!(unclaimed.is_empty());
+    }
 
     #[test]
     fn a_studio_session_gets_its_tools_and_instructions() {

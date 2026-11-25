@@ -997,6 +997,21 @@ impl Host {
                     self.escalate_input_after(state.watched_grace, session_uri, &request_id);
                 }
             }
+            SessionEvent::ToolCallStarted {
+                turn_id,
+                tool_call_id,
+                tool_name,
+                title,
+                input,
+            } => state.start_tool(
+                session_uri,
+                &chat_uri,
+                turn_id,
+                tool_call_id,
+                tool_name,
+                title,
+                input,
+            ),
             SessionEvent::ToolCallFinished {
                 turn_id,
                 tool_call_id,
@@ -2345,7 +2360,65 @@ impl HostState {
         }
     }
 
-    /// Completes a tool call that was allowed, once the agent says it is done.
+    /// Shows a tool call the agent runs without asking, running until it
+    /// finishes. Only in the active turn, and only once.
+    #[allow(clippy::too_many_arguments)]
+    fn start_tool(
+        &mut self,
+        session_uri: &str,
+        chat_uri: &str,
+        turn_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        title: String,
+        input: Option<String>,
+    ) {
+        let in_turn = self
+            .chats
+            .get(chat_uri)
+            .and_then(|chat| chat.active_turn.as_ref())
+            .is_some_and(|turn| turn.id == turn_id);
+        let Some(session) = self.sessions.get_mut(session_uri) else {
+            return;
+        };
+        if !in_turn
+            || session.questions.contains_key(&tool_call_id)
+            || session.tools.contains_key(&tool_call_id)
+        {
+            return;
+        }
+        // Text the agent writes after the tool goes below it.
+        session.open_part = None;
+        session.tools.insert(tool_call_id.clone(), title.clone());
+        let start = StateAction::ChatToolCallStart(ChatToolCallStartAction {
+            turn_id: turn_id.clone(),
+            tool_call_id: tool_call_id.clone(),
+            meta: None,
+            tool_name,
+            display_name: title.clone(),
+            intention: None,
+            contributor: None,
+        });
+        self.apply(chat_uri, start, None);
+        let ready = StateAction::ChatToolCallReady(ChatToolCallReadyAction {
+            turn_id,
+            tool_call_id,
+            meta: None,
+            contributor: None,
+            intention: None,
+            invocation_message: StringOrMarkdown::Plain(title),
+            tool_input: input.map(ToolInput::Inline),
+            confirmation_title: None,
+            risk_assessment: None,
+            edits: None,
+            editable: None,
+            confirmed: Some(ToolCallConfirmationReason::NotNeeded),
+            options: None,
+        });
+        self.apply(chat_uri, ready, None);
+    }
+
+    /// Completes a tool call that is running, once the agent says it is done.
     fn finish_tool(
         &mut self,
         session_uri: &str,

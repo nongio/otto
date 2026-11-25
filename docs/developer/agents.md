@@ -214,13 +214,20 @@ opened through the service first, which starts it again.
 **State, conversation and prompts.** `hc events` gives the terminal's
 `status` (`working`, `idle`, `done`, `blocked`, `error`), for Claude Code;
 herdr reports none for pi or OpenCode, so the backend waits for them to
-start before the first prompt and takes turns from the transcript alone. The
+start before the first prompt. A turn ends when the transcript says so; when
+herdr's `turn` count moves past the count it gave for the prompt, the
+transcript has three seconds to say so first. The
 conversation comes from each agent's transcript: Claude's
 `~/.claude/projects/<cwd>/<uuid>.jsonl`, pi's JSONL under
 `~/.pi/agent/sessions`, OpenCode's SQLite database (read with the `sqlite3`
 CLI). pi's and OpenCode's are turned into Claude's shape, which the rest of
 the backend reads, and a session taken up again loads its history from it
-(`SessionEvent::HistoryLoaded`). A prompt from Ask is typed in with `hc send`,
+(`SessionEvent::HistoryLoaded`). herdr carries no tool calls, so they come from
+the transcript too: a `tool_use` block shows as a running tool line
+(`SessionEvent::ToolCallStarted`) and its `tool_result` completes it. Claude
+writes a call before its permission hook asks about it, so a Claude tool call
+waits a second before it shows: a permission request with the same tool and
+input claims it, and the call shows as the permission question instead. A prompt from Ask is typed in with `hc send`,
 only while the agent is the program in front; attachments go as `@/path`
 mentions. Stop is `hc interrupt`.
 

@@ -81,13 +81,17 @@ The backend is `src/herdr.rs`. It runs Claude Code, pi and opencode
 - **State comes from herdr, not the screen.** `hc events` gives
   `status {app, state, kind, msg}`: `working`, `idle`, `done`, `blocked`,
   `error`. herdr reports it for Claude Code; for pi and opencode the backend
-  waits a fixed time before the first prompt and reads turns from the
-  transcript alone.
+  waits a fixed time before the first prompt. herdr's `turn` count, which
+  `terminal.send` reports for the prompt, ends a turn the transcript has not
+  ended within three seconds.
 - **The conversation comes from the transcript.** Claude is started with
   `--session-id <uuid>`, so its transcript is a known file,
   `~/.claude/projects/<cwd>/<uuid>.jsonl`. pi's is found by its id under
   `~/.pi/agent/sessions`, opencode's is read from its SQLite database; both
-  are turned into Claude's shape, which the rest of the backend reads.
+  are turned into Claude's shape, which the rest of the backend reads. Tool
+  calls come from it too, as herdr carries none: each shows as a running line
+  until its result, and a Claude call a permission request asks about shows
+  as that question instead.
 - **Questions and permissions wait in herdr labels.** The `ask` tool and the
   permission hook run inside the session's terminal (`HC_TERMINAL_ID` is set).
   Each writes its request as JSON in a label on its own terminal, named by

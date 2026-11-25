@@ -348,7 +348,20 @@ pub enum SessionEvent {
         request: ChatInputRequest,
         reply: oneshot::Sender<InputAnswer>,
     },
-    /// A tool call the agent was given permission for has finished.
+    /// The agent runs a tool it needs no permission for. It shows running
+    /// until `ToolCallFinished`.
+    ToolCallStarted {
+        turn_id: String,
+        tool_call_id: String,
+        /// The tool's own name, such as `Bash`.
+        tool_name: String,
+        /// What it does, as the chat names it: the command, or the tool and
+        /// its file.
+        title: String,
+        /// The tool's input as JSON.
+        input: Option<String>,
+    },
+    /// A tool call that started, or was given permission, has finished.
     ToolCallFinished {
         turn_id: String,
         tool_call_id: String,
