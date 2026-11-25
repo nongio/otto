@@ -1146,10 +1146,11 @@ fn holds_agent(item: &Value) -> bool {
     if item.get("state").and_then(Value::as_str) != Some("live") {
         return false;
     }
-    // `hc ls` names the program in front as `agent`, but an opencode Otto
-    // started through `env` as `env`.
+    // `hc ls` names the agent in front as `agent`: its program, or the kind
+    // herdr has recognised (`claude-code`). An opencode Otto started through
+    // `env` it names `env`.
     if let Some(name) = item.get("agent").and_then(Value::as_str) {
-        return name == "env" || AGENT_PROGRAMS.contains(&name);
+        return name == "env" || Harness::of(name).is_some();
     }
     runs_agent_itself(item)
         || item.pointer("/foreground/name").and_then(Value::as_str) == Some("claude")
@@ -1762,12 +1763,19 @@ async fn drive(
     // until herdr has seen it ready, or long enough has passed.
     let mut ready = false;
     let mut held: Vec<String> = Vec::new();
-    // herdr reports no state for pi: there, a short wait for it to start.
-    let patience = tokio::time::sleep(match transcript {
-        Transcript::Claude(_) => Duration::from_secs(20),
-        Transcript::Pi(..) => Duration::from_secs(3),
-        Transcript::OpenCode(_) => Duration::from_secs(5),
-    });
+    // herdr reports no state for pi or opencode: for pi, a short wait for it
+    // to start; for opencode, its footer on screen, which takes longer while
+    // it starts MCP servers.
+    let patience: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> = match transcript
+    {
+        Transcript::Claude(_) => Box::pin(tokio::time::sleep(Duration::from_secs(20))),
+        Transcript::Pi(..) => Box::pin(tokio::time::sleep(Duration::from_secs(3))),
+        Transcript::OpenCode(_) => Box::pin(shows(
+            terminal.clone(),
+            OPENCODE_READY,
+            Duration::from_secs(30),
+        )),
+    };
     tokio::pin!(patience);
     // herdr says `done` a little before the transcript has the last words:
     // the transcript ends the turn, herdr's word only after a grace period.
@@ -2169,6 +2177,21 @@ fn ends_turn(line: &str) -> bool {
                 == Some("end_turn")
             && said
     })
+}
+
+/// What opencode's footer shows once it takes input.
+const OPENCODE_READY: &str = "ctrl+p commands";
+
+/// Waits until the terminal's screen shows `text`, or `limit` has passed.
+async fn shows(terminal: String, text: &str, limit: Duration) {
+    let deadline = tokio::time::Instant::now() + limit;
+    while tokio::time::Instant::now() < deadline {
+        let screen = hc().args(["read", &terminal]).output().await;
+        if screen.is_ok_and(|screen| String::from_utf8_lossy(&screen.stdout).contains(text)) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
 }
 
 /// Types `prompt` into the terminal, once it is sure the agent is in front.
@@ -2768,6 +2791,9 @@ mod tests {
         assert!(holds_agent(&json!({"state": "live", "agent": "claude"})));
         assert!(holds_agent(&json!({"state": "live", "agent": "pi"})));
         assert!(holds_agent(&json!({"state": "live", "agent": "env"})));
+        assert!(holds_agent(
+            &json!({"state": "live", "agent": "claude-code"})
+        ));
         assert!(!holds_agent(&json!({"state": "live", "agent": "zsh"})));
         assert!(!holds_agent(
             &json!({"state": "finished", "agent": "claude"})

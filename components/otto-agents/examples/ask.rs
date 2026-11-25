@@ -47,6 +47,10 @@ struct Args {
     /// the agent asks go to the desktop's dialog.
     #[arg(long)]
     session: Option<String>,
+    /// The new session's `_meta`, as JSON, the way a client such as Studio
+    /// asks for its tools and instructions: `{"otto":{"instructions":"…"}}`.
+    #[arg(long)]
+    meta: Option<String>,
     prompt: String,
 }
 
@@ -107,6 +111,9 @@ async fn main() -> anyhow::Result<()> {
     });
     if let Some(agent) = &args.agent {
         params["provider"] = json!(agent);
+    }
+    if let Some(meta) = &args.meta {
+        params["_meta"] = serde_json::from_str(meta).context("--meta is not JSON")?;
     }
     client.request::<_, Value>("createSession", params).await?;
 
