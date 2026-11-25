@@ -462,6 +462,14 @@ settings-search-reindex-failed = Не удалось связаться с ин�
 settings-agents-intro = Агенты, которым Ask может передать запрос. Разрешения определяют, что происходит, когда агент хочет что-то сделать, а его папка — это всё, что он может читать.
 settings-agents-default = Агент по умолчанию
 settings-agents-default-detail = Кому уходит запрос, если агент не выбран
+settings-agents-backend = Где работают сеансы
+settings-agents-backend-auto-herdr = В herdr, так как он установлен
+settings-agents-backend-auto-acp = В Otto, так как herdr не установлен
+settings-agents-backend-herdr-detail = Каждый агент в своём терминале. Только Claude Code, pi и opencode
+settings-agents-backend-acp-detail = Otto сам запускает каждого агента
+settings-agents-backend-auto = Автоматически
+settings-agents-backend-herdr = herdr
+settings-agents-backend-acp = Otto
 # The row holding the Revert and Apply buttons.
 settings-agents-changes = Изменения
 settings-agents-revert = Отменить

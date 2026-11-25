@@ -450,6 +450,14 @@ settings-search-reindex-failed = 无法连接索引器。它在运行吗？
 settings-agents-intro = Ask 可以把请求交给这些智能体。权限决定智能体想执行操作时如何处理，它的文件夹就是它能读取的全部内容。
 settings-agents-default = 默认智能体
 settings-agents-default-detail = 未选择智能体时，请求交给谁
+settings-agents-backend = 会话运行于
+settings-agents-backend-auto-herdr = 在 herdr 中，因为已安装
+settings-agents-backend-auto-acp = 在 Otto 中，因为未安装 herdr
+settings-agents-backend-herdr-detail = 每个智能体使用独立终端。仅限 Claude Code、pi 和 opencode
+settings-agents-backend-acp-detail = 由 Otto 直接运行所有智能体
+settings-agents-backend-auto = 自动
+settings-agents-backend-herdr = herdr
+settings-agents-backend-acp = Otto
 # The row holding the Revert and Apply buttons.
 settings-agents-changes = 更改
 settings-agents-revert = 还原

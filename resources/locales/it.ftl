@@ -456,6 +456,14 @@ settings-search-reindex-failed = Impossibile raggiungere l’indicizzatore. È a
 settings-agents-intro = Gli agenti a cui Ask può passare una richiesta. I permessi decidono cosa succede quando uno chiede di fare qualcosa, e la sua cartella è tutto ciò che può leggere.
 settings-agents-default = Agente predefinito
 settings-agents-default-detail = A chi va una richiesta se non ne scegli uno
+settings-agents-backend = Le sessioni girano in
+settings-agents-backend-auto-herdr = In herdr, perché è installato
+settings-agents-backend-auto-acp = In Otto, perché herdr non è installato
+settings-agents-backend-herdr-detail = Ogni agente nel proprio terminale. Solo Claude Code, pi e opencode
+settings-agents-backend-acp-detail = Otto esegue ogni agente da sé
+settings-agents-backend-auto = Automatico
+settings-agents-backend-herdr = herdr
+settings-agents-backend-acp = Otto
 # The row holding the Revert and Apply buttons.
 settings-agents-changes = Modifiche
 settings-agents-revert = Ripristina

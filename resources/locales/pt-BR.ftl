@@ -456,6 +456,14 @@ settings-search-reindex-failed = Não foi possível falar com o indexador. Ele e
 settings-agents-intro = Os agentes a quem o Ask pode passar um pedido. As permissões decidem o que acontece quando um deles pede para fazer algo, e a pasta dele é tudo o que ele pode ler.
 settings-agents-default = Agente padrão
 settings-agents-default-detail = Quem recebe um pedido quando você não escolhe nenhum
+settings-agents-backend = As sessões rodam em
+settings-agents-backend-auto-herdr = No herdr, já que está instalado
+settings-agents-backend-auto-acp = No Otto, já que o herdr não está instalado
+settings-agents-backend-herdr-detail = Cada agente no próprio terminal. Só Claude Code, pi e opencode
+settings-agents-backend-acp-detail = O Otto executa cada agente por conta própria
+settings-agents-backend-auto = Automático
+settings-agents-backend-herdr = herdr
+settings-agents-backend-acp = Otto
 # The row holding the Revert and Apply buttons.
 settings-agents-changes = Alterações
 settings-agents-revert = Reverter

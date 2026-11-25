@@ -449,6 +449,14 @@ settings-search-reindex-failed = インデクサーに接続できません。�
 settings-agents-intro = Ask がリクエストを渡せるエージェント。権限は、エージェントが何かをしようとしたときの扱いを決め、フォルダはエージェントが読めるもののすべてです。
 settings-agents-default = デフォルトのエージェント
 settings-agents-default-detail = エージェントを選ばなかったときにリクエストを受け取るエージェント
+settings-agents-backend = セッションの実行先
+settings-agents-backend-auto-herdr = herdr（インストール済みのため）
+settings-agents-backend-auto-acp = Otto（herdr が未インストールのため）
+settings-agents-backend-herdr-detail = エージェントごとに専用のターミナル。Claude Code、pi、opencode のみ
+settings-agents-backend-acp-detail = Otto がすべてのエージェントを直接実行
+settings-agents-backend-auto = 自動
+settings-agents-backend-herdr = herdr
+settings-agents-backend-acp = Otto
 # The row holding the Revert and Apply buttons.
 settings-agents-changes = 変更
 settings-agents-revert = 元に戻す

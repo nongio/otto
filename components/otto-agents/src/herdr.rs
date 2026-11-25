@@ -281,7 +281,8 @@ impl HerdrBackend {
         match agent.harness {
             Harness::Pi => return pi_argv(agent, session, profile, spec.instructions.as_deref()),
             Harness::OpenCode => {
-                return opencode_argv(agent, session, self.permission_mode.as_deref());
+                let config = opencode_config(session, profile, spec);
+                return opencode_argv(agent, session, self.permission_mode.as_deref(), config);
             }
             Harness::Claude => {}
         }
@@ -1076,10 +1077,25 @@ async fn consider(
 /// Whether the terminal runs pi, as herdr names its agent or its command.
 fn provider_is_pi(item: &Value) -> bool {
     item.get("agent").and_then(Value::as_str) == Some("pi")
-        || item
-            .pointer("/argv/0")
-            .and_then(Value::as_str)
-            .is_some_and(|program| Harness::of(program) == Some(Harness::Pi))
+        || program(item).is_some_and(|program| Harness::of(program) == Some(Harness::Pi))
+}
+
+/// The program a terminal was started with, past an `env VAR=value` in
+/// front of it, as opencode is started with its config.
+fn program(item: &Value) -> Option<&str> {
+    let mut words = item
+        .get("argv")?
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str);
+    let first = words.next()?;
+    if Path::new(first)
+        .file_name()
+        .is_some_and(|name| name == "env")
+    {
+        return words.find(|word| !word.contains('='));
+    }
+    Some(first)
 }
 
 /// The session of the Claude Code in front in a terminal, and its folder:
@@ -1130,9 +1146,10 @@ fn holds_agent(item: &Value) -> bool {
     if item.get("state").and_then(Value::as_str) != Some("live") {
         return false;
     }
-    // `hc ls` names the program in front as `agent`.
+    // `hc ls` names the program in front as `agent`, but an opencode Otto
+    // started through `env` as `env`.
     if let Some(name) = item.get("agent").and_then(Value::as_str) {
-        return AGENT_PROGRAMS.contains(&name);
+        return name == "env" || AGENT_PROGRAMS.contains(&name);
     }
     runs_agent_itself(item)
         || item.pointer("/foreground/name").and_then(Value::as_str) == Some("claude")
@@ -1140,8 +1157,7 @@ fn holds_agent(item: &Value) -> bool {
 
 /// Whether the terminal's own program is the agent, as for one Otto started.
 fn runs_agent_itself(item: &Value) -> bool {
-    item.pointer("/argv/0")
-        .and_then(Value::as_str)
+    program(item)
         .and_then(|program| Path::new(program).file_name())
         .is_some_and(|name| AGENT_PROGRAMS.iter().any(|agent| name == *agent))
 }
@@ -1274,16 +1290,116 @@ impl Transcript {
 }
 
 /// opencode in a herdr terminal: the session by its id, with the agent's
-/// model; with Otto's permission mode `auto`, it approves what it may.
-fn opencode_argv(agent: &HerdrAgent, session: &str, permission_mode: Option<&str>) -> Vec<String> {
-    let mut argv = vec!["opencode".to_owned(), "-s".to_owned(), session.to_owned()];
+/// model; with Otto's permission mode `auto`, it approves what it may. A
+/// `config` goes in through `OPENCODE_CONFIG_CONTENT`, which opencode adds
+/// to the person's own config; `hc run` takes no environment, so `env` sets it.
+fn opencode_argv(
+    agent: &HerdrAgent,
+    session: &str,
+    permission_mode: Option<&str>,
+    config: Option<OpencodeConfig>,
+) -> Vec<String> {
+    let mut argv = Vec::new();
+    if let Some(config) = &config {
+        argv.extend([
+            "env".to_owned(),
+            format!("OPENCODE_CONFIG_CONTENT={}", config.content),
+        ]);
+    }
+    argv.extend(["opencode".to_owned(), "-s".to_owned(), session.to_owned()]);
     if let Some(model) = &agent.model {
         argv.extend(["-m".to_owned(), model.clone()]);
     }
     if permission_mode == Some("auto") {
         argv.push("--auto".to_owned());
     }
+    if let Some(name) = config.and_then(|config| config.agent) {
+        argv.extend(["--agent".to_owned(), name]);
+    }
     argv
+}
+
+/// What a client asked for, as opencode config.
+struct OpencodeConfig {
+    /// The config's JSON text.
+    content: String,
+    /// The primary agent it defines for the session to run as.
+    agent: Option<String>,
+}
+
+/// A session's MCP servers, instructions and plugin agent as opencode config;
+/// `None` when it asked for none of them. opencode reads instructions only
+/// from files, so they are written to one in the runtime folder.
+fn opencode_config(
+    session: &str,
+    profile: Option<&skills::AgentFile>,
+    spec: &SessionSpec,
+) -> Option<OpencodeConfig> {
+    let mut config = serde_json::Map::new();
+    if !spec.mcp_servers.is_empty() {
+        let servers: serde_json::Map<String, Value> = spec
+            .mcp_servers
+            .iter()
+            .map(|server| {
+                let command: Vec<Value> = std::iter::once(json!(server.command))
+                    .chain(server.args.iter().map(|arg| json!(arg)))
+                    .collect();
+                let env: serde_json::Map<String, Value> = server
+                    .env
+                    .iter()
+                    .map(|(key, value)| (key.clone(), json!(value)))
+                    .collect();
+                let server_config =
+                    json!({ "type": "local", "command": command, "environment": env });
+                (server.name.clone(), server_config)
+            })
+            .collect();
+        config.insert("mcp".to_owned(), servers.into());
+    }
+    if let Some(instructions) = &spec.instructions {
+        match write_instructions(session, instructions) {
+            Ok(file) => {
+                config.insert("instructions".to_owned(), json!([file]));
+            }
+            Err(error) => {
+                tracing::warn!(%session, %error, "opencode starts without the client's instructions");
+            }
+        }
+    }
+    let agent = profile.map(|profile| {
+        let definition = json!({
+            "mode": "primary",
+            "description": profile.description,
+            "prompt": profile.body,
+        });
+        config.insert(
+            "agent".to_owned(),
+            json!({ profile.name.clone(): definition }),
+        );
+        profile.name.clone()
+    });
+    if config.is_empty() {
+        return None;
+    }
+    Some(OpencodeConfig {
+        content: Value::Object(config).to_string(),
+        agent,
+    })
+}
+
+/// Writes a session's instructions where opencode reads them:
+/// `$XDG_RUNTIME_DIR/otto-agents/opencode/<session>.md`.
+fn write_instructions(session: &str, instructions: &str) -> std::io::Result<PathBuf> {
+    if !is_opencode_id(session) {
+        return Err(std::io::Error::other("not an opencode session id"));
+    }
+    let folder = otto_foundations::xdg::runtime_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("otto-agents/opencode");
+    std::fs::create_dir_all(&folder)?;
+    let file = folder.join(format!("{session}.md"));
+    std::fs::write(&file, instructions)?;
+    Ok(file)
 }
 
 /// A new opencode session id: `ses_` and 26 letters or digits, as opencode
@@ -2474,6 +2590,79 @@ mod tests {
     }
 
     #[test]
+    fn a_studio_session_in_opencode_gets_its_tools_and_instructions() {
+        let backend = HerdrBackend::new(&crate::config::Config::default());
+        let spec = SessionSpec {
+            provider: PROVIDER.to_owned(),
+            cwd: PathBuf::from("/tmp"),
+            resume: None,
+            attached: Vec::new(),
+            mcp_servers: vec![crate::agent::McpStdio {
+                name: "preview".to_owned(),
+                command: PathBuf::from("/usr/bin/otto-preview"),
+                args: vec!["--mcp".to_owned()],
+                env: vec![("OTTO_PREVIEW_DOC".to_owned(), "/tmp/a.pdf".to_owned())],
+            }],
+            instructions: Some("You are editing /tmp/a.pdf.".to_owned()),
+            runs_as: None,
+            subject: Vec::new(),
+        };
+        let session = opencode_session_id();
+        let profile = skills::AgentFile {
+            name: "studio".to_owned(),
+            description: "Edits documents".to_owned(),
+            tools: Vec::new(),
+            model: None,
+            skills: Vec::new(),
+            session_only: true,
+            body: "You edit documents.".to_owned(),
+            path: PathBuf::from("/tmp/studio.md"),
+        };
+        let config = opencode_config(&session, Some(&profile), &spec);
+        let argv = opencode_argv(backend.agent(PROVIDER), &session, None, config);
+
+        assert_eq!(argv[0], "env");
+        let content = argv[1].strip_prefix("OPENCODE_CONFIG_CONTENT=").unwrap();
+        let config: Value = serde_json::from_str(content).unwrap();
+        let preview = &config["mcp"]["preview"];
+        assert_eq!(
+            preview["command"],
+            json!(["/usr/bin/otto-preview", "--mcp"])
+        );
+        assert_eq!(preview["environment"]["OTTO_PREVIEW_DOC"], "/tmp/a.pdf");
+        assert_eq!(config["agent"]["studio"]["prompt"], "You edit documents.");
+        assert_eq!(argv[argv.len() - 2..], ["--agent", "studio"]);
+        let file = PathBuf::from(config["instructions"][0].as_str().unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "You are editing /tmp/a.pdf."
+        );
+        let _ = std::fs::remove_file(file);
+
+        let started = json!({ "state": "live", "argv": argv });
+        assert!(runs_agent_itself(&started), "still known as opencode");
+    }
+
+    #[test]
+    fn an_opencode_session_with_nothing_asked_runs_plainly() {
+        let backend = HerdrBackend::new(&crate::config::Config::default());
+        let spec = SessionSpec {
+            provider: PROVIDER.to_owned(),
+            cwd: PathBuf::from("/tmp"),
+            resume: None,
+            attached: Vec::new(),
+            mcp_servers: Vec::new(),
+            instructions: None,
+            runs_as: None,
+            subject: Vec::new(),
+        };
+        let config = opencode_config("ses_x", None, &spec);
+        assert!(config.is_none());
+        let argv = opencode_argv(backend.agent(PROVIDER), "ses_x", None, config);
+        assert_eq!(argv, ["opencode", "-s", "ses_x"]);
+    }
+
+    #[test]
     fn transcripts_live_under_the_folder_with_dashes() {
         let path = transcript_path(Path::new("/home/me/dev/otto/.claude/x"), "abc");
         assert!(path.ends_with("projects/-home-me-dev-otto--claude-x/abc.jsonl"));
@@ -2578,6 +2767,7 @@ mod tests {
         // As `hc ls` lists them: the program in front as `agent`.
         assert!(holds_agent(&json!({"state": "live", "agent": "claude"})));
         assert!(holds_agent(&json!({"state": "live", "agent": "pi"})));
+        assert!(holds_agent(&json!({"state": "live", "agent": "env"})));
         assert!(!holds_agent(&json!({"state": "live", "agent": "zsh"})));
         assert!(!holds_agent(
             &json!({"state": "finished", "agent": "claude"})
