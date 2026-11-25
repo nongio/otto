@@ -20,14 +20,14 @@
 //! takes down in Otto.
 
 use std::collections::HashMap;
-use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
 use tokio::sync::mpsc;
+
+use crate::herdr_core;
 
 /// How long the permission hook waits for Otto. Claude gives the hook ten
 /// minutes; giving up first lets Claude ask in the terminal instead.
@@ -38,12 +38,6 @@ fn terminal() -> Option<String> {
     std::env::var("HC_TERMINAL_ID")
         .ok()
         .filter(|terminal| !terminal.is_empty())
-}
-
-fn hc() -> Command {
-    let mut command = Command::new("hc");
-    command.stdin(Stdio::null()).kill_on_drop(true);
-    command
 }
 
 /// A short id that pairs a request with its answer.
@@ -90,33 +84,28 @@ fn clear_on_stop(terminal: String) {
             _ = int.recv() => {}
             _ = hup.recv() => {}
         }
-        let keys: Vec<String> = waiting().drain(..).map(|key| format!("{key}=")).collect();
+        let keys: Vec<String> = waiting().drain(..).collect();
         if !keys.is_empty() {
-            label(&terminal, &keys).await;
+            label(&terminal, keys.iter().map(|key| (key.as_str(), ""))).await;
         }
         std::process::exit(1);
     });
 }
 
-/// Sets labels on `terminal`; whether herdr took them.
-async fn label(terminal: &str, pairs: &[String]) -> bool {
-    hc().arg("label")
-        .arg(terminal)
-        .args(pairs)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await
-        .is_ok_and(|status| status.success())
+/// Sets labels on `terminal`, an empty value removing one; whether herdr
+/// took them.
+async fn label<'a>(terminal: &str, labels: impl IntoIterator<Item = (&'a str, &'a str)>) -> bool {
+    herdr_core::label(terminal, labels).await.is_ok()
 }
 
 /// The longest text a request keeps of any one string, such as a Write's
-/// content: a label is one argument, which Linux limits to 128 KiB.
-const LONGEST_TEXT: usize = 8 * 1024;
+/// content: a label travels whole in every listing and event of its
+/// terminal.
+pub(crate) const LONGEST_TEXT: usize = 8 * 1024;
 
 /// `value` with each string longer than [`LONGEST_TEXT`] cut short, marked
 /// with an ellipsis.
-fn shortened(value: Value) -> Value {
+pub(crate) fn shortened(value: Value) -> Value {
     match value {
         Value::String(text) if text.len() > LONGEST_TEXT => {
             let mut end = LONGEST_TEXT;
@@ -155,7 +144,8 @@ async fn ask_through_labels(
     let (request_key, answer_key) = keys(kind, id);
     waiting().extend([request_key.clone(), answer_key.clone()]);
     // Not written, the request would never be seen: no answer, at once.
-    let answer = if label(terminal, &[format!("{request_key}={request}")]).await {
+    let request = request.to_string();
+    let answer = if label(terminal, [(request_key.as_str(), request.as_str())]).await {
         wait_for(terminal, &answer_key, id).await
     } else {
         None
@@ -170,7 +160,7 @@ async fn clear(terminal: &str, kind: (&str, &str), id: &str) {
     waiting().retain(|key| *key != request_key && *key != answer_key);
     label(
         terminal,
-        &[format!("{request_key}="), format!("{answer_key}=")],
+        [(request_key.as_str(), ""), (answer_key.as_str(), "")],
     )
     .await;
 }
@@ -179,48 +169,28 @@ async fn clear(terminal: &str, kind: (&str, &str), id: &str) {
 /// snapshot first, then each change of labels. `None` when the terminal
 /// goes, or herdr cannot be followed.
 async fn wait_for(terminal: &str, key: &str, id: &str) -> Option<Value> {
-    let mut child = hc()
-        .args(["events", "--json", "--terminal", terminal])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+    let mut events = herdr_core::subscribe(json!({ "terminal": terminal }))
+        .await
         .ok()?;
-    let mut lines = BufReader::new(child.stdout.take()?).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        let Ok(event) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if let Some(snapshot) = event.get("terminals").and_then(Value::as_array) {
-            let mine = snapshot
-                .iter()
-                .find(|item| item.get("address").and_then(Value::as_str) == Some(terminal));
-            if let Some(answer) = answer_in(mine.and_then(|item| item.get("labels")), key, id) {
-                return Some(answer);
-            }
-            continue;
+    let mine = |items: &[Value]| {
+        items
+            .iter()
+            .find(|item| item.get("address").and_then(Value::as_str) == Some(terminal))
+            .cloned()
+    };
+    let mut item = mine(&events.snapshot)?;
+    loop {
+        if let Some(answer) = answer_in(item.get("labels"), key, id) {
+            return Some(answer);
         }
-        let params = event.get("params");
-        match params
-            .and_then(|params| params.get("type"))
-            .and_then(Value::as_str)
-        {
-            Some("labels") => {
-                let output = hc()
-                    .args(["get", terminal, "--json"])
-                    .stderr(Stdio::null())
-                    .output()
-                    .await
-                    .ok()?;
-                let item: Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
-                if let Some(answer) = answer_in(item.get("labels"), key, id) {
-                    return Some(answer);
-                }
+        match events.next().await? {
+            herdr_core::Event::Changed { kind, .. } if kind == "removed" => return None,
+            herdr_core::Event::Changed { kind, data, .. } => {
+                herdr_core::Event::apply(&mut item, &kind, &data);
             }
-            Some("removed") => return None,
-            _ => {}
+            herdr_core::Event::Missed(items) => item = mine(&items)?,
         }
     }
-    None
 }
 
 /// The `ask` tool, with `AskUserQuestion`'s input shape so the agent's habits

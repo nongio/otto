@@ -277,6 +277,10 @@ impl Event {
                 let status = data.get("status").unwrap_or(data);
                 facts.insert("status".to_owned(), status.clone());
             }
+            "turn" => {
+                let turn = data.get("turn").unwrap_or(data);
+                facts.insert("turn".to_owned(), turn.clone());
+            }
             "finished" => {
                 facts.insert("state".to_owned(), json!("finished"));
                 merge(facts, data);
