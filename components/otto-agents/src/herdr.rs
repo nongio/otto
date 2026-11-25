@@ -10,7 +10,7 @@
 //!   `otto.ask` label; the answer goes back as `otto.answer`.
 //! - Prompts are typed in with `hc send`, Stop is `hc interrupt`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -103,6 +103,12 @@ struct HerdrAgent {
     /// in the space of its folder, each in a tab of its own.
     space: Option<String>,
     model: Option<String>,
+    /// The permission mode its sessions start in, `mode` in `agents.toml`:
+    /// Claude's `--permission-mode`, such as `acceptEdits`; `auto` is also
+    /// opencode's `--auto`.
+    mode: Option<String>,
+    /// Whether Claude loads the desktop's plugins (`skills = "claude"`).
+    skills: bool,
     /// The plugin agent its sessions run as: its prompt, tools and skills.
     profile: Option<skills::AgentFile>,
     folder: Option<PathBuf>,
@@ -116,9 +122,6 @@ pub struct HerdrBackend {
     ask_mcp: Vec<String>,
     /// The `PermissionRequest` hook's command line.
     permission_hook: Option<String>,
-    /// Claude's `--permission-mode`, such as `manual`; unset keeps the
-    /// person's own default.
-    permission_mode: Option<String>,
     /// The sessions this service started: Otto has them already, so the
     /// watcher does not take them up again.
     started: Started,
@@ -145,84 +148,64 @@ fn not_started(started: &Started, session: &str) {
 
 impl HerdrBackend {
     /// The agents are `agents.toml`'s that run Claude Code, pi or opencode,
-    /// after the environment's own (while this is a prototype): `OTTO_HERDR_SPACE` (the
-    /// name of a space made for it), `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT`, the plugin agent it runs
-    /// as (`otto` unless set, `none` for plain Claude). An agent of the file with
-    /// that one's id, `claude`, takes its place. Also from the environment:
-    /// `OTTO_HERDR_ASK_MCP` and `OTTO_HERDR_PERMISSION_HOOK` (command lines),
-    /// and `OTTO_HERDR_PERMISSION_MODE`.
+    /// in its order, the default first. With none of those, the default
+    /// Claude agent the configuration falls back to when it lists none.
     pub fn new(config: &crate::config::Config) -> Self {
-        let var = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
         let plugins = skills::discover();
         let profile = |name: &str| {
             let name = name.rsplit(':').next().unwrap_or(name);
             let found = skills::agent_file(&plugins, name).map(|(_, agent)| agent.clone());
-            if found.is_none() && name != "none" {
+            if found.is_none() {
                 tracing::warn!(agent = name, "no plugin agent by that name");
             }
             found
         };
-        let mut agents = vec![HerdrAgent {
-            harness: Harness::Claude,
-            id: PROVIDER.to_owned(),
-            name: "Otto".to_owned(),
-            description: String::new(),
-            space: var("OTTO_HERDR_SPACE"),
-            model: var("OTTO_HERDR_MODEL"),
-            profile: profile(&var("OTTO_HERDR_AGENT").unwrap_or_else(|| "otto".to_owned())),
-            folder: None,
-            colour: None,
-        }];
-        for agent in &config.agents {
+        let herdr_agent = |agent: &crate::config::AgentConfig| {
             let Some(harness) = Harness::of_agent(&agent.command, &agent.args) else {
                 tracing::info!(id = %agent.id, "not offered: herdr runs Claude Code, pi and opencode");
-                continue;
+                return None;
             };
-            let herdr = HerdrAgent {
+            tracing::info!(id = %agent.id, space = ?agent.space, "herdr agent configured");
+            // Without a description of its own, an agent is described by the
+            // model it runs: agents of one name differ in model and folder.
+            let description = if agent.description.is_empty() {
+                model_name(agent.model.as_deref(), harness)
+            } else {
+                agent.description.clone()
+            };
+            Some(HerdrAgent {
                 harness,
                 id: agent.id.clone(),
                 name: agent.name.clone(),
-                description: agent.description.clone(),
+                description,
                 space: agent.space.clone(),
                 model: agent.model.clone(),
+                mode: agent.mode.clone(),
+                skills: agent.skills == crate::config::SkillDelivery::Claude,
                 profile: agent.agent.as_deref().and_then(profile),
                 folder: agent.folder.clone(),
                 colour: agent.colour.map(|colour| colour.name()),
-            };
-            tracing::info!(id = %herdr.id, space = ?herdr.space, "herdr agent configured");
-            match agents.iter_mut().find(|known| known.id == herdr.id) {
-                Some(known) => *known = herdr,
-                None => agents.push(herdr),
-            }
+            })
+        };
+        let mut agents: Vec<HerdrAgent> = config.agents.iter().filter_map(herdr_agent).collect();
+        if agents.is_empty() {
+            agents.extend(herdr_agent(&crate::config::AgentConfig::claude()));
         }
-        // Without a description of its own, an agent is described by the
-        // model it runs: agents of one name differ in model and folder.
-        for agent in &mut agents {
-            if agent.description.is_empty() {
-                agent.description = model_name(agent.model.as_deref(), agent.harness);
-            }
-        }
-        // This binary's own `herdr-ask` and `herdr-permission` unless the
-        // environment names others.
+        // This binary's own `herdr-ask` and `herdr-permission`.
         let exe = std::env::current_exe()
             .ok()
             .map(|exe| exe.to_string_lossy().into_owned());
-        let ask_mcp = match var("OTTO_HERDR_ASK_MCP") {
-            Some(line) => line.split_whitespace().map(str::to_owned).collect(),
-            None => exe
-                .iter()
-                .flat_map(|exe| [exe.clone(), "herdr-ask".to_owned()])
-                .collect(),
-        };
-        let permission_hook = var("OTTO_HERDR_PERMISSION_HOOK").or_else(|| {
-            exe.as_deref()
-                .map(|exe| format!("{} herdr-permission", shell_quote(exe)))
-        });
+        let ask_mcp = exe
+            .iter()
+            .flat_map(|exe| [exe.clone(), "herdr-ask".to_owned()])
+            .collect();
+        let permission_hook = exe
+            .as_deref()
+            .map(|exe| format!("{} herdr-permission", shell_quote(exe)));
         Self {
             agents,
             ask_mcp,
             permission_hook,
-            permission_mode: var("OTTO_HERDR_PERMISSION_MODE"),
             started: Started::default(),
             placing: Default::default(),
             plugin_args: skills::claude_cli_args(&plugins, None),
@@ -282,7 +265,7 @@ impl HerdrBackend {
             Harness::Pi => return pi_argv(agent, session, profile, spec.instructions.as_deref()),
             Harness::OpenCode => {
                 let config = opencode_config(session, profile, spec);
-                return opencode_argv(agent, session, self.permission_mode.as_deref(), config);
+                return opencode_argv(agent, session, agent.mode.as_deref(), config);
             }
             Harness::Claude => {}
         }
@@ -291,7 +274,7 @@ impl HerdrBackend {
             if resume { "--resume" } else { "--session-id" }.to_owned(),
             session.to_owned(),
         ]);
-        if let Some(mode) = &self.permission_mode {
+        if let Some(mode) = &agent.mode {
             argv.extend(["--permission-mode".to_owned(), mode.clone()]);
         }
         if let Some(model) = &agent.model {
@@ -348,7 +331,9 @@ impl HerdrBackend {
             ] } });
             argv.extend(["--settings".to_owned(), settings.to_string()]);
         }
-        argv.extend(self.plugin_args.iter().cloned());
+        if agent.skills {
+            argv.extend(self.plugin_args.iter().cloned());
+        }
         if let Some(profile) = profile {
             let definition = agent_definition(profile, !self.ask_mcp.is_empty());
             argv.extend([
@@ -1795,12 +1780,56 @@ fn transcript_path(cwd: &Path, session: &str) -> PathBuf {
         .join(format!("{session}.jsonl"))
 }
 
+/// The kinds of request a session's agent puts to Otto through labels on its
+/// terminal (see [`crate::herdr_tools`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Request {
+    Ask,
+    Permission,
+}
+
+impl Request {
+    /// The label a request of this kind is under, before its id.
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Ask => "otto.ask.",
+            Self::Permission => "otto.permission.",
+        }
+    }
+
+    /// The label its answer goes under, by the request's id.
+    fn answer_key(self, id: &str) -> String {
+        match self {
+            Self::Ask => format!("otto.ask-answer.{id}"),
+            Self::Permission => format!("otto.permission-answer.{id}"),
+        }
+    }
+}
+
+/// The requests of `kind` in a terminal's labels, by their ids.
+fn requests(item: &Value, kind: Request) -> HashMap<String, Value> {
+    let Some(labels) = item.get("labels").and_then(Value::as_object) else {
+        return HashMap::new();
+    };
+    labels
+        .iter()
+        .filter_map(|(key, raw)| {
+            let id = key.strip_prefix(kind.prefix())?;
+            let request: Value = serde_json::from_str(raw.as_str()?).ok()?;
+            (request.get("id").and_then(Value::as_str) == Some(id))
+                .then(|| (id.to_owned(), request))
+        })
+        .collect()
+}
+
 /// What the terminal tells us, merged from herdr's events and the transcript.
 enum Seen {
     State(String),
-    Ask(Option<Value>),
-    /// The `PermissionRequest` hook's request, or `None` once it is settled.
-    Permission(Option<Value>),
+    /// A request in the terminal's labels: an `ask` question or the
+    /// `PermissionRequest` hook's, by [`Request`].
+    Asked(Request, Value),
+    /// A request gone from the labels: answered, or given up.
+    Settled(Request, String),
     Text(String),
     /// The transcript says the agent finished its turn.
     Ended,
@@ -1823,8 +1852,9 @@ async fn drive(
     // The turn Ask started, and whether herdr has seen the agent work on it.
     let mut turn: Option<String> = None;
     let mut worked = false;
-    let mut asked: Option<String> = None;
-    let mut permitting: Option<String> = None;
+    // The questions and permission requests waiting in the terminal's labels.
+    let mut asked: HashSet<String> = HashSet::new();
+    let mut permitting: HashSet<String> = HashSet::new();
     // Each permission answered: its id, whether it is allowed, and the
     // suggestion picked to stop asking.
     let (decided_tx, mut decided) = mpsc::unbounded_channel::<(String, bool, Option<usize>)>();
@@ -1859,7 +1889,7 @@ async fn drive(
         mpsc::unbounded_channel::<(String, Option<InputAnswer>, Value)>();
 
     loop {
-        let now = status_bits(&herdr_state, asked.is_some() || permitting.is_some());
+        let now = status_bits(&herdr_state, !asked.is_empty() || !permitting.is_empty());
         if now != reported {
             reported = now;
             let _ = events.send(SessionEvent::Outside(now));
@@ -1892,7 +1922,7 @@ async fn drive(
             },
             () = async { tokio::time::sleep_until(fallback.unwrap_or_else(tokio::time::Instant::now)).await }, if fallback.is_some() => {
                 fallback = None;
-                if asked.is_none() && permitting.is_none() {
+                if asked.is_empty() && permitting.is_empty() {
                     end(&mut turn, &events);
                 }
             }
@@ -1915,7 +1945,7 @@ async fn drive(
                     }
                     if state == "working" {
                         worked = true;
-                    } else if worked && matches!(state.as_str(), "done" | "idle") && (asked.is_none() && permitting.is_none()) {
+                    } else if worked && matches!(state.as_str(), "done" | "idle") && (asked.is_empty() && permitting.is_empty()) {
                         fallback = Some(tokio::time::Instant::now() + Duration::from_secs(3));
                         worked = false;
                     }
@@ -1941,7 +1971,7 @@ async fn drive(
                     }
                 }
                 Seen::Ended => {
-                    if asked.is_none() && permitting.is_none() {
+                    if asked.is_empty() && permitting.is_empty() {
                         fallback = None;
                         worked = false;
                         end(&mut turn, &events);
@@ -1955,14 +1985,13 @@ async fn drive(
                         });
                     }
                 }
-                Seen::Ask(Some(request)) => {
+                Seen::Asked(Request::Ask, request) => {
                     let Some(id) = request.get("id").and_then(Value::as_str).map(str::to_owned) else {
                         continue;
                     };
-                    if asked.as_deref() == Some(&id) {
+                    if !asked.insert(id.clone()) {
                         continue;
                     }
-                    asked = Some(id.clone());
                     let questions = request.get("questions").cloned().unwrap_or(Value::Null);
                     let schema = schema(&questions);
                     let form = elicitation::form(&id, "", &schema);
@@ -1985,15 +2014,13 @@ async fn drive(
                         let _ = answer_tx.send((id, answer, labels));
                     });
                 }
-                Seen::Ask(None) => asked = None,
-                Seen::Permission(Some(request)) => {
+                Seen::Asked(Request::Permission, request) => {
                     let Some(id) = request.get("id").and_then(Value::as_str).map(str::to_owned) else {
                         continue;
                     };
-                    if permitting.as_deref() == Some(&id) {
+                    if !permitting.insert(id.clone()) {
                         continue;
                     }
-                    permitting = Some(id.clone());
                     let question = permission_question(&id, &request, &cwd);
                     let (reply, wait) = oneshot::channel();
                     let _ = events.send(SessionEvent::PermissionRequested {
@@ -2013,7 +2040,17 @@ async fn drive(
                         let _ = decided_tx.send((id, allow, always));
                     });
                 }
-                Seen::Permission(None) => permitting = None,
+                // Answered from Otto, this takes down nothing; answered in
+                // the terminal or given up, the question comes down in Otto.
+                Seen::Settled(kind, id) => {
+                    let pending = match kind {
+                        Request::Ask => &mut asked,
+                        Request::Permission => &mut permitting,
+                    };
+                    if pending.remove(&id) {
+                        let _ = events.send(SessionEvent::RequestWithdrawn(id));
+                    }
+                }
                 Seen::Gone => {
                     let _ = events.send(SessionEvent::Running(false));
                     if let Some(turn_id) = turn.take() {
@@ -2026,18 +2063,25 @@ async fn drive(
                 }
             },
             Some((id, allow, always)) = decided.recv() => {
+                // A request no longer waiting gets no answer: it would stay.
+                if !permitting.remove(&id) {
+                    continue;
+                }
                 let reply = json!({ "id": id, "allow": allow, "always": always });
-                let label = format!("otto.permission.answer={reply}");
+                let label = format!("{}={reply}", Request::Permission.answer_key(&id));
                 let _ = hc().args(["label", &terminal, &label]).output().await;
             }
             Some((id, answer, labels)) = answers.recv() => {
+                if !asked.remove(&id) {
+                    continue;
+                }
                 let answered = matches!(&answer, Some(InputAnswer { response: ChatInputResponseKind::Accept, .. }));
                 let reply = if answered {
                     json!({ "id": id, "answers": labels })
                 } else {
                     json!({ "id": id, "answers": {}, "declined": true })
                 };
-                let label = format!("otto.answer={reply}");
+                let label = format!("{}={reply}", Request::Ask.answer_key(&id));
                 let _ = hc().args(["label", &terminal, &label]).output().await;
             }
         }
@@ -2321,8 +2365,7 @@ async fn follow_events(terminal: String, seen: mpsc::UnboundedSender<Seen>) {
     };
     let mut lines = BufReader::new(stdout).lines();
     let mut state = String::new();
-    let mut ask: Option<String> = None;
-    let mut permission: Option<String> = None;
+    let mut waiting: HashSet<(Request, String)> = HashSet::new();
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(event) = serde_json::from_str::<Value>(&line) else {
             continue;
@@ -2368,25 +2411,22 @@ async fn follow_events(terminal: String, seen: mpsc::UnboundedSender<Seen>) {
                 state = now.clone();
                 let _ = seen.send(Seen::State(now));
             }
-            let label = item
-                .pointer("/labels/otto.ask")
-                .and_then(Value::as_str)
-                .filter(|raw| !raw.is_empty())
-                .map(str::to_owned);
-            if label != ask {
-                ask = label.clone();
-                let request = label.and_then(|raw| serde_json::from_str(&raw).ok());
-                let _ = seen.send(Seen::Ask(request));
-            }
-            let label = item
-                .pointer("/labels/otto.permission")
-                .and_then(Value::as_str)
-                .filter(|raw| !raw.is_empty())
-                .map(str::to_owned);
-            if label != permission {
-                permission = label.clone();
-                let request = label.and_then(|raw| serde_json::from_str(&raw).ok());
-                let _ = seen.send(Seen::Permission(request));
+            for kind in [Request::Ask, Request::Permission] {
+                let now = requests(item, kind);
+                let gone: Vec<String> = waiting
+                    .iter()
+                    .filter(|(was, id)| *was == kind && !now.contains_key(id))
+                    .map(|(_, id)| id.clone())
+                    .collect();
+                for id in gone {
+                    waiting.remove(&(kind, id.clone()));
+                    let _ = seen.send(Seen::Settled(kind, id));
+                }
+                for (id, request) in now {
+                    if waiting.insert((kind, id)) {
+                        let _ = seen.send(Seen::Asked(kind, request));
+                    }
+                }
             }
         }
     }
@@ -2752,6 +2792,28 @@ mod tests {
         assert!(config.is_none());
         let argv = opencode_argv(backend.agent(PROVIDER), "ses_x", None, config);
         assert_eq!(argv, ["opencode", "-s", "ses_x"]);
+    }
+
+    #[test]
+    fn requests_wait_side_by_side_by_id() {
+        let item = json!({ "labels": {
+            "otto.permission.a1": r#"{"id":"a1","tool_name":"Bash"}"#,
+            "otto.permission.b2": r#"{"id":"b2","tool_name":"Write"}"#,
+            "otto.permission-answer.a1": r#"{"id":"a1","allow":true}"#,
+            "otto.ask.c3": r#"{"id":"c3","questions":[]}"#,
+            "otto.ask.d4": r#"{"id":"other"}"#,
+            "otto.ask.e5": "",
+        }});
+        let permissions = requests(&item, Request::Permission);
+        let mut ids: Vec<&str> = permissions.keys().map(String::as_str).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["a1", "b2"]);
+        let asks = requests(&item, Request::Ask);
+        assert_eq!(asks.keys().collect::<Vec<_>>(), ["c3"]);
+        assert_eq!(
+            Request::Permission.answer_key("a1"),
+            "otto.permission-answer.a1"
+        );
     }
 
     #[test]

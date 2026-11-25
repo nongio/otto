@@ -2,22 +2,26 @@
 //! server and Claude Code's `PermissionRequest` hook.
 //!
 //! Both run inside the session's terminal, where herdr sets `HC_TERMINAL_ID`.
-//! Each writes its request as JSON in a label on that terminal and waits for
-//! the answer label, with the same id, that the herdr backend writes back
-//! from Ask or a dialog:
+//! Each writes its request as JSON in a label on that terminal, named by the
+//! request's id, and waits for the answer label with the same id that the
+//! herdr backend writes back from Ask or a dialog:
 //!
 //! | Request | Answer |
 //! |---|---|
-//! | `otto.ask` `{id, questions}` | `otto.answer` `{id, answers}` |
-//! | `otto.permission` `{id, tool_name, tool_input, cwd, suggestions}` | `otto.permission.answer` `{id, allow, always}` |
+//! | `otto.ask.<id>` `{id, questions}` | `otto.ask-answer.<id>` `{id, answers}` |
+//! | `otto.permission.<id>` `{id, tool_name, tool_input, cwd, suggestions}` | `otto.permission-answer.<id>` `{id, allow, always}` |
 //!
+//! Requests of one terminal wait side by side, each under its own labels.
 //! `suggestions` are Claude's `permission_suggestions`, the "don't ask again"
 //! choices its own prompt offers; `always` is the index of the one picked.
 //!
-//! Both labels are cleared once the wait ends, answered or not.
+//! Both labels are cleared once the wait ends, answered or not, and when the
+//! process is stopped: a request gone from the labels is one the backend
+//! takes down in Otto.
 
 use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -45,6 +49,53 @@ fn hc() -> Command {
 /// A short id that pairs a request with its answer.
 fn request_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..12].to_owned()
+}
+
+/// A question's labels: the request and the answer.
+const ASK: (&str, &str) = ("otto.ask", "otto.ask-answer");
+/// A permission request's labels.
+const PERMISSION: (&str, &str) = ("otto.permission", "otto.permission-answer");
+
+/// The two label names of request `id` of a `kind` ([`ASK`] or
+/// [`PERMISSION`]).
+fn keys(kind: (&str, &str), id: &str) -> (String, String) {
+    (format!("{}.{id}", kind.0), format!("{}.{id}", kind.1))
+}
+
+/// The labels of the requests this process is waiting on, cleared should it
+/// be stopped before they are answered.
+static WAITING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn waiting() -> std::sync::MutexGuard<'static, Vec<String>> {
+    WAITING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// On SIGTERM, SIGINT or SIGHUP, as when the agent stops this process or the
+/// person interrupts it, clears the labels of the requests still waiting and
+/// exits: a request left behind would stay up in Otto.
+fn clear_on_stop(terminal: String) {
+    use tokio::signal::unix::{SignalKind, signal};
+    tokio::spawn(async move {
+        let (Ok(mut term), Ok(mut int), Ok(mut hup)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+            signal(SignalKind::hangup()),
+        ) else {
+            return;
+        };
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = int.recv() => {}
+            _ = hup.recv() => {}
+        }
+        let keys: Vec<String> = waiting().drain(..).map(|key| format!("{key}=")).collect();
+        if !keys.is_empty() {
+            label(&terminal, &keys).await;
+        }
+        std::process::exit(1);
+    });
 }
 
 /// Sets labels on `terminal`; whether herdr took them.
@@ -92,26 +143,31 @@ fn answer_in(labels: Option<&Value>, key: &str, id: &str) -> Option<Value> {
     (answer.get("id").and_then(Value::as_str) == Some(id)).then_some(answer)
 }
 
-/// Writes `request` (which carries `id`) as `request_key` on `terminal`, and
-/// waits for the answer under `answer_key` with the same id. Both labels are
-/// cleared when the wait ends.
+/// Writes `request` (which carries `id`) on `terminal` as a request of
+/// `kind`, and waits for its answer. Both labels are cleared when the wait
+/// ends.
 async fn ask_through_labels(
     terminal: &str,
-    request_key: &str,
-    answer_key: &str,
+    kind: (&str, &str),
     id: &str,
     request: &Value,
 ) -> Option<Value> {
+    let (request_key, answer_key) = keys(kind, id);
+    waiting().extend([request_key.clone(), answer_key.clone()]);
     // Not written, the request would never be seen: no answer, at once.
-    if !label(terminal, &[format!("{request_key}={request}")]).await {
-        return None;
-    }
-    let answer = wait_for(terminal, answer_key, id).await;
-    clear(terminal, request_key, answer_key).await;
+    let answer = if label(terminal, &[format!("{request_key}={request}")]).await {
+        wait_for(terminal, &answer_key, id).await
+    } else {
+        None
+    };
+    clear(terminal, kind, id).await;
     answer
 }
 
-async fn clear(terminal: &str, request_key: &str, answer_key: &str) {
+/// Clears request `id`'s labels.
+async fn clear(terminal: &str, kind: (&str, &str), id: &str) {
+    let (request_key, answer_key) = keys(kind, id);
+    waiting().retain(|key| *key != request_key && *key != answer_key);
     label(
         terminal,
         &[format!("{request_key}="), format!("{answer_key}=")],
@@ -215,7 +271,7 @@ async fn ask(questions: Value, id: &str) -> (String, bool) {
         );
     };
     let request = json!({ "id": id, "questions": questions });
-    match ask_through_labels(&terminal, "otto.ask", "otto.answer", id, &request).await {
+    match ask_through_labels(&terminal, ASK, id, &request).await {
         Some(answer) => (
             answer
                 .get("answers")
@@ -235,6 +291,9 @@ async fn ask(questions: Value, id: &str) -> (String, bool) {
 /// one tool, `ask`. Each call waits on its own, so pings and cancellations
 /// are answered meanwhile.
 pub async fn serve_ask() -> anyhow::Result<()> {
+    if let Some(terminal) = terminal() {
+        clear_on_stop(terminal);
+    }
     let (replies, mut outgoing) = mpsc::unbounded_channel::<Value>();
     let writer = tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
@@ -261,24 +320,7 @@ pub async fn serve_ask() -> anyhow::Result<()> {
             if let Some((call, question)) = cancelled.and_then(|id| calls.remove(&id)) {
                 call.abort();
                 if let Some(terminal) = terminal() {
-                    // Only this call's question: another may be waiting too.
-                    let asked = hc()
-                        .args(["get", &terminal, "--json"])
-                        .output()
-                        .await
-                        .ok()
-                        .and_then(|output| serde_json::from_slice::<Value>(&output.stdout).ok());
-                    let still = asked
-                        .as_ref()
-                        .and_then(|item| item.pointer("/labels/otto.ask"))
-                        .and_then(Value::as_str)
-                        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-                        .is_some_and(|ask| {
-                            ask.get("id").and_then(Value::as_str) == Some(&question)
-                        });
-                    if still {
-                        clear(&terminal, "otto.ask", "otto.answer").await;
-                    }
+                    clear(&terminal, ASK, &question).await;
                 }
             }
             continue;
@@ -327,11 +369,11 @@ pub async fn serve_ask() -> anyhow::Result<()> {
         let _ = replies.send(answer);
     }
     // Standard input closed: the agent is gone, and so are its questions.
-    for (call, _) in calls.into_values() {
+    for (call, question) in calls.into_values() {
         call.abort();
-    }
-    if let Some(terminal) = terminal() {
-        clear(&terminal, "otto.ask", "otto.answer").await;
+        if let Some(terminal) = terminal() {
+            clear(&terminal, ASK, &question).await;
+        }
     }
     drop(replies);
     let _ = writer.await;
@@ -360,6 +402,7 @@ pub async fn permission_hook() -> anyhow::Result<()> {
     let Some(terminal) = terminal() else {
         return Ok(());
     };
+    clear_on_stop(terminal.clone());
     let mut input = String::new();
     tokio::io::stdin().read_to_string(&mut input).await?;
     let Ok(event) = serde_json::from_str::<Value>(&input) else {
@@ -375,20 +418,14 @@ pub async fn permission_hook() -> anyhow::Result<()> {
     });
     let waited = tokio::time::timeout(
         PERMISSION_PATIENCE,
-        ask_through_labels(
-            &terminal,
-            "otto.permission",
-            "otto.permission.answer",
-            &id,
-            &request,
-        ),
+        ask_through_labels(&terminal, PERMISSION, &id, &request),
     )
     .await;
     let answer = match waited {
         Ok(answer) => answer,
         // Given up: the labels are still up, and the wait is gone.
         Err(_) => {
-            clear(&terminal, "otto.permission", "otto.permission.answer").await;
+            clear(&terminal, PERMISSION, &id).await;
             None
         }
     };
@@ -421,12 +458,14 @@ mod tests {
 
     #[test]
     fn an_answer_counts_only_for_its_own_request() {
-        let labels = json!({ "otto.answer": r#"{"id":"abc","answers":{"Pick":"A"}}"# });
-        assert!(answer_in(Some(&labels), "otto.answer", "abc").is_some());
-        assert!(answer_in(Some(&labels), "otto.answer", "xyz").is_none());
-        assert!(answer_in(Some(&json!({})), "otto.answer", "abc").is_none());
-        let garbled = json!({ "otto.answer": "not json" });
-        assert!(answer_in(Some(&garbled), "otto.answer", "abc").is_none());
+        let (_, key) = keys(ASK, "abc");
+        assert_eq!(key, "otto.ask-answer.abc");
+        let labels = json!({ "otto.ask-answer.abc": r#"{"id":"abc","answers":{"Pick":"A"}}"# });
+        assert!(answer_in(Some(&labels), &key, "abc").is_some());
+        assert!(answer_in(Some(&labels), &key, "xyz").is_none());
+        assert!(answer_in(Some(&json!({})), &key, "abc").is_none());
+        let garbled = json!({ "otto.ask-answer.abc": "not json" });
+        assert!(answer_in(Some(&garbled), &key, "abc").is_none());
     }
 
     #[test]

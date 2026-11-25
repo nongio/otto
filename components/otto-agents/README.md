@@ -60,7 +60,9 @@ cargo run -p otto-agents -- doctor                     # what stops Ask working
   ```
 
   Under herdr, `command` is the agent's own program (`claude`, `pi`, `opencode`) and
-  `permissions`, `mode`, `env`, `config` and the `enter` lines are ignored. Claude Code's
+  `permissions`, `env`, `config` and the `enter` lines are ignored; `mode` is the
+  permission mode sessions start in (Claude's `--permission-mode`, `auto` also
+  OpenCode's `--auto`). Claude Code's
   questions and permission requests come to Otto through `otto-agents herdr-ask` (an
   MCP `ask` tool) and `otto-agents herdr-permission` (its `PermissionRequest` hook); pi
   and opencode ask in their own terminals for now.

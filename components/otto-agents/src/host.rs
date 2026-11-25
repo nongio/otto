@@ -917,6 +917,9 @@ impl Host {
                     session.outside = bits;
                 }
             }
+            SessionEvent::RequestWithdrawn(id) => {
+                state.withdraw_request(session_uri, &chat_uri, &id);
+            }
             SessionEvent::TurnStarted { turn_id, prompt } => {
                 state.start_outside_turn(session_uri, &chat_uri, turn_id, prompt);
             }
@@ -2249,6 +2252,49 @@ impl HostState {
         });
         self.apply(session_uri, removed, None);
         let _ = pending.reply.send(answer);
+    }
+
+    /// Takes down a permission question or input request the agent no longer
+    /// waits on: the tool call is skipped, the input request cancelled.
+    fn withdraw_request(&mut self, session_uri: &str, chat_uri: &str, id: &str) {
+        let question = self
+            .sessions
+            .get_mut(session_uri)
+            .and_then(|session| session.questions.remove(id));
+        if let Some(pending) = question {
+            if pending.escalated {
+                self.withdrawals.push(dialog_cookie(session_uri, id));
+            }
+            tracing::info!(tool_call = %id, "permission question withdrawn");
+            let skipped = StateAction::ChatToolCallConfirmed(ChatToolCallConfirmedAction {
+                turn_id: pending.turn_id.clone(),
+                tool_call_id: id.to_owned(),
+                meta: None,
+                approved: false,
+                confirmed: None,
+                reason: Some(ToolCallCancellationReason::Skipped),
+                edited_tool_input: None,
+                user_suggestion: None,
+                reason_message: None,
+                selected_option_id: None,
+            });
+            self.apply(chat_uri, skipped, None);
+            let _ = pending.reply.send(Decision::Cancelled);
+            return;
+        }
+        let waiting = self
+            .sessions
+            .get(session_uri)
+            .is_some_and(|session| session.inputs.contains_key(id));
+        if waiting {
+            tracing::info!(request_id = %id, "input request withdrawn");
+            let cancelled = ChatInputCompletedAction {
+                request_id: id.to_owned(),
+                response: ChatInputResponseKind::Cancel,
+                answers: None,
+            };
+            self.complete_input(session_uri, chat_uri, cancelled, None);
+        }
     }
 
     /// Lets go of the questions `turn_id` left unanswered: permission requests

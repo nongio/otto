@@ -233,16 +233,20 @@ inside the session's terminal and talk to Otto through labels on it:
 
 | Request | Answer |
 |---|---|
-| `otto.ask` `{id, questions}` | `otto.answer` `{id, answers}` |
-| `otto.permission` `{id, tool_name, tool_input, cwd, suggestions}` | `otto.permission.answer` `{id, allow, always}` |
+| `otto.ask.<id>` `{id, questions}` | `otto.ask-answer.<id>` `{id, answers}` |
+| `otto.permission.<id>` `{id, tool_name, tool_input, cwd, suggestions}` | `otto.permission-answer.<id>` `{id, allow, always}` |
 
-The backend sees the request label in `hc events`, raises it in the chat as
-an input request, which reaches Ask or the island the way an agent's question
-does (see [Where an agent's question goes](#where-an-agents-question-goes)),
-and writes the answer label back. A permission card offers Claude's
-own `permission_suggestions`, its "don't ask again" choices, beside allow and
-deny. The hook gives up after nine minutes and Claude then asks in the
-terminal. pi and OpenCode ask in their own terminals.
+Each request has labels of its own, so several wait side by side. The backend
+sees a request label appear in `hc events`, raises it in the chat as an input
+request or a permission question, which reaches Ask or the island the way an
+agent's question does (see [Where an agent's question
+goes](#where-an-agents-question-goes)), and writes the answer label back. A
+permission card offers Claude's own `permission_suggestions`, its "don't ask
+again" choices, beside allow and deny. When a request label goes before Otto
+answered (the hook gave up after nine minutes, or was stopped), the backend
+sends `SessionEvent::RequestWithdrawn` and the card comes down, the dialog
+with it. Both commands clear their labels when stopped by a signal. pi and
+OpenCode ask in their own terminals.
 
 **What a client brings.** What a session is created with in `_meta.otto`
 (Studio's document tools as `mcpServers`, its `instructions`, the plugin
@@ -254,11 +258,12 @@ prompt (`--append-system-prompt`) but no document tools. The service stores
 all of it with the session, so a session started again after a restart has
 it too.
 
-**Development knobs**, from the environment while this is a prototype:
-`OTTO_HERDR_SPACE`, `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT` (`none` for
-plain Claude) shape the default agent; `OTTO_HERDR_PERMISSION_MODE` is
-Claude's `--permission-mode` for every session; `OTTO_HERDR_ASK_MCP` and
-`OTTO_HERDR_PERMISSION_HOOK` replace the two commands above.
+**Per agent**, from `agents.toml`: `model`; `mode`, the permission mode a
+session starts in (Claude's `--permission-mode`; `auto` is also OpenCode's
+`--auto`); `agent`, the plugin agent it runs as; `skills = "claude"`, which
+loads the desktop's plugins into Claude; `space` and `folder`. With no agent
+herdr can run, the backend offers the default Claude agent the configuration
+falls back to.
 
 **Not there yet.** herdr-core is not packaged or bundled with Otto: it is
 installed from herdr.dev. The ACP backend stays for `otto-agents acp`

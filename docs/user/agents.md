@@ -212,16 +212,18 @@ write in the terminal shows up in Ask. Work in whichever is closer.
   when one stops to ask.
 
 herdr runs Claude Code, pi and OpenCode, so only those agents are offered
-there. Codex, Hermes and Gemini run only when Otto runs the agents. If no
-agent of yours has the id `claude`, herdr also offers Otto on Claude Code.
+there. Codex, Hermes and Gemini run only when Otto runs the agents. With none
+of your agents able to run in herdr, it offers plain Claude Code.
 
 In herdr an agent's `command` is the agent's own program, `claude`, `pi` or
 `opencode`, with no `args` (the `npx` adapter line of an agent set up for Otto
 works too). herdr starts it with the PATH a login shell gets, so a program
 that runs in a new terminal runs there too. Some keys in `agents.toml` have no
-effect in herdr: `permissions`, `mode`, `env`, `config` and the `enter`
-lines. What an agent may do without asking is up to the agent's own settings.
-`name`, `model`, `folder`, `agent`, `colour` and `space` are used.
+effect in herdr: `permissions`, `env`, `config` and the `enter` lines. What
+an agent may do without asking is up to the agent's own settings and `mode`,
+the permission mode its sessions start in (Claude Code's, such as
+`acceptEdits`; `auto` also lets OpenCode approve on its own). `name`,
+`model`, `folder`, `agent`, `skills`, `colour` and `space` are used.
 
 **Picking where they run.** Settings › Agents › **Sessions run in** has
 Automatic (herdr when it is installed, else Otto), herdr and Otto. In

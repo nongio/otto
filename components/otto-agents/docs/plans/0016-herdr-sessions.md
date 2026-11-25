@@ -90,9 +90,11 @@ The backend is `src/herdr.rs`. It runs Claude Code, pi and opencode
   are turned into Claude's shape, which the rest of the backend reads.
 - **Questions and permissions wait in herdr labels.** The `ask` tool and the
   permission hook run inside the session's terminal (`HC_TERMINAL_ID` is set).
-  Each writes its request as JSON in a label on its own terminal (`otto.ask`,
-  `otto.permission`), and waits for the answer label (`otto.answer`,
-  `otto.permission.answer`) the backend writes back from Ask or a dialog.
+  Each writes its request as JSON in a label on its own terminal, named by
+  the request's id (`otto.ask.<id>`, `otto.permission.<id>`), and waits for
+  the answer label (`otto.ask-answer.<id>`, `otto.permission-answer.<id>`)
+  the backend writes back from Ask or a dialog. Requests wait side by side; a
+  request label gone before Otto answered takes its card down in Otto.
 - **Prompts are typed in.** A prompt from Ask goes to the terminal with
   `hc send`, only while the agent is the program in front. It is the one place
   this design drives the screen.
@@ -115,18 +117,12 @@ it.
 Under herdr, every agent whose command runs Claude Code, pi or opencode
 (directly, or as the ACP adapter `npx` starts) is offered; others, such as
 Gemini or Codex, are left out. `space` names the herdr-app space made for an
-agent's sessions; unset, it is named after the folder. The default agent,
-which an agent with `id = "claude"` replaces, comes from the environment
-while this is a prototype:
-
-| Variable | What it sets |
-|---|---|
-| `OTTO_HERDR_SPACE` | the name of a space made for the default agent |
-| `OTTO_HERDR_MODEL` | its model |
-| `OTTO_HERDR_AGENT` | the plugin agent it runs as: `otto` unless set, `none` for plain Claude Code |
-| `OTTO_HERDR_PERMISSION_MODE` | Claude's `--permission-mode` for every session, such as `auto` or `manual` |
-| `OTTO_HERDR_ASK_MCP` | the command line of the `ask` MCP server, in place of `otto-agents herdr-ask` |
-| `OTTO_HERDR_PERMISSION_HOOK` | the command line of the `PermissionRequest` hook, in place of `otto-agents herdr-permission` |
+agent's sessions; unset, it is named after the folder. `mode` is the
+permission mode sessions start in (Claude's `--permission-mode`; `auto` is
+also opencode's `--auto`), and `skills = "claude"` loads the desktop's
+plugins into Claude. The agents come in `agents.toml`'s order, the default
+first; with none herdr can run, the default Claude agent the configuration
+falls back to is offered.
 
 The `ask` server and the permission hook are this binary's hidden
 `herdr-ask` and `herdr-permission` commands (`src/herdr_tools.rs`), which
@@ -141,7 +137,8 @@ A stdio MCP server with one tool, `ask`, with `AskUserQuestion`'s input shape
 `AskUserQuestion` gets `mcp__otto__ask` in its place.
 
 While the call waits, the TUI shows a running tool and herdr reports
-`working`. Otto shows "needs input" from `otto.ask`, not from herdr's state.
+`working`. Otto shows "needs input" from the request labels, not from
+herdr's state.
 
 ## Left to do
 
@@ -159,11 +156,9 @@ While the call waits, the TUI shows a running tool and herdr reports
 
 - Label trust: any herdr terminal can write any other terminal's labels. A
   session can answer another session's question, approve another session's
-  tool (`otto.permission.answer`), or raise a fake `otto.permission` or
-  `otto.ask` that Otto shows. Acceptable on one person's machine; a nonce only
+  tool (`otto.permission-answer.<id>`), or raise a fake request that Otto
+  shows. Acceptable on one person's machine; a nonce only
   Otto knows would close it.
-- `OTTO_HERDR_ASK_MCP` and `OTTO_HERDR_PERMISSION_HOOK`, when set, are split
-  on whitespace: a path with a space breaks them.
 - Startup asks `hc` synchronously, once per stored session, whether herdr
   still has it and whether it runs.
 - `otto-agents new` and `otto-agents enter` under `--herdr` focus herdr-app

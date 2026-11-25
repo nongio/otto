@@ -298,6 +298,10 @@ pub enum SessionEvent {
     /// working on a prompt typed in its terminal, as `SessionStatus` bits
     /// shown on top of the chat's own. `0` when it is doing nothing.
     Outside(u32),
+    /// The agent no longer waits on the permission question or input request
+    /// with this id, answered elsewhere (in its terminal, say) or given up:
+    /// it is taken down unanswered.
+    RequestWithdrawn(String),
     CreationFailed(String),
     /// The agent's modes — its own permission and sandboxing presets, such as
     /// Claude's "Accept edits" or Codex's "read-only" — and which one it is
