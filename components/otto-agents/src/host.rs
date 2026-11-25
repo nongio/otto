@@ -346,6 +346,13 @@ impl Host {
                         continue;
                     }
                     SessionChange::Removed(agent_session) => agent_session,
+                    SessionChange::Titled {
+                        agent_session,
+                        title,
+                    } => {
+                        state.retitle(&agent_session, &title);
+                        continue;
+                    }
                 };
                 let uris: Vec<String> = state
                     .sessions
@@ -2822,6 +2829,30 @@ impl HostState {
             Ok(())
         } else {
             Err("no active turn with this id")
+        }
+    }
+
+    /// Titles each session of `agent_session` as its agent calls it.
+    fn retitle(&mut self, agent_session: &str, title: &str) {
+        let title = title_of(title);
+        if title.is_empty() {
+            return;
+        }
+        let uris: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|(_, session)| {
+                session.agent_session.as_deref() == Some(agent_session)
+                    && session.state.title != title
+            })
+            .map(|(uri, _)| uri.clone())
+            .collect();
+        for uri in uris {
+            let action = StateAction::SessionTitleChanged(SessionTitleChangedAction {
+                title: title.clone(),
+            });
+            self.apply(&uri, action, None);
+            self.sync_summaries(&uri);
         }
     }
 

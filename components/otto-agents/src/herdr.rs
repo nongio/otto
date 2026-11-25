@@ -966,9 +966,19 @@ async fn follow_sessions(
                 let known = item
                     .get("address")
                     .and_then(Value::as_str)
-                    .is_some_and(|address| sessions.contains_key(address));
-                if !known {
-                    consider(item, sessions, changes, adopt_as, started).await;
+                    .and_then(|address| sessions.get(address));
+                match known {
+                    // Its title may have changed while herdr was not followed.
+                    Some(session) => {
+                        let title = item.get("title").and_then(Value::as_str);
+                        if let Some(title) = title.and_then(agent_title) {
+                            let _ = changes.send(SessionChange::Titled {
+                                agent_session: session.clone(),
+                                title,
+                            });
+                        }
+                    }
+                    None => consider(item, sessions, changes, adopt_as, started).await,
                 }
             }
             continue;
@@ -980,6 +990,19 @@ async fn follow_sessions(
             continue;
         };
         match params.get("type").and_then(Value::as_str) {
+            // The agent named its session, or named it anew.
+            Some("title") => {
+                let Some(session) = sessions.get(address) else {
+                    continue;
+                };
+                let title = params.pointer("/data/title").and_then(Value::as_str);
+                if let Some(title) = title.and_then(agent_title) {
+                    let _ = changes.send(SessionChange::Titled {
+                        agent_session: session.clone(),
+                        title,
+                    });
+                }
+            }
             Some("removed") => {
                 let Some(session) = sessions.remove(address) else {
                     continue;
@@ -1065,6 +1088,13 @@ async fn consider(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .contains(&session);
     if ours {
+        // Otto has it already: only its title may be news.
+        if let Some(title) = text("/title").and_then(agent_title) {
+            let _ = changes.send(SessionChange::Titled {
+                agent_session: session,
+                title,
+            });
+        }
         return;
     }
     let transcript = match text("/labels/otto.harness") {
@@ -1073,10 +1103,13 @@ async fn consider(
         _ if provider_is_pi(item) => Transcript::pi(&session),
         _ => Transcript::Claude(transcript_path(&cwd, &session)),
     };
-    let title = history(&transcript.read().await)
-        .into_iter()
-        .next()
-        .map(|turn| turn.prompt);
+    let title = match text("/title").and_then(agent_title) {
+        Some(title) => Some(title),
+        None => history(&transcript.read().await)
+            .into_iter()
+            .next()
+            .map(|turn| turn.prompt),
+    };
     let _ = changes.send(SessionChange::Found(FoundSession {
         provider,
         agent_session: session,
@@ -1084,6 +1117,30 @@ async fn consider(
         title,
         running,
     }));
+}
+
+/// The session's title in a terminal title an agent set: Claude Code's is its
+/// summary of the session; pi's is `π - <name> - <folder>`, the name only once
+/// the session has one; opencode's is `OC | <title>`. `None` for one that
+/// names no session, such as a shell's `user@host:folder`.
+fn agent_title(terminal_title: &str) -> Option<String> {
+    let title = terminal_title.trim();
+    let title = if let Some(rest) = title.strip_prefix("OC |") {
+        rest.trim()
+    } else if let Some(rest) = title.strip_prefix("π - ") {
+        // The folder comes last; with nothing before it, there is no name.
+        rest.rsplit_once(" - ")?.0.trim()
+    } else {
+        // Claude Code puts a spinner or a mark in front while it works.
+        title.trim_start_matches(|c: char| !c.is_alphanumeric())
+    };
+    let shell = title
+        .split_once('@')
+        .is_some_and(|(user, host)| !user.contains(' ') && host.contains(':'));
+    let program = ["claude", "claude code", "pi", "opencode"]
+        .iter()
+        .any(|name| title.eq_ignore_ascii_case(name));
+    (!title.is_empty() && !shell && !program).then(|| title.to_owned())
 }
 
 /// Whether the terminal runs pi, as herdr names its agent or its command.
@@ -2695,6 +2752,26 @@ mod tests {
         assert!(config.is_none());
         let argv = opencode_argv(backend.agent(PROVIDER), "ses_x", None, config);
         assert_eq!(argv, ["opencode", "-s", "ses_x"]);
+    }
+
+    #[test]
+    fn an_agents_terminal_title_names_its_session() {
+        let named = |title: &str| agent_title(title);
+        assert_eq!(
+            named("herdr core otto session management").as_deref(),
+            Some("herdr core otto session management")
+        );
+        assert_eq!(named("✳ Fix the dock").as_deref(), Some("Fix the dock"));
+        assert_eq!(
+            named("OC | Pong reply request").as_deref(),
+            Some("Pong reply request")
+        );
+        assert_eq!(named("π - tidy up - otto").as_deref(), Some("tidy up"));
+        assert_eq!(named("OC | "), None);
+        assert_eq!(named("π - otto"), None);
+        assert_eq!(named("riccardo@framework:~/dev/otto"), None);
+        assert_eq!(named("✳ Claude Code"), None);
+        assert_eq!(named(""), None);
     }
 
     #[test]

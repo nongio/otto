@@ -571,6 +571,11 @@ pub enum SessionChange {
     Found(FoundSession),
     /// The agent's own id for a session the backend no longer has.
     Removed(String),
+    /// What the agent calls a session now, such as a summary it made of it.
+    Titled {
+        agent_session: String,
+        title: String,
+    },
 }
 
 /// A session found where the backend keeps them.
@@ -580,7 +585,8 @@ pub struct FoundSession {
     /// The agent's own id for it.
     pub agent_session: String,
     pub cwd: PathBuf,
-    /// What it is called: its first prompt, when there is one.
+    /// What it is called: the agent's own title for it, else its first
+    /// prompt, when there is one.
     pub title: Option<String>,
     /// Whether the agent runs it right now.
     pub running: bool,
