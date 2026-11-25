@@ -614,9 +614,8 @@ pub fn profiles(facts: &Facts, choices: &plan::Choices) -> String {
     if !choices.otto {
         out.push("  ✓ none: Otto is unticked".to_owned());
     } else if choices.backend == Backend::Herdr {
-        out.push("  ✓ none needed in herdr: Claude Code and pi get Otto's".to_owned());
-        out.push("    instructions on their command line. OpenCode doesn't take".to_owned());
-        out.push("    them in herdr yet, so it answers as itself there.".to_owned());
+        out.push("  ✓ none needed in herdr: Otto hands each agent its".to_owned());
+        out.push("    instructions when it starts it.".to_owned());
     } else if profiles.is_empty() {
         out.push("  ✓ none needed for the agents you chose".to_owned());
     }

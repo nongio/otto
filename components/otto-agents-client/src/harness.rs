@@ -262,10 +262,9 @@ impl Harness {
     /// harness left there.
     ///
     /// herdr starts the program itself and resumes sessions by their id, so
-    /// no enter lines are written. Claude Code and pi take the persona from
-    /// `agent`. OpenCode gets the same `OPENCODE_CONFIG_CONTENT` as over
-    /// ACP, which `otto-agents` does not pass on in herdr yet. Nothing for a
-    /// harness herdr does not run.
+    /// no enter lines are written. Claude Code, pi and OpenCode take the
+    /// persona from `agent`, which `otto-agents` hands each one its own way.
+    /// Nothing for a harness herdr does not run.
     pub fn write_herdr(self, table: &mut Table, persona: &str) {
         if self.herdr_program().is_none() {
             return;
@@ -284,12 +283,8 @@ impl Harness {
             return;
         }
         match self {
-            Harness::Claude | Harness::Pi => {
+            Harness::Claude | Harness::Pi | Harness::OpenCode => {
                 table.insert("agent", value(persona));
-            }
-            Harness::OpenCode => {
-                let config = format!(r#"{{"default_agent":"{persona}"}}"#);
-                set_entry(table, "env", "OPENCODE_CONFIG_CONTENT", Some(&config));
             }
             Harness::Codex | Harness::Hermes | Harness::Custom => {}
         }

@@ -47,7 +47,7 @@ Underneath it is still `otto-preview` (the program, its app id and the
   file is another window.
 - Editing pictures and Markdown, rotating, or saving anything from the
   window's own tools: those changes come from an agent, through the chat (see
-  below and `components/otto-agents/docs/plans/0016-agent-edited-documents.md`).
+  below).
   A PDF's form and markup are the exception (see *Form and markup*).
 - Digital signatures (signing with a certificate). The signature tool places
   a drawn signature; certificate signing is a later step of its own.

@@ -300,8 +300,8 @@ pub fn skills(facts: &Facts) -> &[Skill] {
 
 /// The renderings of Otto's agent for the selected harnesses. Claude Code
 /// reads the plugin itself and has none. Empty when the agents are plain,
-/// and in herdr, where the service hands Claude Code and pi the agent on
-/// their command line and OpenCode does not take one yet.
+/// and in herdr, where the service hands each agent its instructions when it
+/// starts it.
 pub fn profiles<'a>(facts: &'a Facts, choices: &Choices) -> Vec<&'a Render> {
     let Some(status) = &facts.plugins else {
         return Vec::new();
