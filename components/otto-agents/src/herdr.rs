@@ -315,6 +315,11 @@ impl HerdrBackend {
             );
         }
         for server in &spec.mcp_servers {
+            // `otto` is Otto's own ask server, which the flags above allow.
+            if server.name == "otto" {
+                tracing::warn!("a client's MCP server named otto is left out");
+                continue;
+            }
             let env: serde_json::Map<String, Value> = server
                 .env
                 .iter()
@@ -425,6 +430,13 @@ impl Backend for HerdrBackend {
                 let Some(address) = terminal.get("address").and_then(Value::as_str) else {
                     continue;
                 };
+                // A shell where Claude Code was started by hand is the
+                // person's: it is let go, never ended.
+                let item = hc_json(&["get", address]).await;
+                if item.as_ref().is_some_and(|item| !runs_agent_itself(item)) {
+                    let_go(address).await;
+                    continue;
+                }
                 if terminal.get("state").and_then(Value::as_str) == Some("live") {
                     let _ = hc().args(["kill", address]).output().await;
                 }
@@ -541,8 +553,6 @@ impl Backend for HerdrBackend {
     }
 }
 
-/// `hc`, with this process's own hc identity removed: sends from inside an hc
-/// terminal are wrapped in `<hc from=…>` tags, sends from outside arrive plain.
 /// `word` as a POSIX shell reads it back: in single quotes, a quote inside
 /// closed and escaped. Claude runs a hook's command through the shell.
 fn shell_quote(word: &str) -> String {
@@ -561,6 +571,8 @@ pub fn installed() -> bool {
     crate::cli::which("hc").is_some()
 }
 
+/// `hc`, with this process's own hc identity removed: sends from inside an hc
+/// terminal are wrapped in `<hc from=…>` tags, sends from outside arrive plain.
 fn hc() -> Command {
     let mut command = Command::new("hc");
     command
@@ -1704,8 +1716,6 @@ fn pi_entry(line: &str) -> Option<Value> {
     })
 }
 
-/// Claude keeps a session's transcript under its folder's path with every
-/// character that is not a letter or digit made a dash.
 /// Claude Code's own folder: `CLAUDE_CONFIG_DIR`, else `~/.claude`.
 fn claude_dir() -> Option<PathBuf> {
     std::env::var_os("CLAUDE_CONFIG_DIR")
@@ -1713,6 +1723,8 @@ fn claude_dir() -> Option<PathBuf> {
         .or_else(|| crate::xdg::home().map(|home| home.join(".claude")))
 }
 
+/// Claude keeps a session's transcript under its folder's path with every
+/// character that is not a letter or digit made a dash.
 fn transcript_path(cwd: &Path, session: &str) -> PathBuf {
     let folder: String = cwd
         .to_string_lossy()

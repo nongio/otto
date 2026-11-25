@@ -147,10 +147,12 @@ While the call waits, the TUI shows a running tool and herdr reports
 
 - Retire the ACP backend once herdr covers the clients of `otto-agents acp`
   and herdr-core is packaged.
-- Studio's sessions on pi and opencode: pi has no MCP, so it gets Studio's
-  instructions and plugin agent but not its document tools; opencode gets
-  neither yet (its MCP servers and instructions go in its config, not on its
-  command line).
+- Studio's sessions on pi: pi has no MCP, so it gets Studio's instructions
+  and plugin agent but not its document tools. opencode gets all three
+  through `OPENCODE_CONFIG_CONTENT`, set with `env` in front of it since
+  `hc run` takes no environment.
+- Otto's `ask` tool and permission hook on opencode and pi: their own
+  questions and permission prompts stay in the terminal.
 - The harnesses below.
 
 ## Open questions

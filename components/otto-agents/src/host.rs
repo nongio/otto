@@ -2032,9 +2032,6 @@ impl HostState {
         })
     }
 
-    /// Opens `request` in the chat's active turn and in the session's
-    /// `inputNeeded`. Returns whether it was opened: a request from outside
-    /// the active turn is declined at once.
     /// Opens a turn the agent started on a prompt Otto did not send, such as
     /// one typed in its terminal, unless a turn is already under way.
     fn start_outside_turn(
@@ -2077,6 +2074,9 @@ impl HostState {
         );
     }
 
+    /// Opens `request` in the chat's active turn and in the session's
+    /// `inputNeeded`. Returns whether it was opened: a request from outside
+    /// the active turn is declined at once.
     fn open_input(
         &mut self,
         session_uri: &str,

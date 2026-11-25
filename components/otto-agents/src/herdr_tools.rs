@@ -47,15 +47,42 @@ fn request_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..12].to_owned()
 }
 
-async fn label(terminal: &str, pairs: &[String]) {
-    let _ = hc()
-        .arg("label")
+/// Sets labels on `terminal`; whether herdr took them.
+async fn label(terminal: &str, pairs: &[String]) -> bool {
+    hc().arg("label")
         .arg(terminal)
         .args(pairs)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .await;
+        .await
+        .is_ok_and(|status| status.success())
+}
+
+/// The longest text a request keeps of any one string, such as a Write's
+/// content: a label is one argument, which Linux limits to 128 KiB.
+const LONGEST_TEXT: usize = 8 * 1024;
+
+/// `value` with each string longer than [`LONGEST_TEXT`] cut short, marked
+/// with an ellipsis.
+fn shortened(value: Value) -> Value {
+    match value {
+        Value::String(text) if text.len() > LONGEST_TEXT => {
+            let mut end = LONGEST_TEXT;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            Value::String(format!("{}…", &text[..end]))
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(shortened).collect()),
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key, shortened(value)))
+                .collect(),
+        ),
+        other => other,
+    }
 }
 
 /// The answer under `key` on `terminal` whose id is `id`, if one is there.
@@ -75,7 +102,10 @@ async fn ask_through_labels(
     id: &str,
     request: &Value,
 ) -> Option<Value> {
-    label(terminal, &[format!("{request_key}={request}")]).await;
+    // Not written, the request would never be seen: no answer, at once.
+    if !label(terminal, &[format!("{request_key}={request}")]).await {
+        return None;
+    }
     let answer = wait_for(terminal, answer_key, id).await;
     clear(terminal, request_key, answer_key).await;
     answer
@@ -339,7 +369,7 @@ pub async fn permission_hook() -> anyhow::Result<()> {
     let request = json!({
         "id": id,
         "tool_name": event.get("tool_name").cloned().unwrap_or_else(|| json!("")),
-        "tool_input": event.get("tool_input").cloned().unwrap_or_else(|| json!({})),
+        "tool_input": shortened(event.get("tool_input").cloned().unwrap_or_else(|| json!({}))),
         "cwd": event.get("cwd").cloned().unwrap_or_else(|| json!("")),
         "suggestions": event.get("permission_suggestions").cloned().unwrap_or_else(|| json!([])),
     });
@@ -376,6 +406,18 @@ pub async fn permission_hook() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_large_write_fits_in_a_label() {
+        let content = "é".repeat(100_000);
+        let input = json!({ "file_path": "/tmp/a", "content": content, "lines": [content] });
+        let short = shortened(input);
+        assert_eq!(short["file_path"], "/tmp/a");
+        let kept = short["content"].as_str().unwrap();
+        assert!(kept.len() <= LONGEST_TEXT + '…'.len_utf8());
+        assert!(kept.ends_with('…'));
+        assert_eq!(short["lines"][0], short["content"]);
+    }
 
     #[test]
     fn an_answer_counts_only_for_its_own_request() {
