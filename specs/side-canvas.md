@@ -307,6 +307,8 @@ are read the next time the column is laid out.
 - Sending a request (Enter or Ctrl+L with text typed) runs
   `otto-launcher --ask --send -- <text>`, so the launcher opens with the
   request already sent and the conversation running, then sends `dismiss`.
+  What is stashed (a file dropped on the canvas, say) goes with that
+  request: the launcher reads the stash before it sends.
   Ctrl+L with nothing typed runs `otto-launcher --ask`.
 - The field is cleared when the canvas hides.
 
