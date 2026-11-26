@@ -33,7 +33,8 @@ on [Agents](agents.md). This page is the map of the crate.
 | `host` | The authoritative state: sessions, chats, subscriptions and open questions. Every change goes through one lock, is reduced with `ahp::reducers` and stamped with the next `serverSeq` |
 | `agent` | The `Backend` trait the host drives through a command and an event channel, and the echo backend for tests and `serve --echo` |
 | `acp` | The ACP backend: one ACP agent per session, as a child process on stdio |
-| `herdr` | The herdr backend: each session the agent's own program in a herdr terminal, followed through `hc events` and its transcript, driven with `hc send`; also `herdr-show` |
+| `herdr` | The herdr backend: each session the agent's own program in a herdr terminal, followed through herdr-core's API (`events.subscribe`, labels) and its transcript, driven with `terminal.send`; also `herdr-show` |
+| `herdr_core` | herdr-core's JSON-RPC API on its socket: `call`, `subscribe` (`events.subscribe`) and `label` |
 | `herdr_tools` | `herdr-ask` (the `ask` MCP server) and `herdr-permission` (Claude Code's `PermissionRequest` hook), which a herdr session runs to reach Otto through terminal labels |
 | `config` | `backend` and `[[agents]]` from `/etc/otto/agents.toml`, then `$XDG_CONFIG_HOME/otto/agents.toml` |
 | `store` | One JSON file per session in `$XDG_STATE_HOME/otto-agents/sessions/` (`herdr-sessions/` under herdr), so sessions outlive a restart |
@@ -70,7 +71,8 @@ socket:
   `$XDG_RUNTIME_DIR/otto-agents/agents.sock`. The socket's owner-only directory
   is the access check; there is no authentication inside the protocol.
 - **A backend per service.** The herdr backend runs each session with
-  `hc run` and follows it with `hc events` and the agent's transcript; the
+  herdr-core's `terminal.run` and follows it with `events.subscribe` and the
+  agent's transcript; the
   agents outlive the service. The ACP backend starts the agent command
   configured in `agents.toml` for each session and talks to it on stdio. The
   host never talks to agents itself; it translates backend events into AHP
