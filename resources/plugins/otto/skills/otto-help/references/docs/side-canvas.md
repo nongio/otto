@@ -34,6 +34,7 @@ slides away. The other keys are the launcher's:
 | Enter | Send what you typed as a new request. With nothing typed, open the highlighted session |
 | Right, with nothing typed | Open the highlighted session |
 | Ctrl+L | Send what you typed; with nothing typed, open an empty request |
+| Ctrl+O or Cmd+O | Open the highlighted session in its terminal |
 | Escape | Clear what you typed; with nothing typed, close the canvas |
 
 The list is fetched each time the canvas opens and follows the agent service

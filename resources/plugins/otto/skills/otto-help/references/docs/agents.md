@@ -30,8 +30,8 @@ is left. By hand:
 
 1. **Install an agent** and log it in: Claude Code, OpenCode, Codex, Hermes or
    pi. Otto runs the command you name; it does not manage accounts or keys.
-   For sessions in herdr, install herdr too (`hc` and `herdr-app`); there it
-   runs Claude Code, pi and OpenCode.
+   Sessions run in herdr (Otto's packages install herdr-core), which runs
+   Claude Code, pi and OpenCode.
 2. **Start the service**, which is off until you ask for it:
 
    ```sh
@@ -181,8 +181,9 @@ goes to when you do not choose.
 
 ## Where sessions run
 
-Sessions in herdr are new, and in Otto's nightly builds only. Otto doesn't
-install herdr for you yet: get it from [herdr.dev](https://herdr.dev).
+Sessions in herdr are new, and in Otto's nightly builds only. Otto's packages
+install herdr-core (`hc`); the herdr app, to watch sessions outside Otto, comes
+from [herdr.dev](https://herdr.dev).
 
 When [herdr](https://herdr.dev) is installed, every session runs in it, as
 the agent's own program in a herdr terminal: Claude Code, pi or OpenCode, with
@@ -224,6 +225,18 @@ an agent may do without asking is up to the agent's own settings and `mode`,
 the permission mode its sessions start in (Claude Code's, such as
 `acceptEdits`; `auto` also lets OpenCode approve on its own). `name`,
 `model`, `folder`, `agent`, `skills`, `colour` and `space` are used.
+
+When sessions run in herdr and some of your agents are still set up for Otto,
+`otto-setup` offers **Rewrite for herdr** on its Review page. It is off until
+you tick it, and its details show each agent before and after. Each one is
+written again the way setup writes a new herdr agent, keeping only its `id`,
+`name`, `model`, `mode`, `skills`, `folder`, `colour`, `space` and comments. Who it answers as follows the
+Otto box on the Agents page: a persona of its own, its `permissions`, `env`,
+`config` and any other keys are not carried over. Codex and Hermes agents are
+never offered, since herdr doesn't run them. Apply copies `agents.toml` to
+`agents.toml.bak` first. Run without the interface,
+`otto-setup --apply --rewrite` does the same; plain `--apply` leaves your
+agents as they are.
 
 **Picking where they run.** Settings › Agents › **Sessions run in** has
 Automatic (herdr when it is installed, else Otto), herdr and Otto. In
