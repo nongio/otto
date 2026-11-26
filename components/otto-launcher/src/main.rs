@@ -2635,6 +2635,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut launcher = Launcher::new(&words.join(" "), scope);
     launcher.prepare_ask(files, session.as_deref());
     launcher.stashed = stashed;
+    // What is stashed is there from the first frame, and goes with `--send`.
+    launcher.show_stashed();
     launcher.send_on_start = send && session.is_none();
     AppRunner::new(launcher).run()?;
     Ok(())
