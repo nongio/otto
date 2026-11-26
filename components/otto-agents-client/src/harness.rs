@@ -144,7 +144,7 @@ impl Harness {
             .first()
             .map(|c| c.rsplit('/').next().unwrap_or(c))
             .unwrap_or_default();
-        if names("claude-agent-acp") {
+        if names("claude-agent-acp") || names("claude-code-acp") {
             Harness::Claude
         } else if names("codex-acp") {
             Harness::Codex
@@ -456,6 +456,10 @@ mod tests {
             Harness::detect(&words(
                 "npx -y @agentclientprotocol/claude-agent-acp@latest"
             )),
+            Harness::Claude
+        );
+        assert_eq!(
+            Harness::detect(&words("npx -y @zed-industries/claude-code-acp")),
             Harness::Claude
         );
         assert_eq!(

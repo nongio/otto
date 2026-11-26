@@ -355,6 +355,56 @@ pub fn sessions(facts: &Facts, choices: &plan::Choices) -> String {
     out.join("\n")
 }
 
+/// Converting the agents set up for Otto's sessions to run in herdr: why,
+/// what changes in each one, and the backup.
+pub fn convert(facts: &Facts, choices: &plan::Choices) -> String {
+    let conversions = plan::conversions(facts, choices.backend);
+    let mut out = vec![
+        format!("# {}", plan::CONVERT),
+        String::new(),
+        "These agents are set up for sessions Otto runs over ACP (Agent".to_owned(),
+        "Client Protocol): an adapter as the command, or args, enter lines,".to_owned(),
+        "env or config that only Otto reads. herdr starts the agent's own".to_owned(),
+        "program instead and ignores those, so in herdr they run without".to_owned(),
+        "Otto's settings, or not at all.".to_owned(),
+        String::new(),
+        "Converting one sets its command to the program, moves who it".to_owned(),
+        "answers as into agent, and drops the keys only Otto reads. Its".to_owned(),
+        "name, id, permissions, mode, model and comments stay.".to_owned(),
+        String::new(),
+    ];
+    if choices.convert {
+        out.push("Ticked: Apply converts them. Space leaves them as they are.".into());
+    } else {
+        out.push("Not ticked: they stay as they are. Space ticks it, and Apply".into());
+        out.push("converts them.".into());
+    }
+    out.push(String::new());
+    let shown = facts.shown(&facts.config_path);
+    let mut n = 1;
+    if !facts.user_config.trim().is_empty() {
+        out.push(step(n, "Back up agents.toml", Who::Setup, false));
+        out.push(cmd(format!(
+            "cp {shown} {}",
+            facts.shown(&plan::backup_path(facts))
+        )));
+        out.push(String::new());
+        n += 1;
+    }
+    out.push(step(n, "Convert the agents", Who::Setup, false));
+    out.extend(plan::conversion_preview(facts, &conversions));
+    if !facts.user_config.trim().is_empty() {
+        out.push(String::new());
+        out.push("To undo it, copy the backup back and restart the service:".into());
+        out.push(cmd(format!(
+            "cp {} {shown}",
+            facts.shown(&plan::backup_path(facts))
+        )));
+        out.push(cmd("systemctl --user restart otto-agents"));
+    }
+    out.join("\n")
+}
+
 /// herdr, while it runs the sessions: where it is, and how to have it.
 pub fn herdr(facts: &Facts) -> String {
     let mut out = vec![

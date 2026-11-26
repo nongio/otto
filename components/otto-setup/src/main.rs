@@ -37,6 +37,9 @@ Options:
       --check    print what is set up and what is left, and exit 1 when
                  something is left to do
       --apply    apply without asking, adding every agent that is ready
+      --convert  with --apply, also convert the agents set up for Otto's
+                 sessions to run in herdr, backing up agents.toml first;
+                 without it --apply leaves them as they are
   -V, --version  print the version and exit
   -h, --help     print this and exit
 
@@ -49,7 +52,11 @@ otherwise it behaves as --check.
 enum Command {
     Interactive,
     Check,
-    Apply,
+    /// Applies without asking; `convert` also converts the agents set up
+    /// for Otto's sessions when they run in herdr.
+    Apply {
+        convert: bool,
+    },
     Help,
     Version,
 }
@@ -57,11 +64,13 @@ enum Command {
 /// Parses the arguments after the program name.
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String> {
     let mut command = Command::Interactive;
+    let mut convert = false;
     for arg in args {
         match arg.as_str() {
             "agents" => {}
             "--check" => command = Command::Check,
-            "--apply" => command = Command::Apply,
+            "--apply" => command = Command::Apply { convert: false },
+            "--convert" => convert = true,
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
             other if other.starts_with('-') => return Err(format!("unknown option {other:?}")),
@@ -72,7 +81,11 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String>
             }
         }
     }
-    Ok(command)
+    match command {
+        Command::Apply { .. } => Ok(Command::Apply { convert }),
+        _ if convert => Err("--convert goes with --apply".to_owned()),
+        command => Ok(command),
+    }
 }
 
 fn main() -> ExitCode {
@@ -102,7 +115,7 @@ fn main() -> ExitCode {
             }
         },
         Command::Interactive | Command::Check => check(&Facts::read()),
-        Command::Apply => apply(&Facts::read()),
+        Command::Apply { convert } => apply(&Facts::read(), convert),
     }
 }
 
@@ -188,11 +201,19 @@ fn check(facts: &Facts) -> ExitCode {
             State::Done => "ok  ",
             State::Todo => "todo",
             State::Blocked => "!!  ",
+            State::Offered => "off ",
         };
         println!("  [{mark}] {:<18}{}", step.title, step.summary);
     }
-    if steps.iter().any(|s| s.state == State::Todo) {
+    let offered = steps.iter().any(|s| s.state == State::Offered);
+    if steps
+        .iter()
+        .any(|s| matches!(s.state, State::Todo | State::Offered))
+    {
         println!("\nRun otto-setup in a terminal to choose and apply, or otto-setup --apply.");
+        if offered {
+            println!("--apply leaves the agents to convert as they are; --apply --convert converts them.");
+        }
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
@@ -257,8 +278,22 @@ fn print_acp_requirements(facts: &Facts, choices: &Choices) {
 }
 
 /// Applies the plan for the agents that are ready, saying how it went.
-fn apply(facts: &Facts) -> ExitCode {
-    let steps = plan::steps(facts, &Choices::initial(facts));
+///
+/// The agents set up for Otto's sessions are converted for herdr only when
+/// `convert` is set: it changes agents the user already has, so it is never
+/// done without being asked for.
+fn apply(facts: &Facts, convert: bool) -> ExitCode {
+    let choices = Choices {
+        convert,
+        ..Choices::initial(facts)
+    };
+    let steps = plan::steps(facts, &choices);
+    if let Some(step) = steps.iter().find(|s| s.state == State::Offered) {
+        println!(
+            "[off ] {}: left as they are; --apply --convert converts them.",
+            step.title
+        );
+    }
     if steps.iter().all(|s| s.state != State::Todo) {
         println!("Nothing to do.");
         return ExitCode::SUCCESS;
@@ -290,7 +325,13 @@ mod tests {
     fn parses_the_topic_and_the_modes() {
         assert_eq!(parse(&[]), Ok(Command::Interactive));
         assert_eq!(parse(&["agents", "--check"]), Ok(Command::Check));
-        assert_eq!(parse(&["--apply"]), Ok(Command::Apply));
+        assert_eq!(parse(&["--apply"]), Ok(Command::Apply { convert: false }));
+        assert_eq!(
+            parse(&["--convert", "--apply"]),
+            Ok(Command::Apply { convert: true })
+        );
+        assert!(parse(&["--convert"]).is_err());
+        assert!(parse(&["--check", "--convert"]).is_err());
         assert!(parse(&["display"]).is_err());
         assert!(parse(&["--frobnicate"]).is_err());
     }
