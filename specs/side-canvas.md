@@ -304,6 +304,9 @@ are read the next time the column is laid out.
   Preview started about a file (`_meta.otto.app` is `otto-preview`) runs
   `otto-preview --session <session URI> <file>` instead: the file, with the
   conversation beside it.
+- Ctrl+O or Cmd+O runs `otto-launcher --session <session URI> --terminal`
+  for the highlighted session, which opens it in its terminal (herdr-app
+  under herdr) as the launcher's Ctrl+O does, then sends `dismiss`.
 - Sending a request (Enter or Ctrl+L with text typed) runs
   `otto-launcher --ask --send -- <text>`, so the launcher opens with the
   request already sent and the conversation running, then sends `dismiss`.

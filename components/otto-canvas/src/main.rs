@@ -317,6 +317,20 @@ impl Sessions {
         }
     }
 
+    /// Open the session in row `index` in its terminal, through the
+    /// launcher, which knows how (`--terminal`), and send the canvas away.
+    fn open_in_terminal(&mut self, index: usize) {
+        let Some(resource) = self.resource_at(index).map(str::to_string) else {
+            return;
+        };
+        match launch(&["--session", &resource, "--terminal"]) {
+            Ok(()) => self.dismiss(),
+            Err(err) => {
+                tracing::warn!(%err, session = %resource, "could not open the session in its terminal");
+            }
+        }
+    }
+
     /// Send `request` to the agent in the launcher, which opens on it
     /// running, or open an empty request when there is nothing to send; and
     /// send the canvas away.
@@ -620,6 +634,20 @@ impl Sessions {
         if ask_key {
             let request = self.input.value().to_string();
             self.ask(&request);
+            return;
+        }
+
+        // Ctrl+O or Cmd+O opens the highlighted session in its terminal, as
+        // in the launcher's list.
+        let terminal_key = control == Some('o')
+            || (modifiers.logo
+                && !modifiers.ctrl
+                && !modifiers.alt
+                && matches!(event.keysym, Keysym::o | Keysym::O));
+        if terminal_key {
+            if let Some(index) = self.selected_index() {
+                self.open_in_terminal(index);
+            }
             return;
         }
 

@@ -192,6 +192,10 @@ request as soon as the card is up, so the card opens on the running
 conversation rather than on the text waiting in the field. It does nothing
 with `--session`, which opens an existing conversation instead.
 
+`--terminal`, with `--session`, takes that session up in its terminal as soon
+as the service says which, as Ctrl+O does, and the launcher goes. The side
+canvas uses it for its own Ctrl+O.
+
 **A request of attachments alone.** Enter with nothing typed sends a request
 when at least one attachment is not struck out: the attachments can be the
 whole question. The agent receives the attachments with no text, and a new
