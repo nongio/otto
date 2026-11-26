@@ -663,7 +663,9 @@ const ACP_KEYS: [&str; 5] = ["args", "enter", "enter_new", "env", "config"];
 
 /// What a rewritten agent keeps of its old block, besides its comments.
 /// Everything else comes from the herdr preset.
-pub const KEPT: [&str; 5] = ["id", "name", "model", "mode", "skills"];
+pub const KEPT: [&str; 8] = [
+    "id", "name", "model", "mode", "skills", "folder", "colour", "space",
+];
 
 /// One agent set up for Otto's ACP sessions, and its block once rewritten
 /// from the herdr preset.
@@ -1462,6 +1464,7 @@ skills = "claude"
 enter = ["/reviewer"]
 enter_new = ["/reviewer"]
 colour = "blue"
+flavour = "mint"
 
 [agents.env]
 CLAUDE_CODE_FLAG = "1"
@@ -1534,6 +1537,7 @@ CLAUDE_CODE_FLAG = "1"
         assert_eq!(claude["model"].as_str(), Some("opus"));
         assert_eq!(claude["mode"].as_str(), Some("acceptEdits"));
         assert_eq!(claude["skills"].as_str(), Some("claude"));
+        assert_eq!(claude["colour"].as_str(), Some("blue"));
         // The rest is the preset's, as for a new agent.
         let mut fresh = preset(&facts, &choices, Backend::Herdr, Harness::Claude, "claude");
         for key in KEPT {
@@ -1548,7 +1552,7 @@ CLAUDE_CODE_FLAG = "1"
         }
         assert_eq!(claude["command"].as_str(), Some("claude"));
         assert_eq!(claude["permissions"].as_str(), Some("ask"));
-        for key in ACP_KEYS.iter().chain(&["colour"]) {
+        for key in ACP_KEYS.iter().chain(&["flavour"]) {
             assert!(!claude.contains_key(key), "{key} kept: {text}");
         }
 
