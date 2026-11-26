@@ -1212,6 +1212,15 @@ async fn find(session: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// The name of `session`'s terminal, unique among live terminals. Session ids
+/// begin with a timestamp (OpenCode's `ses_…`, pi's UUIDv7), so the name takes
+/// their random end.
+fn terminal_name(session: &str) -> String {
+    let chars: Vec<char> = session.chars().collect();
+    let tail: String = chars[chars.len().saturating_sub(8)..].iter().collect();
+    format!("otto-{tail}")
+}
+
 /// Starts `session`'s agent in a new terminal, in the background, kept
 /// running on its own: its address.
 async fn run(
@@ -1230,7 +1239,7 @@ async fn run(
     let params = json!({
         "argv": launch.argv,
         "env": launch.env,
-        "name": format!("otto-{}", session.chars().take(8).collect::<String>()),
+        "name": terminal_name(session),
         "cwd": cwd,
         "labels": labels,
         "keep": true,
@@ -3081,6 +3090,16 @@ mod tests {
         assert_eq!(adopted_agent(&agents, Path::new("/home/me/dev/x")), "dev");
         assert_eq!(adopted_agent(&agents, Path::new("/tmp")), "claude");
         assert_eq!(adopted_agent(&[], Path::new("/tmp")), PROVIDER);
+    }
+
+    #[test]
+    fn sessions_started_together_get_their_own_terminal_names() {
+        // OpenCode ids share their time prefix when made close together.
+        let one = terminal_name("ses_2063a1f04ffeWq3kT9xLmN2pQr");
+        let two = terminal_name("ses_2063a1f05ffeZz8yB1cDeF4gHi");
+        assert_ne!(one, two);
+        assert_eq!(one, "otto-xLmN2pQr");
+        assert_eq!(terminal_name("abc"), "otto-abc");
     }
 
     #[test]

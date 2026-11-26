@@ -24,6 +24,7 @@ depends=(
     "glibc"
     "gst-plugins-base-libs"
     "gstreamer"
+    "herdr-core"
     "inter-font"
     "libgcc"
     "libglvnd"

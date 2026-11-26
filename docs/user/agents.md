@@ -30,8 +30,8 @@ is left. By hand:
 
 1. **Install an agent** and log it in: Claude Code, OpenCode, Codex, Hermes or
    pi. Otto runs the command you name; it does not manage accounts or keys.
-   For sessions in herdr, install herdr too (`hc` and `herdr-app`); there it
-   runs Claude Code, pi and OpenCode.
+   Sessions run in herdr (Otto's packages install herdr-core), which runs
+   Claude Code, pi and OpenCode.
 2. **Start the service**, which is off until you ask for it:
 
    ```sh
@@ -181,8 +181,9 @@ goes to when you do not choose.
 
 ## Where sessions run
 
-Sessions in herdr are new, and in Otto's nightly builds only. Otto doesn't
-install herdr for you yet: get it from [herdr.dev](https://herdr.dev).
+Sessions in herdr are new, and in Otto's nightly builds only. Otto's packages
+install herdr-core (`hc`); the herdr app, to watch sessions outside Otto, comes
+from [herdr.dev](https://herdr.dev).
 
 When [herdr](https://herdr.dev) is installed, every session runs in it, as
 the agent's own program in a herdr terminal: Claude Code, pi or OpenCode, with
