@@ -1574,6 +1574,10 @@ fn opencode_as_claude(rows: &[Value]) -> String {
             }
             index += 1;
         }
+        // A compaction's summary is the agent's note to itself, not a reply.
+        if message.get("summary").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
         match message.get("role").and_then(Value::as_str) {
             Some("user") => {
                 let text: Vec<&str> = parts
@@ -2372,6 +2376,7 @@ fn prompt_of(line: &str) -> Option<String> {
     if entry.get("type").and_then(Value::as_str) != Some("user")
         || flag("isMeta")
         || flag("isSidechain")
+        || flag("isCompactSummary")
     {
         return None;
     }
@@ -2639,7 +2644,9 @@ fn history(transcript: &str) -> Vec<HistoryTurn> {
             continue;
         };
         let flag = |name: &str| entry.get(name).and_then(Value::as_bool) == Some(true);
-        if flag("isMeta") || flag("isSidechain") {
+        // A compaction's summary is written as a prompt; it is Claude's note
+        // to itself, not something you wrote.
+        if flag("isMeta") || flag("isSidechain") || flag("isCompactSummary") {
             continue;
         }
         let content = entry.pointer("/message/content");
@@ -3438,6 +3445,51 @@ mod tests {
             prompt_of(r#"{"type":"assistant","message":{"content":"x"}}"#),
             None
         );
+        assert_eq!(
+            prompt_of(
+                r#"{"type":"user","isCompactSummary":true,"message":{"content":"This session is being continued"}}"#
+            ),
+            None,
+            "a compaction's summary is not a prompt"
+        );
+    }
+
+    #[test]
+    fn a_compaction_summary_is_left_out_of_the_history() {
+        let transcript = [
+            r#"{"type":"user","uuid":"u1","message":{"content":"hi"}}"#,
+            r#"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn"}}"#,
+            r#"{"type":"system","subtype":"compact_boundary","content":"Conversation compacted"}"#,
+            r#"{"type":"user","uuid":"u2","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"message":{"content":"This session is being continued"}}"#,
+        ]
+        .join("\n");
+        assert_eq!(history(&transcript).len(), 1, "only the prompt you wrote");
+    }
+
+    #[test]
+    fn an_opencode_compaction_summary_is_not_a_reply() {
+        let rows = [
+            json!({
+                "message": "m1",
+                "message_data": json!({ "role": "user" }).to_string(),
+                "part": "p1",
+                "part_data": json!({ "type": "compaction", "auto": true }).to_string(),
+            }),
+            json!({
+                "message": "m2",
+                "message_data": json!({
+                    "role": "assistant", "summary": true, "finish": "stop",
+                    "time": { "completed": 2 },
+                })
+                .to_string(),
+                "part": "p2",
+                "part_data": json!({
+                    "type": "text", "text": "Summary of the work", "time": { "start": 1, "end": 2 },
+                })
+                .to_string(),
+            }),
+        ];
+        assert_eq!(opencode_as_claude(&rows), "");
     }
 
     #[test]
