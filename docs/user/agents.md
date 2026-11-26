@@ -226,14 +226,16 @@ the permission mode its sessions start in (Claude Code's, such as
 `model`, `folder`, `agent`, `skills`, `colour` and `space` are used.
 
 When sessions run in herdr and some of your agents are still set up for Otto,
-`otto-setup` offers **Convert for herdr** on its Review page. It is off until
-you tick it, and its details show each agent before and after: `command`
-becomes the agent's own program, who it answers as moves into `agent`, and
-`args`, `env`, `config` and the `enter` lines go. Everything else, comments
-included, stays. Codex and Hermes agents are never offered, since herdr
-doesn't run them. Apply copies `agents.toml` to `agents.toml.bak` first. Run
-without the interface, `otto-setup --apply --convert` does the same; plain
-`--apply` leaves your agents as they are.
+`otto-setup` offers **Rewrite for herdr** on its Review page. It is off until
+you tick it, and its details show each agent before and after. Each one is
+written again the way setup writes a new herdr agent, keeping only its `id`,
+`name`, `model`, `mode`, `skills` and comments. Who it answers as follows the
+Otto box on the Agents page: a persona of its own, its `permissions`, `env`,
+`config` and any other keys are not carried over. Codex and Hermes agents are
+never offered, since herdr doesn't run them. Apply copies `agents.toml` to
+`agents.toml.bak` first. Run without the interface,
+`otto-setup --apply --rewrite` does the same; plain `--apply` leaves your
+agents as they are.
 
 **Picking where they run.** Settings › Agents › **Sessions run in** has
 Automatic (herdr when it is installed, else Otto), herdr and Otto. In

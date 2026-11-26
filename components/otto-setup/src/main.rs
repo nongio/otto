@@ -37,8 +37,8 @@ Options:
       --check    print what is set up and what is left, and exit 1 when
                  something is left to do
       --apply    apply without asking, adding every agent that is ready
-      --convert  with --apply, also convert the agents set up for Otto's
-                 sessions to run in herdr, backing up agents.toml first;
+      --rewrite  with --apply, also rewrite the agents set up for Otto's
+                 sessions from the herdr preset, backing up agents.toml first;
                  without it --apply leaves them as they are
   -V, --version  print the version and exit
   -h, --help     print this and exit
@@ -52,10 +52,10 @@ otherwise it behaves as --check.
 enum Command {
     Interactive,
     Check,
-    /// Applies without asking; `convert` also converts the agents set up
+    /// Applies without asking; `rewrite` also rewrites the agents set up
     /// for Otto's sessions when they run in herdr.
     Apply {
-        convert: bool,
+        rewrite: bool,
     },
     Help,
     Version,
@@ -64,13 +64,13 @@ enum Command {
 /// Parses the arguments after the program name.
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String> {
     let mut command = Command::Interactive;
-    let mut convert = false;
+    let mut rewrite = false;
     for arg in args {
         match arg.as_str() {
             "agents" => {}
             "--check" => command = Command::Check,
-            "--apply" => command = Command::Apply { convert: false },
-            "--convert" => convert = true,
+            "--apply" => command = Command::Apply { rewrite: false },
+            "--rewrite" => rewrite = true,
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
             other if other.starts_with('-') => return Err(format!("unknown option {other:?}")),
@@ -82,8 +82,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String>
         }
     }
     match command {
-        Command::Apply { .. } => Ok(Command::Apply { convert }),
-        _ if convert => Err("--convert goes with --apply".to_owned()),
+        Command::Apply { .. } => Ok(Command::Apply { rewrite }),
+        _ if rewrite => Err("--rewrite goes with --apply".to_owned()),
         command => Ok(command),
     }
 }
@@ -115,7 +115,7 @@ fn main() -> ExitCode {
             }
         },
         Command::Interactive | Command::Check => check(&Facts::read()),
-        Command::Apply { convert } => apply(&Facts::read(), convert),
+        Command::Apply { rewrite } => apply(&Facts::read(), rewrite),
     }
 }
 
@@ -212,7 +212,7 @@ fn check(facts: &Facts) -> ExitCode {
     {
         println!("\nRun otto-setup in a terminal to choose and apply, or otto-setup --apply.");
         if offered {
-            println!("--apply leaves the agents to convert as they are; --apply --convert converts them.");
+            println!("--apply leaves the agents to rewrite as they are; --apply --rewrite rewrites them.");
         }
         ExitCode::FAILURE
     } else {
@@ -279,18 +279,18 @@ fn print_acp_requirements(facts: &Facts, choices: &Choices) {
 
 /// Applies the plan for the agents that are ready, saying how it went.
 ///
-/// The agents set up for Otto's sessions are converted for herdr only when
-/// `convert` is set: it changes agents the user already has, so it is never
+/// The agents set up for Otto's sessions are rewritten for herdr only when
+/// `rewrite` is set: it changes agents the user already has, so it is never
 /// done without being asked for.
-fn apply(facts: &Facts, convert: bool) -> ExitCode {
+fn apply(facts: &Facts, rewrite: bool) -> ExitCode {
     let choices = Choices {
-        convert,
+        rewrite,
         ..Choices::initial(facts)
     };
     let steps = plan::steps(facts, &choices);
     if let Some(step) = steps.iter().find(|s| s.state == State::Offered) {
         println!(
-            "[off ] {}: left as they are; --apply --convert converts them.",
+            "[off ] {}: left as they are; --apply --rewrite rewrites them.",
             step.title
         );
     }
@@ -325,13 +325,13 @@ mod tests {
     fn parses_the_topic_and_the_modes() {
         assert_eq!(parse(&[]), Ok(Command::Interactive));
         assert_eq!(parse(&["agents", "--check"]), Ok(Command::Check));
-        assert_eq!(parse(&["--apply"]), Ok(Command::Apply { convert: false }));
+        assert_eq!(parse(&["--apply"]), Ok(Command::Apply { rewrite: false }));
         assert_eq!(
-            parse(&["--convert", "--apply"]),
-            Ok(Command::Apply { convert: true })
+            parse(&["--rewrite", "--apply"]),
+            Ok(Command::Apply { rewrite: true })
         );
-        assert!(parse(&["--convert"]).is_err());
-        assert!(parse(&["--check", "--convert"]).is_err());
+        assert!(parse(&["--rewrite"]).is_err());
+        assert!(parse(&["--check", "--rewrite"]).is_err());
         assert!(parse(&["display"]).is_err());
         assert!(parse(&["--frobnicate"]).is_err());
     }

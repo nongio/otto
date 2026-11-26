@@ -355,12 +355,12 @@ pub fn sessions(facts: &Facts, choices: &plan::Choices) -> String {
     out.join("\n")
 }
 
-/// Converting the agents set up for Otto's sessions to run in herdr: why,
-/// what changes in each one, and the backup.
-pub fn convert(facts: &Facts, choices: &plan::Choices) -> String {
-    let conversions = plan::conversions(facts, choices.backend);
+/// Rewriting the agents set up for Otto's sessions from the herdr preset:
+/// why, what each one keeps, and the backup.
+pub fn rewrite(facts: &Facts, choices: &plan::Choices) -> String {
+    let rewrites = plan::rewrites(facts, choices);
     let mut out = vec![
-        format!("# {}", plan::CONVERT),
+        format!("# {}", plan::REWRITE),
         String::new(),
         "These agents are set up for sessions Otto runs over ACP (Agent".to_owned(),
         "Client Protocol): an adapter as the command, or args, enter lines,".to_owned(),
@@ -368,16 +368,16 @@ pub fn convert(facts: &Facts, choices: &plan::Choices) -> String {
         "program instead and ignores those, so in herdr they run without".to_owned(),
         "Otto's settings, or not at all.".to_owned(),
         String::new(),
-        "Converting one sets its command to the program, moves who it".to_owned(),
-        "answers as into agent, and drops the keys only Otto reads. Its".to_owned(),
-        "name, id, permissions, mode, model and comments stay.".to_owned(),
+        "Rewriting one writes it again the way setup writes a new agent".to_owned(),
+        "for herdr. Who it answers as follows the Otto box on the Agents".to_owned(),
+        "page, not the old entry.".to_owned(),
         String::new(),
     ];
-    if choices.convert {
-        out.push("Ticked: Apply converts them. Space leaves them as they are.".into());
+    if choices.rewrite {
+        out.push("Ticked: Apply rewrites them. Space leaves them as they are.".into());
     } else {
         out.push("Not ticked: they stay as they are. Space ticks it, and Apply".into());
-        out.push("converts them.".into());
+        out.push("rewrites them.".into());
     }
     out.push(String::new());
     let shown = facts.shown(&facts.config_path);
@@ -391,8 +391,8 @@ pub fn convert(facts: &Facts, choices: &plan::Choices) -> String {
         out.push(String::new());
         n += 1;
     }
-    out.push(step(n, "Convert the agents", Who::Setup, false));
-    out.extend(plan::conversion_preview(facts, &conversions));
+    out.push(step(n, "Rewrite the agents", Who::Setup, false));
+    out.extend(plan::rewrite_preview(facts, choices, &rewrites));
     if !facts.user_config.trim().is_empty() {
         out.push(String::new());
         out.push("To undo it, copy the backup back and restart the service:".into());

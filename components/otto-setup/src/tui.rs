@@ -419,10 +419,10 @@ impl App {
             Row::Skills | Row::Profiles => {
                 self.status = "Apply does this. Enter shows the details.".into();
             }
-            Row::Step(index) if self.steps[index].title == plan::CONVERT => {
-                self.choices.convert = !self.choices.convert;
-                self.status = if self.choices.convert {
-                    "Apply converts them, after backing up agents.toml.".into()
+            Row::Step(index) if self.steps[index].title == plan::REWRITE => {
+                self.choices.rewrite = !self.choices.rewrite;
+                self.status = if self.choices.rewrite {
+                    "Apply rewrites them, after backing up agents.toml.".into()
                 } else {
                     "Your agents stay as they are.".into()
                 };
@@ -481,8 +481,8 @@ impl App {
             Row::Adapters => guide::adapters(&self.facts),
             Row::Skills => guide::skills(&self.facts),
             Row::Profiles => guide::profiles(&self.facts, &self.choices),
-            Row::Step(index) if self.steps[index].title == plan::CONVERT => {
-                guide::convert(&self.facts, &self.choices)
+            Row::Step(index) if self.steps[index].title == plan::REWRITE => {
+                guide::rewrite(&self.facts, &self.choices)
             }
             Row::Step(index) => {
                 let step = &self.steps[index];
@@ -640,7 +640,7 @@ impl App {
         let help = match self.page {
             Page::Agents => " ↑↓ move  space tick or switch  enter details  tab next  q quit",
             Page::Requirements => " ↑↓ move  space tick  enter details  tab next  q quit",
-            Page::Review if self.steps.iter().any(|s| s.title == plan::CONVERT) => {
+            Page::Review if self.steps.iter().any(|s| s.title == plan::REWRITE) => {
                 " ↑↓ move  space tick  enter details  a apply  tab back  q quit"
             }
             Page::Review => " ↑↓ move  enter details  a apply  tab back  q quit",
@@ -899,7 +899,7 @@ impl App {
                 let step = &self.steps[index];
                 let (glyph, style) = match step.state {
                     State::Done => (" ✓ ", GREEN),
-                    State::Todo if step.title == plan::CONVERT => ("[x]", YELLOW),
+                    State::Todo if step.title == plan::REWRITE => ("[x]", YELLOW),
                     State::Todo => (" ● ", YELLOW),
                     State::Blocked => (" ! ", RED),
                     State::Offered => ("[ ]", DIM),

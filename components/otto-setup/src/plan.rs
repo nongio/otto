@@ -43,10 +43,10 @@ pub struct Choices {
     pub otto: bool,
     /// Whether Studio's chat should work: it needs a Claude Code agent.
     pub studio: bool,
-    /// Whether the agents written for Otto's sessions are converted to run
-    /// in herdr ([`conversions`]). Off until the user chooses it: it changes
+    /// Whether the agents set up for Otto's sessions are rewritten from
+    /// the herdr preset ([`rewrites`]). Off until the user chooses it: it changes
     /// agents they already have.
-    pub convert: bool,
+    pub rewrite: bool,
 }
 
 impl Choices {
@@ -60,7 +60,7 @@ impl Choices {
             picks: Vec::new(),
             otto: facts.instructions.iter().any(|n| n == harness::OTTO),
             studio: false,
-            convert: false,
+            rewrite: false,
         };
         choices.picks = choices.initial_picks(facts);
         choices.studio = studio(facts, &choices) == Studio::Ready;
@@ -389,7 +389,7 @@ pub enum State {
     Todo,
     /// Cannot run; the user has to do something first.
     Blocked,
-    /// Runs on Apply only when the user chooses it ([`Choices::convert`]).
+    /// Runs on Apply only when the user chooses it ([`Choices::rewrite`]).
     Offered,
 }
 
@@ -435,9 +435,9 @@ pub fn steps(facts: &Facts, choices: &Choices) -> Vec<Step> {
         .copied()
         .filter(|h| matches!(readiness(facts, choices.backend, *h), Readiness::Ready(_)))
         .collect();
-    // The conversion writes agents.toml first; the Agents step adds on top
+    // The rewrite writes agents.toml first; the Agents step adds on top
     // of what it wrote.
-    let mut steps: Vec<Step> = convert_step(facts, choices).into_iter().collect();
+    let mut steps: Vec<Step> = rewrite_step(facts, choices).into_iter().collect();
     steps.push(config_step(facts, choices, &adding));
     steps.push(path_step(
         "Program paths",
@@ -574,8 +574,8 @@ pub fn render_config(
         .user_config
         .parse::<DocumentMut>()
         .map_err(|err| err.to_string())?;
-    if choices.convert && choices.backend == Backend::Herdr {
-        convert_list(&mut doc, facts);
+    if choices.rewrite && choices.backend == Backend::Herdr {
+        rewrite_list(&mut doc, facts, choices);
     }
     if facts.user_config.trim().is_empty() {
         doc.decor_mut().set_prefix(
@@ -594,31 +594,40 @@ pub fn render_config(
         .get_mut("agents")
         .and_then(Item::as_array_of_tables_mut)
         .ok_or("`agents` is not a list of tables")?;
-    let home = facts.home.display().to_string();
     for &harness in adding {
         let taken: Vec<String> = list
             .iter()
             .filter_map(|table| table.get("id").and_then(Item::as_str).map(str::to_owned))
             .collect();
         let id = unique(harness.id(), &taken);
-        let mut table = Table::new();
-        table.insert("id", value(&id));
-        table.insert("name", value(harness.name().unwrap_or(harness.id())));
-        let command = command(facts, choices.backend, harness, choices.persona());
-        if let Some((program, args)) = command.split_first() {
-            table.insert("command", value(program));
-            harness::set_list(&mut table, "args", args);
-        }
-        // The same as an agent added in Settings: one the user is about to
-        // try should ask rather than refuse.
-        table.insert("permissions", value("ask"));
-        match choices.backend {
-            Backend::Herdr => harness.write_herdr(&mut table, choices.persona()),
-            Backend::Acp => harness.write(&mut table, choices.persona(), &home),
-        }
-        list.push(table);
+        list.push(preset(facts, choices, choices.backend, harness, &id));
     }
     Ok(doc.to_string())
+}
+
+/// A new agent's block for `harness` with `id`, run by `backend`: written
+/// with the presets in `otto-agents-client`, the same as one added in
+/// Settings, answering as [`Choices::persona`].
+fn preset(facts: &Facts, choices: &Choices, backend: Backend, harness: Harness, id: &str) -> Table {
+    let mut table = Table::new();
+    table.insert("id", value(id));
+    table.insert("name", value(harness.name().unwrap_or(harness.id())));
+    let command = command(facts, backend, harness, choices.persona());
+    if let Some((program, args)) = command.split_first() {
+        table.insert("command", value(program));
+        harness::set_list(&mut table, "args", args);
+    }
+    // The same as an agent added in Settings: one the user is about to try
+    // should ask rather than refuse.
+    table.insert("permissions", value("ask"));
+    match backend {
+        Backend::Herdr => harness.write_herdr(&mut table, choices.persona()),
+        Backend::Acp => {
+            let home = facts.home.display().to_string();
+            harness.write(&mut table, choices.persona(), &home);
+        }
+    }
+    table
 }
 
 /// Copies the system file's agents into `doc` when it lists none: a user
@@ -645,48 +654,49 @@ fn copy_system_list(doc: &mut DocumentMut, facts: &Facts) {
     doc.insert("agents", Item::ArrayOfTables(copied));
 }
 
-/// The conversion step's title, which the interface also knows its row by.
-pub const CONVERT: &str = "Convert for herdr";
+/// The rewrite step's title, which the interface also knows its row by.
+pub const REWRITE: &str = "Rewrite for herdr";
 
-/// Keys only an agent Otto runs over ACP reads. herdr starts the agent's own
-/// program and resumes its sessions itself, so a converted agent drops them.
-pub const ACP_KEYS: [&str; 5] = ["args", "enter", "enter_new", "env", "config"];
+/// Keys only an agent Otto runs over ACP reads; one that has any is set up
+/// for Otto's sessions, not herdr's.
+const ACP_KEYS: [&str; 5] = ["args", "enter", "enter_new", "env", "config"];
 
-/// One agent written for Otto's ACP sessions, and how it reads once it is
-/// converted to run in herdr.
+/// What a rewritten agent keeps of its old block, besides its comments.
+/// Everything else comes from the herdr preset.
+pub const KEPT: [&str; 5] = ["id", "name", "model", "mode", "skills"];
+
+/// One agent set up for Otto's ACP sessions, and its block once rewritten
+/// from the herdr preset.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Conversion {
+pub struct Rewrite {
     /// Its `id`.
     pub id: String,
     /// Its `name`.
     pub name: String,
     /// The harness its command runs.
     pub harness: Harness,
-    /// Who it answers as, moved into `agent`; empty when it runs as the
-    /// harness itself.
-    pub persona: String,
     /// Its block as it is.
     pub before: String,
-    /// Its block once converted.
+    /// Its block once rewritten.
     pub after: String,
 }
 
-/// The agents herdr can run once converted: in the list the service reads,
+/// The agents herdr can run once rewritten: in the list the service reads,
 /// those whose harness herdr runs (Claude Code, pi, OpenCode) but which are
-/// written for Otto's ACP sessions, with an adapter as their command or keys
-/// only ACP reads. Empty unless `backend` is herdr, and when the files do not
-/// parse.
-pub fn conversions(facts: &Facts, backend: Backend) -> Vec<Conversion> {
-    if backend != Backend::Herdr || facts.config_error.is_some() {
+/// set up for Otto's ACP sessions, with an adapter as their command or keys
+/// only ACP reads. Empty unless the sessions run in herdr, and when the files
+/// do not parse.
+pub fn rewrites(facts: &Facts, choices: &Choices) -> Vec<Rewrite> {
+    if choices.backend != Backend::Herdr || facts.config_error.is_some() {
         return Vec::new();
     }
     let Ok(mut doc) = facts.user_config.parse::<DocumentMut>() else {
         return Vec::new();
     };
-    convert_list(&mut doc, facts)
+    rewrite_list(&mut doc, facts, choices)
 }
 
-/// Where the conversion copies `agents.toml` before it writes: beside it, as
+/// Where the rewrite copies `agents.toml` before it writes: beside it, as
 /// `agents.toml.bak`.
 pub fn backup_path(facts: &Facts) -> PathBuf {
     let mut path = facts.config_path.clone().into_os_string();
@@ -694,10 +704,10 @@ pub fn backup_path(facts: &Facts) -> PathBuf {
     PathBuf::from(path)
 }
 
-/// Converts, in `doc`, every agent [`conversions`] offers, copying the
-/// system list in first when the user file lists none. Returns what it
-/// converted; `doc` is left as it was when there is nothing to convert.
-fn convert_list(doc: &mut DocumentMut, facts: &Facts) -> Vec<Conversion> {
+/// Rewrites, in `doc`, every agent [`rewrites`] offers, copying the system
+/// list in first when the user file lists none. Returns what it rewrote;
+/// `doc` is left as it was when there is nothing to rewrite.
+fn rewrite_list(doc: &mut DocumentMut, facts: &Facts, choices: &Choices) -> Vec<Rewrite> {
     let mut listed = doc.clone();
     copy_system_list(&mut listed, facts);
     let offered = listed
@@ -713,26 +723,19 @@ fn convert_list(doc: &mut DocumentMut, facts: &Facts) -> Vec<Conversion> {
     };
     let mut done = Vec::new();
     for table in list.iter_mut() {
-        let Some((harness, program)) = acp_form(table) else {
+        let Some(harness) = acp_form(table) else {
             continue;
         };
         let before = render_table(table);
-        let persona = acp_persona(table);
-        if let Some(command) = table.get_mut("command") {
-            *command = value(program);
-        }
-        for key in ACP_KEYS {
-            table.remove(key);
-        }
-        if !persona.is_empty() {
-            match table.get_mut("agent") {
-                Some(agent) if agent.as_str() == Some(persona.as_str()) => {}
-                Some(agent) => *agent = value(&persona),
-                None => {
-                    table.insert("agent", value(&persona));
-                }
+        let id = table.get("id").and_then(Item::as_str).unwrap_or_default();
+        let mut fresh = preset(facts, choices, Backend::Herdr, harness, id);
+        *fresh.decor_mut() = table.decor().clone();
+        for key in KEPT {
+            if let Some((key, item)) = table.get_key_value(key) {
+                fresh.insert_formatted(key, item.clone());
             }
         }
+        *table = fresh;
         let text = |key: &str| {
             table
                 .get(key)
@@ -740,11 +743,10 @@ fn convert_list(doc: &mut DocumentMut, facts: &Facts) -> Vec<Conversion> {
                 .unwrap_or_default()
                 .to_owned()
         };
-        done.push(Conversion {
+        done.push(Rewrite {
             id: text("id"),
             name: text("name"),
             harness,
-            persona,
             before,
             after: render_table(table),
         });
@@ -752,14 +754,14 @@ fn convert_list(doc: &mut DocumentMut, facts: &Facts) -> Vec<Conversion> {
     done
 }
 
-/// The harness of an agent in the ACP form and the program herdr starts for
+/// The harness of an agent set up for Otto's ACP sessions, when herdr runs
 /// it. `None` when herdr does not run its harness, or when the agent is
 /// already in herdr's form: the harness's own program, with none of
 /// [`ACP_KEYS`].
 ///
 /// The harness is read from the command line the way the rest of setup
 /// reads it ([`Harness::detect`]).
-fn acp_form(table: &Table) -> Option<(Harness, &'static str)> {
+fn acp_form(table: &Table) -> Option<Harness> {
     let words: Vec<String> = table
         .get("command")
         .and_then(Item::as_str)
@@ -775,38 +777,7 @@ fn acp_form(table: &Table) -> Option<(Harness, &'static str)> {
         .and_then(|name| name.to_str())
         .unwrap_or(command);
     let acp = named != program || ACP_KEYS.iter().any(|key| table.contains_key(key));
-    acp.then_some((harness, program))
-}
-
-/// Who an agent in the ACP form answers as: from the route its harness takes
-/// ([`harness::persona`]), else a `--agent` its args or enter lines pass, else
-/// `agent` or `default_agent` in its `config`. A plugin-qualified name
-/// (`plugin:otto`) is cut to the agent's own. Empty when it names none.
-fn acp_persona(table: &Table) -> String {
-    let found = Some(harness::persona(table))
-        .filter(|persona| !persona.is_empty())
-        .or_else(|| {
-            ["args", "enter", "enter_new"].into_iter().find_map(|key| {
-                let words: Vec<&str> = strings(table, key).collect();
-                words
-                    .iter()
-                    .enumerate()
-                    .find_map(|(at, word)| match word.strip_prefix("--agent") {
-                        Some("") => words.get(at + 1).map(|next| (*next).to_owned()),
-                        Some(rest) => rest.strip_prefix('=').map(str::to_owned),
-                        None => None,
-                    })
-            })
-        })
-        .or_else(|| {
-            let config = table.get("config").and_then(Item::as_table_like)?;
-            ["agent", "default_agent"]
-                .into_iter()
-                .find_map(|key| config.get(key).and_then(Item::as_str))
-                .map(str::to_owned)
-        })
-        .unwrap_or_default();
-    found.rsplit(':').next().unwrap_or_default().to_owned()
+    acp.then_some(harness)
 }
 
 /// The strings in the list `key` of `table`.
@@ -828,31 +799,43 @@ fn render_table(table: &Table) -> String {
     doc.to_string().trim().to_owned()
 }
 
-/// Each agent's block before and after the conversion, then the backup, as
-/// the preview and the instructions show them.
-pub fn conversion_preview(facts: &Facts, conversions: &[Conversion]) -> Vec<String> {
+/// What the rewrite keeps and what it replaces, then each agent's block
+/// before and after, then the backup, as the preview and the instructions
+/// show them.
+pub fn rewrite_preview(facts: &Facts, choices: &Choices, rewrites: &[Rewrite]) -> Vec<String> {
     let gutter = |text: &str| {
         text.lines()
             .map(|line| format!("│ {line}"))
             .collect::<Vec<_>>()
     };
-    let mut out = Vec::new();
-    for conversion in conversions {
-        let harness = conversion.harness.name().unwrap_or_default();
+    let persona = match choices.persona() {
+        "" => "the agent itself, as the Otto box is unticked".to_owned(),
+        persona => format!("{persona}, as the Otto box is ticked"),
+    };
+    let mut out = vec![
+        "Each one is written again the way setup writes a new agent for herdr.".to_owned(),
+        format!("It keeps only {} and its comments.", KEPT.join(", ")),
+        format!("It answers as {persona}."),
+        "Who it answered as before, its permissions, env, config and any".to_owned(),
+        "other keys are not carried over.".to_owned(),
+        String::new(),
+    ];
+    for rewrite in rewrites {
+        let harness = rewrite.harness.name().unwrap_or_default();
         out.push(format!(
             "{} ({}), {harness}. Now:",
-            conversion.name, conversion.id
+            rewrite.name, rewrite.id
         ));
-        out.extend(gutter(&conversion.before));
+        out.extend(gutter(&rewrite.before));
         out.push("After:".to_owned());
-        out.extend(gutter(&conversion.after));
+        out.extend(gutter(&rewrite.after));
         out.push(String::new());
     }
     let shown = facts.shown(&facts.config_path);
     if facts.user_config.trim().is_empty() {
         out.push("These agents come from /etc/otto/agents.toml. Apply copies them".to_owned());
         out.push(format!(
-            "into {shown} and converts them there; the system file stays as it is."
+            "into {shown} and rewrites them there; the system file stays as it is."
         ));
     } else {
         out.push(format!(
@@ -866,34 +849,34 @@ pub fn conversion_preview(facts: &Facts, conversions: &[Conversion]) -> Vec<Stri
     out
 }
 
-/// Converts the agents written for Otto's ACP sessions to run in herdr, when
-/// the user chooses it; offered, and not run, until then. `None` when there
-/// is nothing to convert.
-fn convert_step(facts: &Facts, choices: &Choices) -> Option<Step> {
-    let conversions = conversions(facts, choices.backend);
-    if conversions.is_empty() {
+/// Rewrites the agents set up for Otto's ACP sessions from the herdr preset,
+/// when the user chooses it; offered, and not run, until then. `None` when
+/// there is nothing to rewrite.
+fn rewrite_step(facts: &Facts, choices: &Choices) -> Option<Step> {
+    let rewrites = rewrites(facts, choices);
+    if rewrites.is_empty() {
         return None;
     }
-    let names = conversions
+    let names = rewrites
         .iter()
-        .map(|c| c.name.as_str())
+        .map(|r| r.name.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let detail = conversion_preview(facts, &conversions).join("\n");
-    if !choices.convert {
+    let detail = rewrite_preview(facts, choices, &rewrites).join("\n");
+    if !choices.rewrite {
         return Some(Step {
             state: State::Offered,
             detail,
             ..Step::done(
-                CONVERT,
-                format!("{names}: set up for Otto, not herdr · space to convert"),
+                REWRITE,
+                format!("{names}: set up for Otto, not herdr · space to rewrite"),
             )
         });
     }
     let mut doc = facts.user_config.parse::<DocumentMut>().ok()?;
-    convert_list(&mut doc, facts);
+    rewrite_list(&mut doc, facts, choices);
     let mut actions = Vec::new();
-    let mut summary = format!("convert {names}");
+    let mut summary = format!("rewrite {names}");
     if !facts.user_config.trim().is_empty() {
         actions.push(Action::Write {
             path: backup_path(facts),
@@ -906,7 +889,7 @@ fn convert_step(facts: &Facts, choices: &Choices) -> Option<Step> {
         text: doc.to_string(),
     });
     Some(Step {
-        title: CONVERT,
+        title: REWRITE,
         state: State::Todo,
         summary,
         detail,
@@ -1460,55 +1443,59 @@ pub(crate) mod tests {
     }
 
     /// An agents.toml with a Claude Code agent set up for Otto's ACP
-    /// sessions, the way an older setup or Settings wrote it.
+    /// sessions, the way an older setup or Settings wrote it, with a persona
+    /// of its own and a key setup does not know.
     const ACP_CLAUDE: &str = r#"# My agents
 idle_timeout = 0
 
-# Claude, answering as Otto
+# Claude, answering as the reviewer
 [[agents]]
 id = "claude"
 name = "Claude"
 command = "npx"
 args = ["-y", "@agentclientprotocol/claude-agent-acp@latest"]
-agent = "otto"
-permissions = "ask"
+agent = "reviewer"
+permissions = "deny"
+model = "opus"
 mode = "acceptEdits"
 skills = "claude"
-enter = ["/otto"]
-enter_new = ["/otto"]
+enter = ["/reviewer"]
+enter_new = ["/reviewer"]
+colour = "blue"
 
 [agents.env]
 CLAUDE_CODE_FLAG = "1"
 "#;
 
     #[test]
-    fn an_acp_claude_agent_is_offered_for_herdr_and_converted() {
+    fn an_acp_claude_agent_is_offered_for_herdr_and_rewritten() {
         let mut facts = herdr_facts();
         facts.user_config = ACP_CLAUDE.into();
         facts.configured = vec![Harness::Claude];
-        let found = conversions(&facts, Backend::Herdr);
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].id, "claude");
-        assert_eq!(found[0].harness, Harness::Claude);
-        assert_eq!(found[0].persona, "otto");
-        assert!(found[0].before.contains("claude-agent-acp"));
-        assert!(!found[0].after.contains("claude-agent-acp"));
-
-        // Offered and off: nothing is written until it is chosen.
         let mut choices = Choices {
             picks: Vec::new(),
             ..Choices::initial(&facts)
         };
-        assert!(!choices.convert);
+        let found = rewrites(&facts, &choices);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, "claude");
+        assert_eq!(found[0].harness, Harness::Claude);
+        assert!(found[0].before.contains("claude-agent-acp"));
+        assert!(!found[0].after.contains("claude-agent-acp"));
+
+        // Offered and off: nothing is written until it is chosen.
+        assert!(!choices.rewrite);
         let offered = steps(&facts, &choices);
-        assert_eq!(offered[0].title, CONVERT);
+        assert_eq!(offered[0].title, REWRITE);
         assert_eq!(offered[0].state, State::Offered);
         assert!(offered[0].actions.is_empty());
-        assert!(
-            offered[0].detail.contains("agents.toml.bak"),
-            "{}",
-            offered[0].detail
-        );
+        for said in ["agents.toml.bak", "not carried over"] {
+            assert!(
+                offered[0].detail.contains(said),
+                "{said}: {}",
+                offered[0].detail
+            );
+        }
         assert!(
             !offered
                 .iter()
@@ -1516,7 +1503,7 @@ CLAUDE_CODE_FLAG = "1"
             "{offered:#?}"
         );
 
-        choices.convert = true;
+        choices.rewrite = true;
         let chosen = steps(&facts, &choices);
         let step = &chosen[0];
         assert_eq!(step.state, State::Todo);
@@ -1535,24 +1522,71 @@ CLAUDE_CODE_FLAG = "1"
             text.starts_with("# My agents\nidle_timeout = 0\n"),
             "{text}"
         );
-        assert!(text.contains("# Claude, answering as Otto"), "{text}");
+        assert!(
+            text.contains("# Claude, answering as the reviewer"),
+            "{text}"
+        );
         let doc: DocumentMut = text.parse().unwrap();
-        let claude = &doc["agents"][0];
-        assert_eq!(claude["command"].as_str(), Some("claude"));
-        assert_eq!(claude["agent"].as_str(), Some("otto"));
+        let claude = doc["agents"][0].as_table().unwrap();
+        // What it keeps.
         assert_eq!(claude["id"].as_str(), Some("claude"));
         assert_eq!(claude["name"].as_str(), Some("Claude"));
-        assert_eq!(claude["permissions"].as_str(), Some("ask"));
+        assert_eq!(claude["model"].as_str(), Some("opus"));
         assert_eq!(claude["mode"].as_str(), Some("acceptEdits"));
         assert_eq!(claude["skills"].as_str(), Some("claude"));
-        for key in ACP_KEYS {
-            assert!(claude.get(key).is_none(), "{key} kept: {text}");
+        // The rest is the preset's, as for a new agent.
+        let mut fresh = preset(&facts, &choices, Backend::Herdr, Harness::Claude, "claude");
+        for key in KEPT {
+            fresh.remove(key);
+        }
+        for (key, item) in fresh.iter() {
+            assert_eq!(
+                claude[key].to_string().trim(),
+                item.to_string().trim(),
+                "{key}: {text}"
+            );
+        }
+        assert_eq!(claude["command"].as_str(), Some("claude"));
+        assert_eq!(claude["permissions"].as_str(), Some("ask"));
+        for key in ACP_KEYS.iter().chain(&["colour"]) {
+            assert!(!claude.contains_key(key), "{key} kept: {text}");
         }
 
-        // Once converted, it is herdr's form and not offered again.
+        // Once rewritten, it is herdr's form and not offered again.
         let mut after = facts.clone();
         after.user_config = text.clone();
-        assert!(conversions(&after, Backend::Herdr).is_empty());
+        assert!(rewrites(&after, &choices).is_empty());
+    }
+
+    #[test]
+    fn the_persona_follows_the_otto_choice() {
+        let mut facts = herdr_facts();
+        facts.user_config = ACP_CLAUDE.into();
+        let otto = Choices {
+            picks: Vec::new(),
+            ..Choices::initial(&facts)
+        };
+        assert!(otto.otto);
+        let found = rewrites(&facts, &otto);
+        assert!(
+            found[0].after.contains("agent = \"otto\""),
+            "{}",
+            found[0].after
+        );
+        assert!(
+            !found[0].after.contains("agent = \"reviewer\""),
+            "{}",
+            found[0].after
+        );
+
+        let plain = Choices {
+            otto: false,
+            ..otto
+        };
+        let found = rewrites(&facts, &plain);
+        assert!(!found[0].after.contains("agent ="), "{}", found[0].after);
+        let detail = rewrite_preview(&facts, &plain, &found).join("\n");
+        assert!(detail.contains("Otto box is unticked"), "{detail}");
     }
 
     #[test]
@@ -1560,12 +1594,13 @@ CLAUDE_CODE_FLAG = "1"
         let mut facts = herdr_facts();
         facts.user_config = format!("backend = \"acp\"\n{ACP_CLAUDE}");
         facts.backend = Some(Backend::Acp);
-        assert!(conversions(&facts, Backend::Acp).is_empty());
         let choices = Choices {
-            convert: true,
+            rewrite: true,
             ..Choices::initial(&facts)
         };
-        assert!(steps(&facts, &choices).iter().all(|s| s.title != CONVERT));
+        assert_eq!(choices.backend, Backend::Acp);
+        assert!(rewrites(&facts, &choices).is_empty());
+        assert!(steps(&facts, &choices).iter().all(|s| s.title != REWRITE));
         let text = render_config(&facts, &choices, &[Harness::OpenCode]).unwrap();
         assert!(text.contains("claude-agent-acp"), "{text}");
     }
@@ -1581,7 +1616,7 @@ CLAUDE_CODE_FLAG = "1"
             .into();
         let doc: DocumentMut = facts.user_config.parse().unwrap();
         assert_eq!(doc["agents"].as_array_of_tables().unwrap().len(), 2);
-        assert!(conversions(&facts, Backend::Herdr).is_empty());
+        assert!(rewrites(&facts, &Choices::initial(&facts)).is_empty());
     }
 
     #[test]
@@ -1593,67 +1628,21 @@ CLAUDE_CODE_FLAG = "1"
             .into();
         let doc: DocumentMut = facts.user_config.parse().unwrap();
         assert_eq!(doc["agents"].as_array_of_tables().unwrap().len(), 2);
-        assert!(conversions(&facts, Backend::Herdr).is_empty());
+        assert!(rewrites(&facts, &Choices::initial(&facts)).is_empty());
     }
 
     #[test]
-    fn the_persona_moves_out_of_the_acp_routes() {
-        let mut facts = herdr_facts();
-        facts.user_config = r#"[[agents]]
-id = "opencode"
-name = "OpenCode"
-command = "opencode"
-args = ["acp"]
-[agents.env]
-OPENCODE_CONFIG_CONTENT = '{"default_agent": "otto"}'
-
-[[agents]]
-id = "pi"
-name = "pi"
-command = "pi-acp"
-[agents.env]
-PI_ACP_PI_COMMAND = "/home/u/.local/share/otto/agents/pi/reviewer-pi"
-"#
-        .into();
-        let found = conversions(&facts, Backend::Herdr);
-        let personas: Vec<_> = found
-            .iter()
-            .map(|c| (c.harness, c.persona.as_str()))
-            .collect();
-        assert_eq!(
-            personas,
-            [(Harness::OpenCode, "otto"), (Harness::Pi, "reviewer")]
-        );
-        assert!(
-            found[0].after.contains("command = \"opencode\""),
-            "{}",
-            found[0].after
-        );
-        assert!(
-            found[0].after.contains("agent = \"otto\""),
-            "{}",
-            found[0].after
-        );
-        assert!(
-            found[1].after.contains("command = \"pi\""),
-            "{}",
-            found[1].after
-        );
-        assert!(!found[1].after.contains("env"), "{}", found[1].after);
-    }
-
-    #[test]
-    fn the_system_list_is_copied_in_before_it_is_converted() {
+    fn the_system_list_is_copied_in_before_it_is_rewritten() {
         let mut facts = herdr_facts();
         facts.system_config = Some(ACP_CLAUDE.into());
         let choices = Choices {
-            convert: true,
+            rewrite: true,
             picks: Vec::new(),
             ..Choices::initial(&facts)
         };
         let steps = steps(&facts, &choices);
         let step = &steps[0];
-        assert_eq!(step.title, CONVERT);
+        assert_eq!(step.title, REWRITE);
         assert_eq!(step.actions.len(), 1, "no backup of an empty file");
         let Action::Write { text, .. } = &step.actions[0] else {
             panic!("expected a write: {step:#?}");
