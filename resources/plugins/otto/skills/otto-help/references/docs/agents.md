@@ -183,7 +183,9 @@ goes to when you do not choose.
 
 Sessions in herdr are new, and in Otto's nightly builds only. Otto's packages
 install herdr-core (`hc`); the herdr app, to watch sessions outside Otto, comes
-from [herdr.dev](https://herdr.dev).
+from [herdr.dev](https://herdr.dev). Otto installs herdr's
+[integration](https://herdr.dev/tui/docs/integrations/) for each agent it runs
+there, so herdr always knows when the agent is working or waiting for you.
 
 When [herdr](https://herdr.dev) is installed, every session runs in it, as
 the agent's own program in a herdr terminal: Claude Code, pi or OpenCode, with

@@ -257,10 +257,9 @@ async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     } else if herdr {
         tracing::info!("sessions run in herdr");
         let config = config.expect("a configuration");
-        (
-            Arc::new(otto_agents::herdr::HerdrBackend::new(&config)),
-            None,
-        )
+        let backend = otto_agents::herdr::HerdrBackend::new(&config);
+        backend.install_integrations();
+        (Arc::new(backend), None)
     } else {
         let config = config.expect("a configuration");
         for agent in &config.agents {

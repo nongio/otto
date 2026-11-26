@@ -125,6 +125,14 @@ and `label` sets terminal labels. The only `hc` invocation is
 `hc server start`, when the socket does not answer yet. Placing and focusing
 tabs goes through `herdr-app do …`.
 
+When the service starts, it installs
+[herdr's own integration](https://herdr.dev/tui/docs/integrations/) for each
+harness its agents run, wherever `herdr integration status` doesn't list it as
+current (`HerdrBackend::install_integrations`). With it, pi and OpenCode report
+whether they are working or waiting, so herdr doesn't have to read it off the
+screen. OpenCode stays blocked while a permission waits. Every agent also
+reports its session, so herdr can resume it after a restart.
+
 | | ACP backend | herdr backend |
 |---|---|---|
 | Runs the agent | otto-agents, child process | herdr-core, `terminal.run` |

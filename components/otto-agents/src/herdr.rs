@@ -213,6 +213,51 @@ impl HerdrBackend {
         }
     }
 
+    /// Installs herdr's own integration for each harness the agents run,
+    /// where `herdr integration status` does not list it as current: missing
+    /// or out of date. With it,
+    /// pi and opencode tell herdr whether they are working or waiting rather
+    /// than herdr reading it off the screen, and every agent tells herdr its
+    /// session, so herdr can resume it. Runs on a thread of its own: the
+    /// service does not wait for it.
+    pub fn install_integrations(&self) {
+        let mut wanted: Vec<&'static str> = self
+            .agents
+            .iter()
+            .map(|agent| agent.harness.label())
+            .collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+        std::thread::spawn(move || {
+            let status = match std::process::Command::new("herdr")
+                .args(["integration", "status"])
+                .output()
+            {
+                Ok(output) => String::from_utf8_lossy(&output.stdout).into_owned(),
+                Err(err) => {
+                    tracing::warn!(%err, "cannot ask herdr about its integrations");
+                    return;
+                }
+            };
+            for name in missing_integrations(&status, &wanted) {
+                match std::process::Command::new("herdr")
+                    .args(["integration", "install", name])
+                    .output()
+                {
+                    Ok(output) if output.status.success() => {
+                        tracing::info!(agent = name, "installed herdr's integration");
+                    }
+                    Ok(output) => tracing::warn!(
+                        agent = name,
+                        error = %String::from_utf8_lossy(&output.stderr).trim(),
+                        "herdr could not install its integration"
+                    ),
+                    Err(err) => tracing::warn!(%err, agent = name, "cannot run herdr"),
+                }
+            }
+        });
+    }
+
     /// The agent a Claude Code session started by hand is taken up as: plain
     /// Claude, the one whose folder holds the session's, else the first.
     fn adopt_as(&self) -> Vec<(String, Option<PathBuf>)> {
@@ -2244,6 +2289,22 @@ fn suggestion_label(suggestion: &Value) -> Option<String> {
     }
 }
 
+/// The integrations of `wanted` that `herdr integration status` lists, one
+/// `name: state (path)` line each, as anything but current.
+fn missing_integrations<'a>(status: &str, wanted: &[&'a str]) -> Vec<&'a str> {
+    wanted
+        .iter()
+        .copied()
+        .filter(|name| {
+            status.lines().any(|line| {
+                line.strip_prefix(name)
+                    .and_then(|rest| rest.strip_prefix(": "))
+                    .is_some_and(|state| !state.starts_with("current"))
+            })
+        })
+        .collect()
+}
+
 /// What herdr says the agent is doing, as session status bits.
 fn status_bits(state: &str, asking: bool) -> u32 {
     if asking || state == "blocked" {
@@ -2800,6 +2861,19 @@ mod elicitation_content {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_integrations_herdr_lists_as_not_installed_are_installed() {
+        let status = "pi: not installed (/home/u/.pi/agent/extensions/herdr-agent-state.ts)\n\
+                      omp: not installed (/home/u/.omp/agent/extensions/x.ts)\n\
+                      claude: current (v11) (/home/u/.claude/hooks/herdr-agent-state.sh)\n\
+                      opencode: not installed (/home/u/.config/opencode/plugins/x.js)\n";
+        assert_eq!(
+            missing_integrations(status, &["claude", "opencode", "pi"]),
+            ["opencode", "pi"]
+        );
+        assert!(missing_integrations("", &["claude"]).is_empty());
+    }
 
     #[test]
     fn tool_calls_come_from_the_transcript() {
