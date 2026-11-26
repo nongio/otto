@@ -122,6 +122,46 @@ pub struct BufferClaim {
     pub position: Option<(f64, f64)>,
 }
 
+/// A surface-style position and size, in physical pixels, for a box whose
+/// edges fall on whole pixels.
+///
+/// A surface placed through the style protocol is drawn wherever its style
+/// puts it, and a 1:1 buffer drawn even a fraction of a pixel off the grid is
+/// resampled: its text comes out soft. Points multiplied by a fractional
+/// scale land mid-pixel most of the time (101 points at 1.75 is 176.75
+/// pixels), so the edges are rounded here, in pixels, and the position is
+/// worked out from the rounded edges for the style's anchor point.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StyleFrame {
+    pub position: (f64, f64),
+    pub size: (f64, f64),
+}
+
+impl StyleFrame {
+    /// The frame for a box at `origin` of `size`, both in points.
+    ///
+    /// `anchor` is the style's anchor point, as a fraction of the size, and
+    /// `scale` the surface's fractional scale.
+    pub fn on_pixel_grid(
+        origin: (f32, f32),
+        size: (f32, f32),
+        anchor: (f64, f64),
+        scale: f64,
+    ) -> Self {
+        let edges = |start: f32, extent: f32| {
+            let near = (f64::from(start) * scale).round();
+            let far = (f64::from(start + extent) * scale).round();
+            (near, far - near)
+        };
+        let (left, width) = edges(origin.0, size.0);
+        let (top, height) = edges(origin.1, size.1);
+        Self {
+            position: (left + width * anchor.0, top + height * anchor.1),
+            size: (width, height),
+        }
+    }
+}
+
 /// What a surface's next draw is known to have changed.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum FrameDamage {
@@ -663,3 +703,26 @@ impl fmt::Display for SurfaceError {
 }
 
 impl std::error::Error for SurfaceError {}
+
+#[cfg(test)]
+mod style_frame_tests {
+    use super::StyleFrame;
+
+    #[test]
+    fn a_top_centre_anchored_box_starts_on_a_whole_pixel_at_a_fractional_scale() {
+        // 101 x 1.75 = 176.75 and 133 x 1.75 = 232.75: both mid-pixel.
+        let frame = StyleFrame::on_pixel_grid((101.0, 133.0), (620.0, 301.0), (0.5, 0.0), 1.75);
+        let left = frame.position.0 - frame.size.0 * 0.5;
+        let top = frame.position.1;
+        assert_eq!((left, top), (177.0, 233.0));
+        assert_eq!(left + frame.size.0, ((101.0 + 620.0) * 1.75_f64).round());
+        assert_eq!(top + frame.size.1, ((133.0 + 301.0) * 1.75_f64).round());
+    }
+
+    #[test]
+    fn an_integer_scale_leaves_the_box_where_it_was() {
+        let frame = StyleFrame::on_pixel_grid((100.0, 40.0), (620.0, 300.0), (0.5, 0.0), 2.0);
+        assert_eq!(frame.position, (200.0 + 620.0, 80.0));
+        assert_eq!(frame.size, (1240.0, 600.0));
+    }
+}

@@ -24,6 +24,7 @@ use otto_kit::frosted::Frosted;
 use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity};
 use otto_kit::protocols::otto_timing_function_v1::Preset;
 use otto_kit::skia::Rect;
+use otto_kit::surfaces::StyleFrame;
 use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
 use otto_kit::CursorShape;
 use otto_kit::{App, AppContext, AppRunner, ObjectId};
@@ -91,6 +92,9 @@ const CLOSE: Duration = Duration::from_millis(120);
 const HAND_OFF_GRACE: Duration = Duration::from_secs(3);
 /// How long the card stays to say the session is going to its terminal.
 const HANDOVER_LINGER: Duration = Duration::from_millis(1400);
+
+/// The point of the card its transforms are taken about: the top centre.
+const CARD_ANCHOR: (f64, f64) = (0.5, 0.0);
 
 /// How small the card is before it arrives, and again once it has gone. Near
 /// enough to full size that it reads as a swell rather than a zoom.
@@ -1446,10 +1450,12 @@ impl Launcher {
         // Surface-style geometry is in physical pixels.
         let scale = AppContext::fractional_scale();
         let (x, y) = palette.card_origin();
+        // The anchor is the top centre, and position is measured from it. On
+        // whole pixels, or the card's text is resampled wherever it rests.
+        let frame = StyleFrame::on_pixel_grid((x, y), (width, height), CARD_ANCHOR, scale);
         let place = || {
-            // The anchor is the top centre, and position is measured from it.
-            style.set_position((x + width / 2.0) as f64 * scale, y as f64 * scale);
-            style.set_size(width as f64 * scale, height as f64 * scale);
+            style.set_position(frame.position.0, frame.position.1);
+            style.set_size(frame.size.0, frame.size.1);
         };
         // The agents opening under the field, and the log above it, grow the
         // card with the spring it opens with. The material clips what is drawn
@@ -1762,7 +1768,7 @@ fn apply_card_material(card: &SubsurfaceSurface, tint: Option<Frosted>) {
     // Transforms are taken about the top centre. Centre horizontally so the
     // card swells outwards evenly; top vertically so the field stays put while
     // the card arrives and when the list grows under it.
-    style.set_anchor_point(0.5, 0.0);
+    style.set_anchor_point(CARD_ANCHOR.0, CARD_ANCHOR.1);
 
     // Where the card starts: just short of full size, and invisible. The
     // entrance animates out of this once there is something on it to see.

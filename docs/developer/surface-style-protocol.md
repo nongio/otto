@@ -70,6 +70,13 @@ aspect-fit, aspect-fill), `set_z_order` (whether the style renders above or
 below the surface's own content). Plus `cancel_animation` and
 `cancel_all_animations`.
 
+Position and size are in physical pixels, and the compositor draws a surface
+exactly where its style puts it. On a fractional scale, points times the scale
+usually land between pixels, and a buffer drawn there is resampled, so text on
+it looks soft. Work out a style box with `otto_kit::surfaces::StyleFrame::on_pixel_grid`,
+which rounds the edges to whole pixels and places the position for the
+anchor point.
+
 **Version 3 added output placement**: `request_output_frame` with its
 `output_frame` event, plus `set_output_placement` and
 `set_output_relative_size`. These let a surface be placed and sized against the

@@ -44,7 +44,10 @@ use wayland_protocols::wp::text_input::zv3::client::{
     zwp_text_input_manager_v3, zwp_text_input_v3,
 };
 
-use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1};
+use crate::protocols::{
+    otto_style_transaction_v1, otto_surface_style_manager_v1, otto_surface_style_v1,
+    otto_timing_function_v1,
+};
 use wayland_protocols::ext::background_effect::v1::client::{
     ext_background_effect_manager_v1, ext_background_effect_surface_v1,
 };
@@ -1454,6 +1457,30 @@ impl Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()> for TestClientState
         _state: &mut Self,
         _proxy: &otto_surface_style_v1::OttoSurfaceStyleV1,
         _event: otto_surface_style_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<otto_style_transaction_v1::OttoStyleTransactionV1, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &otto_style_transaction_v1::OttoStyleTransactionV1,
+        _event: otto_style_transaction_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<otto_timing_function_v1::OttoTimingFunctionV1, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &otto_timing_function_v1::OttoTimingFunctionV1,
+        _event: otto_timing_function_v1::Event,
         _data: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
