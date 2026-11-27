@@ -1,0 +1,33 @@
+[package]
+name = "otto-mixer"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Otto's audio patchbay, and the service that keeps its saved links"
+
+[[bin]]
+name = "otto-mixer"
+path = "src/main.rs"
+
+[[bin]]
+name = "otto-mixer-service"
+path = "src/bin/otto-mixer-service.rs"
+
+# The window draws with otto-kit; the graph, its PipeWire connection and the
+# routing file are otto-audio-graph's, which the service uses on its own.
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+otto-audio-graph = { path = "../otto-audio-graph" }
+libc.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -165,7 +165,7 @@ fn draw_sidebar(canvas: &Canvas, demo: &Demo, theme: &Theme) {
         &demo.items,
         Some(demo.selected),
         theme,
-        |canvas, _index, rect, tint| {
+        |canvas, _index, _slot, rect, tint| {
             // A folder-ish glyph, drawn rather than themed so the example needs
             // no icon theme installed.
             let mut paint = Paint::default();

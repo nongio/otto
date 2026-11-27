@@ -1728,6 +1728,9 @@ pub struct TopbarConfig {
     /// Show the network indicator (Wi-Fi signal, wired, VPN menu). It
     /// appears only where NetworkManager runs and there is a device.
     pub show_network: bool,
+    /// Show the sound indicator (the default output's volume, with a menu
+    /// for outputs, inputs and apps). It appears only where PipeWire runs.
+    pub show_sound: bool,
     /// A chrono strftime format for the clock. Empty follows the language's
     /// own convention, or `clock_format` in `otto-bar.toml` where one is set.
     pub clock_format: String,
@@ -1739,6 +1742,7 @@ impl Default for TopbarConfig {
             show_app_menu: true,
             show_clock: true,
             show_network: true,
+            show_sound: true,
             clock_format: String::new(),
         }
     }

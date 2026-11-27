@@ -117,6 +117,11 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 39a. The network indicator, its menu and the Network pane behind it are specified in [network.md](network.md). It is shown while the `topbar.show_network` setting (Settings, Top bar, "Show network status in the top bar", on by default) is true and NetworkManager reports a Wi-Fi or Ethernet device; otherwise it takes no room. It opens Settings with `--pane network` through the settings command (`battery.settings_command`).
 
+### Sound (Right Zone)
+
+39b. The sound indicator and its menu are specified in [audio-routing.md](audio-routing.md#the-top-bar-sound-menu). It sits before the network indicator. It is shown while the `topbar.show_sound` setting (Settings, Top bar, "Show sound in the top bar", on by default) is true and a PipeWire server answers; otherwise it takes no room. Its last row, "Open Mixer…", opens the Mixer app (`otto-mixer`), which starts on its Mixer section. Each app row has an output picker; choosing an output moves the app's streams at once. The state comes from the PipeWire graph through `otto-audio-graph`, followed live on a thread of its own; the bar redraws only when what the indicator or the open menu shows changes. Clicking it opens the menu, scrolling over it changes the default output's volume in 5 % steps, and a middle click mutes and unmutes it. While the menu is open it follows the graph in place, and is shown again at its new size when rows come or go.
+39c. To an assistive technology the sound indicator is a button with a popup, labelled with the default output's volume and name ("Sound, 45%, Built-in Audio Analog Stereo", or "Sound muted, …"), and announced politely as it changes.
+
 ### Clock (Right Zone)
 
 40. The clock displays the current local time. Its format is, in order: the `topbar.clock_format` setting (Settings, Top bar, "Format") when it is not empty; else `clock_format` in the bar's own configuration file; else the one the active locale's catalogue carries — weekday, day, month and a 24-hour time in most locales, a 12-hour time with the month first in `en-US` (see localisation.md). A format chrono cannot render is skipped for the next one, and `%H:%M` is the last resort, so a typo never takes the clock down. Whether seconds are shown follows from the format, and it changes how often the bar redraws.

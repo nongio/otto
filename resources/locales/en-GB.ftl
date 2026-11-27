@@ -335,6 +335,7 @@ settings-network-wifi-soft-blocked = Off with airplane mode. Turning Wi-Fi on en
 settings-network-current = Network
 settings-network-not-connected = Not connected
 settings-show-network = Show network status in the top bar
+settings-show-sound = Show sound in the top bar
 settings-group-network-status = Status
 settings-group-network-known = Known networks
 settings-network-kind-wifi = Wi-Fi
@@ -1312,6 +1313,46 @@ bar-network-ethernet-connected-speed = Ethernet — connected, { $speed }
 # Part of the line under the connected network: band · channel · rate · address.
 bar-network-channel = channel { $channel }
 
+## Top bar — sound
+##
+## The speaker in the top bar and the menu under it.
+
+# Captions over the menu's groups: where sound plays, where it is recorded
+# from, and the apps playing.
+bar-sound-output = Output
+bar-sound-input = Input
+bar-sound-apps = Apps
+# Screen-reader names of the sliders. $app is an app's name, e.g. Firefox.
+bar-sound-output-volume = Output volume
+bar-sound-input-volume = Input volume
+bar-sound-app-volume = { $app } volume
+# Screen-reader names of the round mute buttons beside the sliders.
+bar-sound-mute-output = Mute output
+bar-sound-mute-input = Mute input
+bar-sound-mute-app = Mute { $app }
+# The button after each app's slider: the output the app plays to, or
+# Default while it follows the default output. It opens a list of the
+# outputs, with Follow the default first.
+bar-sound-app-output-default = Default
+bar-sound-app-follow-default = Follow the default
+# Screen-reader name of that button. $app is an app's name, e.g. Firefox.
+bar-sound-app-output = Output for { $app }
+# Beside each output and input, in the shortcut column: what kind of device
+# it is. Virtual is one made in software, such as a mix or an effect.
+bar-sound-kind-bluetooth = Bluetooth
+bar-sound-kind-usb = USB
+bar-sound-kind-hdmi = HDMI
+bar-sound-kind-virtual = Virtual
+bar-sound-kind-built-in = Built-in
+bar-sound-kind-airplay = AirPlay
+# The menu's last row, which opens the Mixer app on its Mixer section.
+bar-sound-open-mixer = Open Mixer…
+# What a screen reader calls the indicator. $percent is a whole number and
+# $device the output's name.
+bar-sound-label = Sound, { $percent }%, { $device }
+bar-sound-label-muted = Sound muted, { $device }
+bar-sound-label-none = Sound, no output
+
 ## Top bar — Wi-Fi password dialog
 
 # $name is the network's name.
@@ -1366,6 +1407,14 @@ bar-shutdown-title = Shut down now?
 bar-shutdown-body = Anything unsaved in your apps will be lost.
 bar-shutdown-grant = Shut Down
 
+
+## Menus
+##
+## Parts of the menus every app shares.
+
+# Beside a slider in a menu, such as a volume. $percent is a whole number,
+# 0 to 100.
+menu-slider-percent = { $percent }%
 
 ## Settings — widgets
 ##
@@ -1423,6 +1472,8 @@ schema-topbar-show-clock-label = Show date and time
 schema-topbar-show-clock-description = The clock at the right end of the top bar.
 schema-topbar-show-network-label = Show network status
 schema-topbar-show-network-description = The Wi-Fi and wired indicator in the top bar, with a menu to join a network. Shown where NetworkManager runs.
+schema-topbar-show-sound-label = Show sound
+schema-topbar-show-sound-description = The speaker in the top bar, with a menu for the volume, the output and input, and the apps playing. Shown where PipeWire runs.
 schema-topbar-clock-format-label = Clock format
 schema-topbar-clock-format-description = How the top bar writes the date and time, as a strftime format. Empty follows your language.
 schema-topbar-show-app-menu-label = Show application menus
@@ -2496,3 +2547,453 @@ settings-dictation-autostart = Start dictation at login
 # ~/.config/autostart is a folder and xdg_autostart a configuration key; both
 # stay as they are.
 settings-dictation-autostart-detail = Runs otto-dictate from ~/.config/autostart, which Otto reads when xdg_autostart is on
+
+## otto-mixer: the PipeWire graph as a patchbay (Graph), and the sound
+## server's rate and buffer size (Engine). A card is about 220 px wide; the
+## toolbar and the banner share one line with their buttons.
+
+audio-title = Mixer
+audio-window-title = Otto Mixer — { $pane }
+audio-pane-graph = Graph
+audio-pane-engine = Engine
+audio-no-server-title = The sound server isn't running
+audio-no-server-body = Mixer will connect as soon as PipeWire starts.
+audio-no-server-start = Start PipeWire
+audio-graph-empty = Nothing to show with these filters
+audio-filter-audio = Audio
+audio-filter-midi = MIDI
+audio-filter-video = Video
+# Zooms the canvas so every card is in view.
+audio-fit = Fit
+# The toolbar's key to the wires: solid ones are kept by the audio service.
+audio-legend-saved = Saved
+audio-legend-unsaved = Not saved
+# Headings over the canvas's default columns.
+audio-column-sources = Sources
+audio-column-between = Effects and virtual devices
+audio-column-destinations = Destinations
+audio-column-midi-video = MIDI and video
+# The title bar's readout of the engine, e.g. "48 kHz · 256 · 5.3 ms".
+audio-readout = { $rate } · { $frames } · { $ms } ms
+# Saves every link on the canvas so the audio service puts them back.
+audio-save-routing = Save Routing
+# On the selected wire.
+audio-save-link = Save Link
+audio-forget-link = Forget
+audio-remove-link = Remove
+audio-service-down = Saved links aren't kept while the audio service is off.
+audio-service-start = Start Service
+# The sidebar's foot: whether the audio service is keeping saved links.
+audio-service-on = Audio service running
+audio-service-off = Audio service is off
+# What a card stands for, under its name.
+audio-role-playing = Plays sound
+audio-role-recording = Records
+audio-role-output-device = Output device
+audio-role-input-device = Input device
+audio-role-virtual-output = Virtual output
+audio-role-virtual-input = Virtual input
+audio-role-airplay = AirPlay speaker
+audio-role-duplex = Input and output
+audio-role-midi = MIDI
+audio-role-video = Video
+audio-role-other = Other
+# A folded row with more channels than fit, e.g. "8 channels".
+audio-channels = { $count } channels
+# A sink's monitor ports folded into one row, e.g. "Monitor FL FR".
+audio-monitor = Monitor { $channels }
+audio-state-running = Running
+audio-state-idle = Idle
+audio-state-suspended = Suspended
+audio-state-error = Error
+audio-state-creating = Starting
+audio-detail-app = App
+audio-detail-class = Media class
+audio-detail-state = State
+# How saved links name this node across plugs and restarts.
+audio-detail-identity = Saved as
+# Over the details panel's name.
+audio-detail-selected = Selected
+audio-detail-format = Format
+audio-detail-latency = Latency
+audio-detail-delay = Delay
+# A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
+audio-detail-channels = { $count } ch
+audio-detail-links = Connections
+audio-detail-no-links = Not linked to anything
+# A connection the audio service keeps.
+audio-detail-saved = Saved
+# Saves one connection, from the details panel.
+audio-save = Save
+# Connections past the ones listed, e.g. "3 more".
+audio-detail-more-links = { $count } more
+# The node's raw PipeWire properties, folded away, e.g. "Properties (42)".
+audio-detail-properties-count = Properties ({ $count })
+audio-engine-title = Engine
+audio-engine-rate = Sample rate
+audio-engine-rate-auto = { $rate }, chosen by the engine
+audio-engine-rate-forced = { $rate }, set here
+# Lets the engine pick the value itself.
+audio-engine-auto = Auto
+# A sample rate, e.g. "48 kHz" or "44.1 kHz".
+audio-khz = { $value } kHz
+audio-engine-quantum = Buffer size
+# Under the buffer tiles, e.g. "Default 1024, from 32 to 2048 frames".
+audio-engine-quantum-range-short = Default { $default }, from { $min } to { $max } frames
+audio-engine-intro = How often the sound server runs, and how much sound it handles each time.
+audio-engine-latency-now = Latency now
+# e.g. "256 frames at 48000 Hz"
+audio-engine-frames-at = { $frames } frames at { $rate } Hz
+# A value forced in this app rather than left to the engine.
+audio-engine-set-here = Set here
+audio-engine-rate-note = Streams at other rates are resampled.
+# Milliseconds, alone after a large number, and with one.
+audio-ms = ms
+audio-ms-value = { $ms } ms
+# A rate in a tight control, e.g. "48k" or "44.1k".
+audio-khz-short = { $value }k
+audio-engine-reset = Reset
+audio-engine-note = Changes apply right away. The audio service puts them back when the sound server restarts.
+audio-pane-devices = Devices
+audio-devices-title = Devices
+audio-devices-intro = Changes apply right away and the sound server remembers them.
+audio-devices-empty = No sound devices
+# Row labels on a device's card.
+audio-devices-profile = Profile
+audio-devices-codec = Codec
+audio-devices-output-port = Output port
+audio-devices-input-port = Input port
+# Where the device's volume is set: on its own hardware mixer, or in software.
+audio-devices-volume = Volume control
+audio-devices-volume-hardware = Hardware
+audio-devices-volume-software = Software
+# When output and input differ, e.g. "Output: Hardware · Input: Software".
+audio-devices-volume-output = Output: { $control }
+audio-devices-volume-input = Input: { $control }
+# A port with nothing plugged in, e.g. "Headphones (unplugged)".
+audio-devices-unplugged = { $port } (unplugged)
+# Under a Bluetooth device's codecs.
+audio-devices-codec-note = Switching codec interrupts the sound for a moment.
+# Beside a device's name: the channels it records and plays now, e.g. "2 in · 2 out".
+audio-devices-inputs = { $count } in
+audio-devices-outputs = { $count } out
+# Beside a device's name when its profile is Off.
+audio-devices-off = Off
+# What a device is, under its name.
+audio-devices-kind-bluetooth = Bluetooth device
+audio-devices-kind-bluetooth-headphones = Bluetooth headphones
+audio-devices-kind-bluetooth-headset = Bluetooth headset
+audio-devices-kind-bluetooth-speaker = Bluetooth speaker
+audio-devices-kind-usb = USB audio
+audio-devices-kind-built-in = Built-in audio
+audio-devices-kind-other = Sound card
+
+# The AirPlay speakers card under the device cards: a switch that has the
+# audio service look for AirPlay speakers on the network.
+audio-airplay-title = AirPlay speakers
+audio-airplay-intro = Play on AirPlay speakers and receivers on your network.
+audio-airplay-service-down = AirPlay speakers show up only while the audio service runs.
+# { $package } is a package name, such as pipewire-zeroconf.
+audio-airplay-missing-module = AirPlay needs { $package }, which isn't installed.
+# The command is typed as is; keep it untranslated.
+audio-airplay-missing-avahi = AirPlay needs Avahi to find speakers. Turn it on with: systemctl enable --now avahi-daemon
+audio-airplay-searching = Looking for speakers on your network…
+# Beside a speaker that's playing now; the others say audio-airplay-tag.
+audio-airplay-playing = Playing
+audio-airplay-tag = AirPlay
+audio-airplay-delay = AirPlay speakers play about 2 seconds late, so they won't keep in sync with video.
+# The value of the Delay fact in the Graph's details panel.
+audio-airplay-delay-short = About 2 s, over the network
+
+## otto-mixer — Virtual devices: outputs, inputs and loopbacks the audio
+## service makes. The cards are about 260 px wide; the form's labels sit in a
+## column of about 78 px.
+
+audio-pane-virtual = Virtual devices
+audio-virtual-title = Virtual devices
+audio-virtual-intro = Outputs, inputs and loopbacks the audio service makes. Apps see them like any other device.
+audio-virtual-service-down = Virtual devices exist only while the audio service runs.
+audio-virtual-new-heading = New virtual device
+audio-virtual-name = Name
+# Greyed out in the empty name field.
+audio-virtual-name-placeholder = Stream mix, Call input…
+audio-virtual-kind = Kind
+audio-virtual-channels = Channels
+audio-virtual-add = Add
+audio-virtual-kind-output = Output
+audio-virtual-kind-input = Input
+# Plays what reaches its input straight out of its output.
+audio-virtual-kind-loopback = Loopback
+audio-virtual-about-output = Apps play into it like a speaker. What they play comes out of its monitor, for another app to record.
+audio-virtual-about-input = Apps record from it like a microphone. Link anything into it on Graph.
+audio-virtual-about-loopback = Passes its input straight to its output. It starts unlinked: link both sides on Graph.
+# Channel layouts. 5.1 and 7.1 are surround layouts; keep the numbers.
+audio-virtual-mono = Mono
+audio-virtual-stereo = Stereo
+audio-virtual-quad = Quad
+audio-virtual-surround-51 = 5.1
+audio-virtual-surround-71 = 7.1
+audio-virtual-made-heading = Devices
+audio-virtual-none = No virtual devices yet
+# Under a device's name, e.g. "Output · Stereo".
+audio-virtual-card-kind = { $kind } · { $channels }
+# The service runs but the device has not appeared yet.
+audio-virtual-state-waiting = Being made
+audio-virtual-state-no-service = Made when the audio service starts
+audio-virtual-rename = Rename
+audio-virtual-remove = Remove
+audio-virtual-save-name = Save
+audio-virtual-cancel = Cancel
+# Example devices the offscreen preview shows when none are saved.
+audio-virtual-sample-output = Stream mix
+audio-virtual-sample-input = Call input
+audio-virtual-sample-loopback = Mic monitor
+
+# The Graph section's view switch, in its toolbar: cards and wires, a grid
+# of sources against destinations, or one row per path the sound takes.
+audio-view-patchbay = Patchbay
+audio-view-matrix = Matrix
+audio-view-lanes = Lanes
+# The matrix's top-left corner: rows are where sound comes from, columns
+# where it goes.
+audio-matrix-corner = From ↓ · To →
+# Over the Lanes view, which shows links but does not make them.
+audio-lanes-note = Each lane follows the sound from where it starts to where it ends. Link on the Patchbay or the Matrix.
+audio-lanes-empty = Nothing is linked with these filters
+## otto-mixer — Effects: equalisers, limiters, compressors and noise
+## suppression the audio service hosts, each sitting on a device. The list
+## beside the editor is about 230 px wide; band cards are about 130 px wide.
+
+audio-pane-effects = Effects
+audio-effects-service-down = Effects exist only while the audio service runs.
+# List headings, shown in small capitals.
+audio-effects-outputs = Output effects
+audio-effects-inputs = Input effects
+audio-effects-none = None yet
+audio-effects-new = New Effect
+# Under an effect's name in the list, e.g. "Equaliser · Headphones".
+audio-effects-caption = { $kind } · { $place }
+# The list caption of an effect that is switched off.
+audio-effects-caption-off = { $caption } · Off
+# Where an effect that sits on another effect is, e.g. "after Headphone EQ".
+audio-effects-after = after { $name }
+audio-effects-kind-equaliser = Equaliser
+audio-effects-kind-limiter = Limiter
+audio-effects-kind-compressor = Compressor
+audio-effects-kind-noise = Noise suppression
+audio-effects-about-equaliser = Shapes the sound with up to ten bands, or a headphone profile from AutoEQ.
+audio-effects-about-limiter = Keeps peaks under a ceiling, so nothing gets louder than you set.
+audio-effects-about-compressor = Evens out loud and quiet passages, for steady listening.
+audio-effects-about-noise = Takes background noise out of a voice. For microphones.
+audio-effects-kind-speaker = Speaker correction
+audio-effects-about-speaker = Tunes speakers with an impulse response file, like the speaker tuning a laptop maker ships. It can cut the lows first.
+# A kind whose plugin is missing, in the new effect form. $package is a
+# distribution package name; keep it as it is.
+audio-effects-missing = Needs { $package }, which isn't installed
+# Over an effect whose plugin is missing.
+audio-effects-missing-made = This effect needs { $package }, which isn't installed, so the audio service can't make it.
+audio-effects-new-heading = New effect
+# Whether the effect is for what plays (output) or what is recorded (input).
+audio-effects-side = For
+audio-effects-side-output = Output
+audio-effects-side-input = Input
+# The device the new effect sits on.
+audio-effects-device = Device
+audio-effects-no-device = No device
+audio-effects-add = Add Effect
+audio-effects-cancel = Cancel
+# Beside the switch that turns the effect on and off.
+audio-effects-on = On
+audio-effects-remove = Remove
+audio-effects-import = Import
+# The equaliser's preset pop-up, showing the preset last applied.
+audio-effects-preset-custom = Custom
+audio-effects-preset-flat = Flat
+audio-effects-preset-import = Import AutoEQ File…
+# A preset imported from an AutoEQ file named after the headphones.
+audio-effects-preset-autoeq = { $name } (AutoEQ)
+audio-effects-import-title = Import an AutoEQ Profile
+# File dialog filters.
+audio-effects-import-filter = AutoEQ profiles (ParametricEQ.txt)
+audio-effects-import-all = All files
+audio-effects-imported =
+    Imported { $count ->
+        [one] one band
+       *[other] { $count } bands
+    }.
+audio-effects-imported-skipped =
+    Imported { $count ->
+        [one] one band
+       *[other] { $count } bands
+    }; { $skipped ->
+        [one] one filter was
+       *[other] { $skipped } filters were
+    } left out.
+audio-effects-import-failed = That file isn't an AutoEQ ParametricEQ profile.
+audio-effects-import-unreadable = That file couldn't be read.
+# The first step of the chain line when nothing plays through the effect.
+audio-effects-chain-no-apps = No apps
+# Heading of the frequency response curve, in small capitals.
+audio-effects-response = Response
+# The gain applied before the bands.
+audio-effects-preamp = Preamp
+audio-effects-band = Band { $number }
+audio-effects-band-low-shelf = Low shelf
+audio-effects-band-peak = Peak
+audio-effects-band-high-shelf = High shelf
+audio-effects-band-low-pass = Low-pass
+audio-effects-band-high-pass = High-pass
+# Band card rows: frequency, gain and Q (the band's width). Keep them short.
+audio-effects-freq = Freq
+audio-effects-gain = Gain
+audio-effects-q = Q
+audio-effects-add-band = Add Band
+audio-effects-hint = Drag a point on the curve to move a band; scroll over it to change its width. Drag a value sideways to change it. Every change is heard right away.
+# Units. $value is already formatted, with its sign.
+audio-effects-db = { $value } dB
+audio-effects-hz = { $value } Hz
+audio-effects-khz = { $value } kHz
+audio-effects-seconds = { $value } s
+# A compression ratio, e.g. "4.0:1".
+audio-effects-ratio = { $value }:1
+audio-effects-percent = { $value } %
+audio-effects-param-input-gain = Input gain
+audio-effects-param-limit = Ceiling
+audio-effects-param-release = Release
+audio-effects-param-threshold = Threshold
+audio-effects-param-ratio = Ratio
+audio-effects-param-attack = Attack
+audio-effects-param-knee = Knee
+audio-effects-param-makeup = Makeup gain
+# How sure noise suppression must be that it hears a voice before it lets
+# sound through.
+audio-effects-param-voice-threshold = Voice threshold
+# How long sound keeps going through after the voice stops.
+audio-effects-param-grace = Hold
+# Example effects the offscreen preview shows when none are saved.
+audio-effects-sample-eq = Headphone EQ
+audio-effects-sample-mic = Mic cleanup
+audio-effects-sample-preset = WH-1000XM5 (AutoEQ)
+# Speaker correction: the impulse response file it plays through, and
+# Choose File… to pick one.
+audio-effects-impulse = Impulse response
+audio-effects-impulse-none = None yet, sound passes through as is
+audio-effects-choose-file = Choose File…
+audio-effects-impulse-title = Choose an Impulse Response
+# File dialog filter.
+audio-effects-impulse-filter = Impulse responses (.irs, .wav, .flac)
+audio-effects-impulse-failed = That impulse response couldn't be copied.
+# $file is the impulse response's file name.
+audio-effects-impulse-gone = { $file } is missing from Otto's data folder, so the audio service can't make this effect. Choose the file again.
+# A switch and a frequency slider: sound below the frequency is cut.
+audio-effects-param-highpass = Cut lows below
+audio-effects-param-output-gain = Output gain
+# Importing an EasyEffects output preset into a speaker correction.
+audio-effects-import-easyeffects = Import EasyEffects Preset…
+audio-effects-easyeffects-title = Import an EasyEffects Preset
+# File dialog filter.
+audio-effects-easyeffects-filter = EasyEffects presets (.json)
+audio-effects-easyeffects-failed = That file isn't an EasyEffects output preset with a convolver.
+# $file is the impulse response the preset names.
+audio-effects-easyeffects-find-kernel = The preset's impulse response, { $file }, isn't next to it. Choose it to finish the import.
+audio-effects-easyeffects-stopped = Import stopped: the preset needs its impulse response.
+audio-effects-easyeffects-imported = Imported the preset with { $file }.
+audio-effects-easyeffects-imported-limiter = Imported the preset with { $file }, and put a limiter after it.
+# $imported is one of the two lines above; $skipped lists the preset's
+# effects this one doesn't do, from the names below.
+audio-effects-easyeffects-skipped = { $imported } Skipped { $skipped }.
+audio-effects-ee-bass-enhancer = bass enhancer
+audio-effects-ee-multiband-compressor = multiband compressor
+audio-effects-ee-stereo-tools = stereo tools
+audio-effects-ee-limiter = limiter
+audio-effects-ee-filter = filter
+
+audio-pane-mixer = Mixer
+audio-pane-status = Status
+audio-sidebar-advanced = Advanced
+audio-status-line-on = Audio service on
+audio-status-line-off = Audio service off
+audio-status-short-device-missing = { $device } isn't connected
+audio-status-short-no-output = { $app } has no output
+audio-status-short-dropouts = Dropouts on { $device }
+audio-status-short-clipping = { $name } is clipping
+audio-status-line-more = { $first } +{ $count }
+audio-kind-hdmi = HDMI
+audio-kind-virtual = Virtual
+audio-mixer-title = Mixer
+audio-mixer-intro = Where sound plays, how loud, and which apps are using it.
+audio-mixer-service-down = App rules and lowering apps during calls only work while the audio service runs.
+audio-mixer-outputs = Outputs
+audio-mixer-apps = Apps playing
+audio-mixer-inputs = Inputs
+audio-mixer-calls-heading = During calls
+audio-mixer-default = Default
+audio-mixer-no-tuning = No tuning
+audio-mixer-tuning-off = { $name } (off)
+audio-mixer-used-by = Used by { $apps }
+audio-mixer-not-used = No app is recording from it
+audio-mixer-no-outputs = No outputs found
+audio-mixer-no-inputs = No inputs found
+audio-mixer-nothing-playing = Nothing is playing right now.
+audio-mixer-follow-default = Follow the default
+audio-mixer-default-output = Default ({ $name })
+audio-mixer-always-here = Always play { $app } here
+audio-mixer-calls-lower = When an app uses the microphone, lower other apps to
+audio-status-title = Status
+audio-effects-not-in-use = Not in use
+audio-devices-details = Profile, codec and ports
+audio-devices-sound = Sound
+audio-devices-sound-intro = How this output sounds, for every app that plays on it.
+audio-devices-tuning = Tuning
+audio-devices-compare = Compare
+audio-devices-loudness = Loudness
+audio-devices-protect = Protect from clipping
+audio-devices-tuning-none = None
+audio-devices-tuning-edit = Edit…
+audio-devices-tuning-new = New equaliser
+audio-devices-tuning-new-name = { $device } EQ
+audio-devices-compare-off = Off
+audio-devices-compare-on = Tuned
+audio-devices-bt-title = Best sound or microphone
+audio-devices-bt-about = Over Bluetooth, headphones play their best sound only while their microphone is off. The headset profile turns the microphone on, but the sound drops to call quality.
+audio-devices-bt-best = Best sound
+audio-devices-bt-headset = Headset with microphone
+audio-devices-bt-switch = Switch to headset when a call needs the microphone, and back after
+audio-status-intro = Anything that needs your attention, and where sound is going right now.
+audio-status-worth-a-look = Worth a look
+audio-status-nothing = Nothing needs your attention.
+audio-status-playing = Playing now
+audio-status-facts = Facts
+audio-status-service-off = The audio service is off, so rules, effects and saved links aren't kept.
+audio-status-rule-missing = { $app } is set to play on { $device }, which isn't connected.
+audio-status-stream-missing = { $app } was sent to a device that isn't connected.
+audio-status-dropouts =
+    { $count ->
+        [one] 1 dropout on { $device } in the last 10 minutes.
+       *[other] { $count } dropouts on { $device } in the last 10 minutes.
+    }
+audio-status-raise-buffer = Use { $frames } frames
+audio-status-boost = { $name } boosts by up to { $db } dB, so loud parts can clip.
+audio-status-lower-preamp = Lower preamp by { $db } dB
+audio-status-not-playing-anywhere = Not linked yet
+audio-status-fact-dropouts = Dropouts, last 10 minutes
+audio-status-dropouts-count = { $count }
+audio-status-fact-delay = Delay
+audio-status-delay = { $ms } ms ({ $frames } frames at { $rate })
+audio-status-fact-service = Audio service
+audio-status-service-is-on = Running
+audio-status-service-is-off = Off
+audio-status-fact-airplay = AirPlay
+audio-status-airplay-off = Off
+audio-status-airplay-no-module = On, but PipeWire's AirPlay module isn't installed
+audio-status-airplay-no-avahi = On, but Avahi isn't running
+audio-status-airplay-found =
+    { $count ->
+        [0] On, looking for speakers
+        [one] On, 1 speaker found
+       *[other] On, { $count } speakers found
+    }
+audio-virtual-recording-mix = Recording mix
+audio-virtual-recording-mix-add = Mix for Recording
+audio-virtual-hears-none = Hears nothing yet. Apps show up here while they play.
+audio-engine-low-latency = Low Latency

@@ -77,6 +77,7 @@ pub fn is_applied_live(id: &str) -> bool {
             | "topbar.show_app_menu"
             | "topbar.show_clock"
             | "topbar.show_network"
+            | "topbar.show_sound"
             | "topbar.clock_format"
             | "search.folders"
             | "search.skip_code_repositories"
@@ -410,6 +411,7 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         "topbar.show_app_menu"
         | "topbar.show_clock"
         | "topbar.show_network"
+        | "topbar.show_sound"
         | "topbar.clock_format" => Ok(()),
         // LocalSearch's own settings: pushed to it on a thread of its own,
         // since writing them runs `gsettings`.
@@ -543,6 +545,7 @@ mod tests {
             "topbar.show_app_menu",
             "topbar.show_clock",
             "topbar.show_network",
+            "topbar.show_sound",
             "topbar.clock_format",
         ] {
             assert_eq!(

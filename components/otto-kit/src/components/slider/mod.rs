@@ -15,4 +15,4 @@ pub use slider::{
     draw, fraction, hit_test_knob, hit_test_track, knob_center, value_at, SliderInteraction,
     KNOB_RADIUS, TRACK_THICKNESS,
 };
-pub use state::{SliderDrag, SliderResponse};
+pub use state::{ScrollSteps, SliderDrag, SliderResponse};

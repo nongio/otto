@@ -218,9 +218,34 @@ Picking one switches to it. **Keyboard Settings…** at the bottom opens the
 keyboard settings. The keycap follows every switch, including one made with
 the layout switch keys.
 
+## Sound
+
+The speaker sits between the keyboard layout and the network indicator. Its
+waves show the volume of the output in use in three steps, and a line through
+it means it is muted. Scroll over it to turn the volume up or down in steps of
+5%, and middle-click it to mute or unmute.
+
+Click it for the sound menu:
+
+- **Output**: the volume of the output in use, with its mute button, and every
+  output to choose from, the one in use ticked. Choosing one moves what is
+  playing to it.
+- **Input**: the same for the microphone in use.
+- **Apps**: a volume and a mute button for each app playing sound, and a
+  button with the output it plays to (**Default** while it follows the output
+  in use). Click it to send that app somewhere else, or pick **Follow the
+  default** to bring it back.
+- **Open Mixer…** opens the Mixer app, for routing and everything
+  else.
+
+Changes are the sound server's own, so they show in the Mixer app and in
+**Settings ▸ Sound** too, and are remembered. To hide the speaker, turn off
+**Settings ▸ Top bar ▸ Show sound in the top bar**, or set `show_sound = false`
+under `[topbar]`.
+
 ## Network
 
-The network indicator sits between the keyboard layout and the battery: Wi-Fi
+The network indicator sits between the sound indicator and the battery: Wi-Fi
 signal in bars, a wired glyph, or an empty fan when nothing is connected.
 Click it to turn Wi-Fi on or off, join a network (a password dialog opens for
 a secured one), start a VPN, or open **Network Settings…**. See

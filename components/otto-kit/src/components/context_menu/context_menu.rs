@@ -5,7 +5,10 @@ use std::time::{Duration, Instant};
 
 use super::{ContextMenuRenderer, ContextMenuState, ContextMenuStyle};
 use crate::app_runner::AppContext;
-use crate::components::menu_item::MenuItem;
+use crate::components::menu_item::{
+    slider_layout, MenuItem, MenuSlider, SliderChange, SliderLayout,
+};
+use crate::components::slider::{self, ScrollSteps, KNOB_RADIUS};
 use crate::input::keycodes;
 use crate::protocols::otto_surface_style_v1::{BlendMode, ClipMode};
 use crate::surfaces::PopupSurface;
@@ -48,6 +51,29 @@ pub enum MenuRefresh {
 type PopupStack = Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>;
 type ItemClickCallback = Rc<RefCell<Option<Rc<dyn Fn(&str)>>>>;
 type CloseCallback = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
+type SliderCallback = Rc<RefCell<Option<Rc<dyn Fn(&str, SliderChange)>>>>;
+
+/// How far an arrow key or a wheel notch moves a slider row: 5 %.
+const SLIDER_STEP: f32 = 0.05;
+
+/// Whether `(x, y)` is inside `rect`, edges included.
+fn rect_holds(rect: skia_safe::Rect, x: f32, y: f32) -> bool {
+    x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+}
+
+/// A slider row the pointer is dragging.
+#[derive(Clone, Debug)]
+struct SliderGrab {
+    /// Its row in the root list.
+    index: usize,
+    /// How a refresh finds it again.
+    action_id: String,
+    /// The value it was dragged to, which a refresh keeps: what the caller
+    /// sends back lags the pointer.
+    value: f32,
+    /// Its track, where the drag started.
+    track: skia_safe::Rect,
+}
 
 /// High-level ContextMenuNext component
 ///
@@ -71,6 +97,12 @@ pub struct ContextMenu {
     // Callbacks - wrapped in Rc<RefCell<>> so they can be set after construction
     on_item_click: ItemClickCallback,
     on_close: CloseCallback,
+    on_slider: SliderCallback,
+
+    /// The slider row being dragged.
+    slider_grab: Rc<RefCell<Option<SliderGrab>>>,
+    /// Wheel and touchpad travel over a slider row, counted out in steps.
+    wheel: Rc<RefCell<ScrollSteps>>,
 
     /// A fade-out is in flight. Guards against stacking a second close
     /// transaction (and a second `on_close`) on top of one already running.
@@ -131,6 +163,9 @@ impl ContextMenu {
             parent_xdg: Rc::new(RefCell::new(None)),
             on_item_click: Rc::new(RefCell::new(None)),
             on_close: Rc::new(RefCell::new(None)),
+            on_slider: Rc::new(RefCell::new(None)),
+            slider_grab: Rc::new(RefCell::new(None)),
+            wheel: Rc::new(RefCell::new(ScrollSteps::default())),
             registered_surfaces: Rc::new(RefCell::new(HashMap::new())),
             closing: Rc::new(Cell::new(false)),
             close_generation: Rc::new(Cell::new(0)),
@@ -158,6 +193,9 @@ impl ContextMenu {
             parent_xdg: Rc::new(RefCell::new(None)),
             on_item_click: Rc::new(RefCell::new(None)),
             on_close: Rc::new(RefCell::new(None)),
+            on_slider: Rc::new(RefCell::new(None)),
+            slider_grab: Rc::new(RefCell::new(None)),
+            wheel: Rc::new(RefCell::new(ScrollSteps::default())),
             registered_surfaces: Rc::new(RefCell::new(HashMap::new())),
             closing: Rc::new(Cell::new(false)),
             close_generation: Rc::new(Cell::new(0)),
@@ -195,6 +233,17 @@ impl ContextMenu {
         F: Fn() + 'static,
     {
         *self.on_close.borrow_mut() = Some(Rc::new(callback));
+        self
+    }
+
+    /// Fires when a slider row changes, with its action id: a drag, a wheel,
+    /// an arrow key, or its toggle. The menu has already drawn the change
+    /// and stays open.
+    pub fn on_slider<F>(self, callback: F) -> Self
+    where
+        F: Fn(&str, SliderChange) + 'static,
+    {
+        *self.on_slider.borrow_mut() = Some(Rc::new(callback));
         self
     }
 
@@ -562,8 +611,7 @@ impl ContextMenu {
         let items_at_depth = state.borrow().items_at_depth(depth).to_vec();
         if !items_at_depth
             .get(item_idx)
-            .map(|item| item.has_submenu())
-            .unwrap_or(false)
+            .is_some_and(MenuItem::opens_submenu)
         {
             return;
         }
@@ -643,20 +691,41 @@ impl ContextMenu {
                 // Set submenu size
                 positioner.set_size(width as i32, height as i32);
 
-                // Define anchor rectangle as a 1px vertical line at parent's right edge
-                // positioned at the selected item
-                positioner.set_anchor_rect(
-                    parent_width as i32 - 5, // x: at right edge of parent
-                    anchor_y as i32,         // y: top of selected item
-                    1,                       // width: thin vertical line
-                    1_i32,                   // height: selected item height
-                );
+                let picker = Self::picker_rect(state, &style, depth, item_idx);
+                if let Some(button) = picker {
+                    // A slider row's picker drops its list under the button,
+                    // lined up with its left edge, like a pop-up button.
+                    let s = style.draw_scale;
+                    positioner.set_anchor_rect(
+                        (button.left * s) as i32,
+                        (button.top * s) as i32,
+                        ((button.width() * s) as i32).max(1),
+                        ((button.height() * s) as i32).max(1),
+                    );
+                    positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
+                    positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+                    positioner.set_offset(0, 2);
+                    positioner.set_constraint_adjustment(
+                        xdg_positioner::ConstraintAdjustment::SlideX
+                            | xdg_positioner::ConstraintAdjustment::FlipY
+                            | xdg_positioner::ConstraintAdjustment::SlideY,
+                    );
+                } else {
+                    // Define anchor rectangle as a 1px vertical line at parent's right edge
+                    // positioned at the selected item
+                    positioner.set_anchor_rect(
+                        parent_width as i32 - 5, // x: at right edge of parent
+                        anchor_y as i32,         // y: top of selected item
+                        1,                       // width: thin vertical line
+                        1_i32,                   // height: selected item height
+                    );
 
-                // Anchor to top-left of this line (which is at parent's right edge)
-                positioner.set_anchor(xdg_positioner::Anchor::TopLeft);
+                    // Anchor to top-left of this line (which is at parent's right edge)
+                    positioner.set_anchor(xdg_positioner::Anchor::TopLeft);
 
-                // Place submenu to the right of the anchor point
-                positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+                    // Place submenu to the right of the anchor point
+                    positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+                }
 
                 // Ensure popups vec is large enough for submenu
                 while popups.borrow().len() <= depth + 1 {
@@ -734,6 +803,66 @@ impl ContextMenu {
                 }
             }
         }
+    }
+
+    /// Where the picker of the slider row `item_idx` at `depth` is drawn, in
+    /// that popup's logical coordinates; `None` for any other row.
+    fn picker_rect(
+        state: &Rc<RefCell<ContextMenuState>>,
+        style: &ContextMenuStyle,
+        depth: usize,
+        item_idx: usize,
+    ) -> Option<skia_safe::Rect> {
+        let state = state.borrow();
+        let items = state.items_at_depth(depth);
+        let slider = items.get(item_idx)?.slider_data()?;
+        slider.picker.as_ref()?;
+        let width = style.width.unwrap_or_else(|| {
+            ContextMenuRenderer::compute_optimal_width(items, style).max(style.min_width)
+        });
+        let top = style.vertical_padding
+            + items
+                .iter()
+                .take(item_idx)
+                .map(|item| style.item_height_of(item))
+                .sum::<f32>()
+            - scroll_at_depth(&state, depth);
+        let layout = slider_layout(
+            slider,
+            &style.item_style(),
+            style.horizontal_padding,
+            top,
+            width - style.horizontal_padding * 2.0,
+            style.item_height_of(&items[item_idx]),
+        );
+        layout.picker
+    }
+
+    /// Open the picker of the slider row at `index` of the root list, or
+    /// close it when it is the one open.
+    fn toggle_picker(&self, index: usize) {
+        let open = self.state.borrow().is_submenu_open(0, index);
+        if open {
+            Self::hide_submenus_from_static(&self.state, &self.popups, 1);
+            self.state.borrow_mut().close_submenus_from(0);
+            return;
+        }
+        self.state.borrow_mut().open_submenu(0, index);
+        let popup = self.popups.borrow().first().cloned();
+        if let Some(popup) = popup {
+            let style = self.style.borrow();
+            Self::render_menu_at_depth(&self.state, &style, &popup, 0);
+        }
+        Self::show_submenu_static(
+            &self.state,
+            &self.popups,
+            &self.style,
+            &self.registered_surfaces,
+            &self.parent_xdg,
+            0,
+            index,
+            None,
+        );
     }
 
     /// Hide submenus from depth onwards (static helper)
@@ -844,6 +973,20 @@ impl ContextMenu {
                     let (x, y) = event.position;
 
                     match event.kind {
+                        PointerEventKind::Motion { .. } if menu.drag_slider(x as f32) => {}
+                        PointerEventKind::Release { button: 0x110, .. } => {
+                            menu.slider_grab.borrow_mut().take();
+                        }
+                        PointerEventKind::Press { button: 0x110, .. }
+                            if depth == 0 && menu.press_slider(x as f32, y as f32) => {}
+                        PointerEventKind::Axis { vertical, .. }
+                            if depth == 0
+                                && menu.wheel_slider(
+                                    x as f32,
+                                    y as f32,
+                                    vertical.value120,
+                                    vertical.absolute,
+                                ) => {}
                         PointerEventKind::Motion { .. } => {
                             Self::handle_motion_static(
                                 &state,
@@ -1274,6 +1417,30 @@ impl ContextMenu {
         }
         self.sync_alternates();
 
+        // A slider being dragged keeps where the pointer has it: the new
+        // items carry what the caller last heard back, which lags behind.
+        let grab = self.slider_grab.borrow().clone();
+        if let Some(grab) = grab {
+            let mut state = self.state.borrow_mut();
+            let found = state.items().iter().position(|item| {
+                item.slider_data()
+                    .is_some_and(|s| s.action_id == grab.action_id)
+            });
+            match found.and_then(|index| Some((index, state.root_item_mut(index)?))) {
+                Some((index, item)) => {
+                    if let Some(slider) = item.slider_data_mut() {
+                        slider.value = grab.value;
+                    }
+                    if let Some(grab) = self.slider_grab.borrow_mut().as_mut() {
+                        grab.index = index;
+                    }
+                }
+                None => {
+                    self.slider_grab.borrow_mut().take();
+                }
+            }
+        }
+
         // A list that got shorter may have been scrolled past its new end.
         {
             let mut state = self.state.borrow_mut();
@@ -1448,6 +1615,27 @@ impl ContextMenu {
         if key_state != wl_keyboard::KeyState::Pressed {
             return;
         }
+        // A slider row the keyboard is on: the arrows across move it, Return
+        // and Space press its toggle.
+        if let Some(index) = self.selected_slider() {
+            match key {
+                keycodes::LEFT | keycodes::RIGHT => {
+                    let delta = if key == keycodes::RIGHT {
+                        SLIDER_STEP
+                    } else {
+                        -SLIDER_STEP
+                    };
+                    self.nudge_slider(index, delta);
+                    return;
+                }
+                keycodes::ENTER | keycodes::SPACE => {
+                    self.toggle_slider(index);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         let style = self.style.borrow(); // Borrow once
 
         match key {
@@ -1592,6 +1780,184 @@ impl ContextMenu {
             }
             _ => {}
         }
+    }
+
+    // === Slider rows ===
+
+    /// The enabled slider row of the root list under `(x, y)`, with where its
+    /// parts are.
+    fn slider_at(&self, x: f32, y: f32) -> Option<(usize, SliderLayout)> {
+        let state = self.state.borrow();
+        let style = self.style.borrow();
+        let items = state.items_at_depth(0);
+        let (index, row) = ContextMenuRenderer::row_at(items, &style, x, y, state.scroll())?;
+        let item = &items[index];
+        if !item.is_enabled() {
+            return None;
+        }
+        let slider = item.slider_data()?;
+        let layout = slider_layout(
+            slider,
+            &style.item_style(),
+            row.left,
+            row.top,
+            row.width(),
+            row.height(),
+        );
+        Some((index, layout))
+    }
+
+    /// Change the slider row at `index` of the root list with `change`, which
+    /// says what changed, if anything; then repaint and report it.
+    fn change_slider(
+        &self,
+        index: usize,
+        change: impl FnOnce(&mut MenuSlider) -> Option<SliderChange>,
+    ) {
+        let reported = {
+            let mut state = self.state.borrow_mut();
+            let Some(slider) = state
+                .root_item_mut(index)
+                .filter(|item| item.is_enabled())
+                .and_then(MenuItem::slider_data_mut)
+            else {
+                return;
+            };
+            change(slider).map(|what| (slider.action_id.clone(), what, slider.value))
+        };
+        let Some((action_id, what, value)) = reported else {
+            return;
+        };
+        if let Some(grab) = self.slider_grab.borrow_mut().as_mut() {
+            if grab.index == index {
+                grab.value = value;
+            }
+        }
+        let popup = self.popups.borrow().first().cloned();
+        if let Some(popup) = popup {
+            let style = self.style.borrow();
+            Self::render_menu_at_depth(&self.state, &style, &popup, 0);
+        }
+        let callback = self.on_slider.borrow().clone();
+        if let Some(callback) = callback {
+            callback(&action_id, what);
+        }
+    }
+
+    /// Move the slider at `index` to `value`.
+    fn set_slider_value(&self, index: usize, value: f32) {
+        let value = value.clamp(0.0, 1.0);
+        self.change_slider(index, |slider| {
+            if (slider.value - value).abs() < f32::EPSILON {
+                return None;
+            }
+            slider.value = value;
+            Some(SliderChange::Value(value))
+        });
+    }
+
+    /// Move the slider at `index` by `delta`.
+    fn nudge_slider(&self, index: usize, delta: f32) {
+        let value = self
+            .state
+            .borrow()
+            .items_at_depth(0)
+            .get(index)
+            .and_then(MenuItem::slider_data)
+            .map(|slider| slider.value);
+        if let Some(value) = value {
+            // Back on the step grid, so 5 % steps from 43 % land on 45 %.
+            let steps = ((value + delta) / SLIDER_STEP).round();
+            self.set_slider_value(index, steps * SLIDER_STEP);
+        }
+    }
+
+    /// Press the toggle of the slider at `index`.
+    fn toggle_slider(&self, index: usize) {
+        self.change_slider(index, |slider| {
+            let toggle = slider.toggle.as_mut()?;
+            toggle.on = !toggle.on;
+            Some(SliderChange::Toggled(toggle.on))
+        });
+    }
+
+    /// A press at `(x, y)` on the root list. Returns whether a slider row took
+    /// it: its toggle, or its track, which starts a drag and jumps there.
+    fn press_slider(&self, x: f32, y: f32) -> bool {
+        let Some((index, layout)) = self.slider_at(x, y) else {
+            return false;
+        };
+        if layout.toggle.is_some_and(|toggle| rect_holds(toggle, x, y)) {
+            self.toggle_slider(index);
+            return true;
+        }
+        if layout.picker.is_some_and(|picker| rect_holds(picker, x, y)) {
+            self.toggle_picker(index);
+            return true;
+        }
+        let reach = layout.track.with_outset((KNOB_RADIUS, 0.0));
+        if rect_holds(reach, x, y) {
+            let action_id = self
+                .state
+                .borrow()
+                .items_at_depth(0)
+                .get(index)
+                .and_then(MenuItem::slider_data)
+                .map(|slider| (slider.action_id.clone(), slider.value));
+            if let Some((action_id, value)) = action_id {
+                *self.slider_grab.borrow_mut() = Some(SliderGrab {
+                    index,
+                    action_id,
+                    value,
+                    track: layout.track,
+                });
+                self.set_slider_value(index, slider::value_at(layout.track, 0.0, 1.0, None, x));
+            }
+        }
+        // The rest of the row is no button: a press there does nothing,
+        // rather than closing the menu.
+        true
+    }
+
+    /// The pointer moved to `x` during a drag. Returns whether one is on.
+    fn drag_slider(&self, x: f32) -> bool {
+        let grab = self
+            .slider_grab
+            .borrow()
+            .as_ref()
+            .map(|grab| (grab.index, grab.track));
+        let Some((index, track)) = grab else {
+            return false;
+        };
+        self.set_slider_value(index, slider::value_at(track, 0.0, 1.0, None, x));
+        true
+    }
+
+    /// A wheel or a two-finger scroll over `(x, y)`. Returns whether a slider
+    /// row took it; it moves in [`SLIDER_STEP`]s, up for louder.
+    fn wheel_slider(&self, x: f32, y: f32, value120: i32, absolute: f64) -> bool {
+        let Some((index, _)) = self.slider_at(x, y) else {
+            return false;
+        };
+        let steps = self.wheel.borrow_mut().add(value120, absolute);
+        if steps != 0 {
+            self.nudge_slider(index, -(steps as f32) * SLIDER_STEP);
+        }
+        true
+    }
+
+    /// The selected row of the root list, when it is a slider.
+    fn selected_slider(&self) -> Option<usize> {
+        let state = self.state.borrow();
+        if state.depth() != 0 {
+            return None;
+        }
+        let index = state.selected_at_depth(0)?;
+        state
+            .items_at_depth(0)
+            .get(index)
+            .and_then(MenuItem::slider_data)
+            .map(|_| index)
     }
 
     // === Utilities ===

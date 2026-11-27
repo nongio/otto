@@ -20,7 +20,7 @@ and menus with.
 |--------|--------------|
 | `main.rs` | Starts logging, picks the language from the desktop, starts the update check and hands `TopBarApp` to otto-kit's `AppRunner` on a two-worker tokio runtime. |
 | `app.rs` | The app: creates the surfaces, opens and closes every menu, handles pointer and keyboard input, builds the accessibility tree, and picks up changes from the watchers in `on_update`. |
-| `bar.rs` | Draws the left panel (Otto mark, app name, menus) and the right panel (tray, layout, battery, clock), packed right to left. |
+| `bar.rs` | Draws the left panel (Otto mark, app name, menus) and the right panel (tray, layout, sound, network, battery, clock), packed right to left. |
 | `appmenu.rs` | The global menu: follows the focused window and serves `com.canonical.AppMenu.Registrar`. |
 | `dbusmenu.rs` | Client for `com.canonical.dbusmenu`, used by app menus and tray menus. |
 | `tray.rs` | Serves `org.kde.StatusNotifierWatcher` and follows each registered `StatusNotifierItem`. |
@@ -29,6 +29,7 @@ and menus with.
 | `join_dialog.rs` | The Wi-Fi password dialog on the overlay layer: a network's password, a hidden network's name and security. |
 | `secret_agent.rs` | NetworkManager's secret agent on the system bus, answering Wi-Fi keys through the dialog. |
 | `network.rs` | The network indicator and its menu, from NetworkManager through `otto-network`, following `topbar.show_network`. |
+| `sound.rs` | The sound indicator and its menu, from the PipeWire graph through `otto-audio-graph`, following `topbar.show_sound`. |
 | `clock.rs` | The clock, following `topbar.show_clock` and `topbar.clock_format`. |
 | `logout.rs` | Asks through `org.otto.Dialog1`, then sends the compositor its `logout` command. |
 | `update.rs` | Asks a version endpoint whether a newer release is out, and adds an entry to the Otto menu when it is. |

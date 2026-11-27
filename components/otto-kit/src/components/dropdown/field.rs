@@ -155,9 +155,18 @@ pub fn draw_with_icon(
     let (border_color, border_width) = if open {
         (theme.accent, 1.5)
     } else {
-        (theme.fill_secondary, 1.0)
+        (theme.control_edge, 1.0)
     };
-    canvas.draw_rrect(rrect, &stroke(border_color, border_width));
+    // Stroked inside the field, so its outer edge is the rect's: a centred
+    // stroke would stand half its width proud and the field would read
+    // taller than a segmented control of the same height beside it.
+    let half = border_width / 2.0;
+    let edge = RRect::new_rect_xy(
+        rect.with_inset((half, half)),
+        CORNER_RADIUS - half,
+        CORNER_RADIUS - half,
+    );
+    canvas.draw_rrect(edge, &stroke(border_color, border_width));
 
     canvas.save();
     canvas.clip_rect(

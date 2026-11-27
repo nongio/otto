@@ -1,26 +1,30 @@
 //! Segmented control: a row of mutually exclusive choices in one rounded
-//! track, the chosen one raised on a light pill with a soft shadow under it.
+//! recessed track, the chosen one raised on a lighter pill with a hairline
+//! edge and a soft shadow under it, its label in primary ink at medium weight.
 //!
 //! No state of its own and no client runtime: it draws from a bare canvas,
 //! and the caller owns which segment is chosen and hands the press to
 //! [`segment_at`]. A segment is a short text or one of Otto's Solar glyphs.
 
-use skia_safe::{BlurStyle, Canvas, Color, Contains, MaskFilter, Paint, Point, RRect, Rect};
+use skia_safe::{
+    BlurStyle, Canvas, Color, Contains, MaskFilter, Paint, PaintStyle, Point, RRect, Rect,
+};
 
 use crate::common::Renderable;
 use crate::components::label::Label;
 use crate::icons::{self, SolarStyle};
 use crate::theme::Theme;
-use crate::typography::styles;
+use crate::typography::{styles, TextStyle};
 
-/// Height the control was tuned at. The geometry follows the `rect` it is
-/// given, but this is the reference.
-pub const HEIGHT: f32 = 26.0;
+/// Height the control was tuned at: the dropdown field's, so the two sit on
+/// one line in a form. The geometry follows the `rect` it is given, but this
+/// is the reference.
+pub const HEIGHT: f32 = crate::components::dropdown::field::HEIGHT;
 
 /// The track's corner radius.
 const TRACK_RADIUS: f32 = 7.0;
 /// How far the chosen segment's pill sits inside its segment.
-const PILL_INSET: f32 = 2.0;
+const PILL_INSET: f32 = 1.0;
 /// The pill's corner radius: the track's, less the inset, so the two curves
 /// run parallel.
 const PILL_RADIUS: f32 = TRACK_RADIUS - PILL_INSET;
@@ -32,6 +36,15 @@ const SHADOW_SIGMA: f32 = 1.5;
 /// The share of the theme's shadow colour the pill casts: a lift, not a
 /// floating card.
 const SHADOW_SHARE: f32 = 0.4;
+/// The width of the pill's hairline edge.
+const EDGE_WIDTH: f32 = 1.0;
+
+/// An unchosen segment's label: the dropdown field's size, so the two
+/// controls read as one set side by side.
+pub const LABEL: TextStyle = styles::BODY;
+/// The chosen segment's label: the same size, a step heavier, which is the
+/// dropdown field's own style.
+pub const LABEL_CHOSEN: TextStyle = crate::components::dropdown::field::LABEL_STYLE;
 
 /// What a segment shows.
 #[derive(Clone, Copy)]
@@ -73,8 +86,30 @@ pub fn segment_rect(rect: Rect, count: usize, index: usize) -> Rect {
     Rect::from_xywh(rect.left + w * index as f32, rect.top, w, rect.height())
 }
 
+/// A segment label's style: [`LABEL_CHOSEN`] on the chosen one, [`LABEL`]
+/// otherwise. For a caller drawing its own labels over the control.
+pub fn label_style(chosen: bool) -> TextStyle {
+    if chosen {
+        LABEL_CHOSEN
+    } else {
+        LABEL
+    }
+}
+
+/// A segment's ink: primary on every segment, since each is a choice you can
+/// read and make; the pill and the heavier weight mark the chosen one.
+/// Tertiary on the others of a locked control, which can't be chosen. For a
+/// caller drawing its own labels over the control.
+pub fn label_color(theme: &Theme, chosen: bool, interaction: SegmentedInteraction) -> Color {
+    match (chosen, interaction) {
+        (true, _) => theme.text_primary,
+        (false, SegmentedInteraction::Locked) => theme.text_tertiary,
+        (false, SegmentedInteraction::Normal) => theme.text_primary,
+    }
+}
+
 /// Draw the control into `rect`: the track, the chosen segment's raised pill
-/// and its shadow, and every segment's text or glyph.
+/// with its edge and shadow, and every segment's text or glyph.
 pub fn draw(
     canvas: &Canvas,
     rect: Rect,
@@ -85,7 +120,7 @@ pub fn draw(
 ) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
-    paint.set_color(theme.fill_tertiary);
+    paint.set_color(theme.control_track);
     canvas.draw_rrect(RRect::new_rect_xy(rect, TRACK_RADIUS, TRACK_RADIUS), &paint);
 
     let count = segments.len();
@@ -101,8 +136,22 @@ pub fn draw(
         shadow.set_color(shadow_color(theme));
         shadow.set_mask_filter(MaskFilter::blur(BlurStyle::Normal, SHADOW_SIGMA, false));
         canvas.draw_rrect(pill_rrect.with_offset((0.0, SHADOW_OFFSET)), &shadow);
-        paint.set_color(theme.material_popup);
+        paint.set_color(theme.control_raised);
         canvas.draw_rrect(pill_rrect, &paint);
+        let mut edge = Paint::default();
+        edge.set_anti_alias(true);
+        edge.set_style(PaintStyle::Stroke);
+        edge.set_stroke_width(EDGE_WIDTH);
+        edge.set_color(theme.control_edge);
+        let half = EDGE_WIDTH / 2.0;
+        canvas.draw_rrect(
+            RRect::new_rect_xy(
+                pill.with_inset((half, half)),
+                PILL_RADIUS - half,
+                PILL_RADIUS - half,
+            ),
+            &edge,
+        );
     }
 
     // Rasterised in the canvas's device pixels, so a glyph stays sharp on a
@@ -112,15 +161,12 @@ pub fn draw(
     for (index, segment) in segments.iter().enumerate() {
         let cell = segment_rect(rect, count, index);
         let center = Point::new(cell.center_x(), cell.center_y());
-        let color = match (Some(index) == selected, interaction) {
-            (true, _) => theme.text_primary,
-            (false, SegmentedInteraction::Locked) => theme.text_tertiary,
-            (false, SegmentedInteraction::Normal) => theme.text_secondary,
-        };
+        let chosen = Some(index) == selected;
+        let color = label_color(theme, chosen, interaction);
         match *segment {
             Segment::Text(text) => {
                 Label::new(text)
-                    .with_style(styles::CALLOUT)
+                    .with_style(label_style(chosen))
                     .with_color(color)
                     .centered_at(center.x, center.y)
                     .render(canvas);
@@ -261,5 +307,47 @@ mod tests {
         // and under the other one.
         let y = (HEIGHT - PILL_INSET + 0.5) as i32;
         assert!(luma(20, y) < luma(60, y));
+    }
+
+    /// The chosen pill is lighter than the track around it in both schemes,
+    /// so the cue reads the same way light or dark.
+    #[test]
+    fn the_chosen_pill_is_lighter_than_the_track() {
+        for (theme, ground) in [
+            (Theme::light(), Color::from_rgb(0xF6, 0xF6, 0xF6)),
+            (Theme::dark(), Color::from_rgb(0x24, 0x24, 0x26)),
+        ] {
+            let r = Rect::from_xywh(0.0, 0.0, 80.0, HEIGHT);
+            let mut surface = skia_safe::surfaces::raster_n32_premul((80, 40)).expect("surface");
+            surface.canvas().clear(ground);
+            draw(
+                surface.canvas(),
+                r,
+                &[Segment::Text(""), Segment::Text("")],
+                Some(0),
+                SegmentedInteraction::Normal,
+                &theme,
+            );
+            let image = surface.image_snapshot();
+            let luma = |x: i32, y: i32| {
+                let info = skia_safe::ImageInfo::new(
+                    (1, 1),
+                    skia_safe::ColorType::RGBA8888,
+                    skia_safe::AlphaType::Unpremul,
+                    None,
+                );
+                let mut px = [0u8; 4];
+                assert!(image.read_pixels(
+                    &info,
+                    &mut px,
+                    4,
+                    (x, y),
+                    skia_safe::image::CachingHint::Allow
+                ));
+                px[0] as u32 + px[1] as u32 + px[2] as u32
+            };
+            let mid = (HEIGHT / 2.0) as i32;
+            assert!(luma(20, mid) > luma(60, mid) + 30);
+        }
     }
 }

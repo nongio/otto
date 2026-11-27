@@ -1,0 +1,22 @@
+[Desktop Entry]
+Type=Application
+Name=Mixer
+Name[de]=Mixer
+Name[es]=Mezclador
+Name[fr]=Mixeur
+Name[it]=Mixer
+Name[ja]=ミキサー
+Name[pl]=Mikser
+Name[pt_BR]=Mixer
+Name[ru]=Микшер
+Name[uk]=Мікшер
+Name[zh_CN]=混音器
+GenericName=Audio Mixer
+Comment=See how sound moves between apps and devices, link them by hand and keep the links
+Exec=otto-mixer
+Icon=audio-card
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;
+Keywords=mixer;volume;audio;sound;pipewire;patchbay;routing;links;midi;latency;buffer;sample rate;
+StartupNotify=true
+StartupWMClass=otto-mixer

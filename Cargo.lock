@@ -5256,6 +5256,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-audio-graph"
+version = "1.10.0"
+dependencies = [
+ "otto-foundations",
+ "pipewire",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 1.1.2+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
 name = "otto-auth-ui"
 version = "1.10.0"
 dependencies = [
@@ -5291,6 +5304,7 @@ version = "1.10.0"
 dependencies = [
  "chrono",
  "futures-util",
+ "otto-audio-graph",
  "otto-kit",
  "otto-network",
  "serde_json",
@@ -5502,6 +5516,20 @@ dependencies = [
  "gstreamer-app",
  "libc",
  "otto-kit",
+ "tracing",
+]
+
+[[package]]
+name = "otto-mixer"
+version = "1.10.0"
+dependencies = [
+ "libc",
+ "otto-audio-graph",
+ "otto-kit",
+ "serde",
+ "tempfile",
+ "tokio",
+ "toml 1.1.2+spec-1.1.0",
  "tracing",
 ]
 

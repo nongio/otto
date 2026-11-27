@@ -25,6 +25,7 @@ How it works: [otto-kit](../../docs/developer/otto-kit.md).
 - `power.rs` asks logind to sleep, hibernate, restart or shut down, and says which sleep the sleep buttons take (`[power_management] sleep`, swapped while Cmd is held). Menu items swap in their `alternate` while Cmd is held through `AppContext::register_modifiers_callback`.
 - `qr.rs` encodes QR codes (byte mode, level M, versions 1 to 10) and `components/qr_code.rs` draws one.
 - The desktop wallpaper's layout, frame rendering and drawing are `src/wallpaper/`, shared by the compositor and the settings app's preview; `src/utils/resample.rs` is the high-quality CPU resampler it renders with.
+- `events` (in `lib.rs`) re-exports the pointer, keyboard and configure types the `App` trait and `Window` callbacks hand over, so an app never names `smithay-client-toolkit` or `wayland-client` itself.
 - Otto's own protocols are generated in `src/protocols/`; desktop entries, file types, previews, clipboard, drag and drop, sound and Lottie have their own modules.
 
 ## Rules

@@ -88,6 +88,13 @@ otto-pane-agent-symbolic        chat-round-dots
 otto-pane-hand-symbolic         shield-keyhole
 otto-pane-about-symbolic        info-circle
 
+# Audio sidebar panes
+otto-pane-graph-symbolic        routing-2
+otto-pane-devices-symbolic      speaker
+otto-pane-engine-symbolic       cpu
+otto-pane-effects-symbolic      tuning-3
+otto-pane-virtual-devices-symbolic layers-minimalistic
+
 # Power: the login and lock screens' buttons and the Otto menu
 otto-suspend-symbolic       moon                    linear bold
 otto-hibernate-symbolic     moon-sleep              linear bold

@@ -1,57 +1,348 @@
+// Rust guideline compliant 2026-02-21
+
 use skia_safe::{Canvas, Color, Contains, Paint, Point, RRect, Rect};
 
 use crate::theme::Theme;
-use crate::typography::styles;
+use crate::typography::{ellipsize, styles, TextStyle};
 
-/// One row's content. The icon itself is not here — it is caller-supplied,
-/// see [`draw`] — only the label the component knows how to lay out and
-/// paint.
-#[derive(Debug, Clone)]
+/// One row's content: a title, an optional second line under it, and how many
+/// small trailing glyphs sit at the row's right end.
+///
+/// The glyphs themselves are not here: the caller paints them, see [`draw`].
+///
+/// A row can instead be a [heading](Self::heading) over the rows after it,
+/// which is never selected, or be [pinned](Self::pinned_to_bottom) to the
+/// list's foot, such as a status line under every destination.
+#[derive(Debug, Clone, Default)]
 pub struct SourceListItem {
     pub label: String,
+    /// A secondary line under the label, such as "2 in · 2 out". A row with
+    /// one is a two-line row: taller, with a larger leading icon.
+    pub subtitle: Option<String>,
+    /// How many trailing glyphs the row carries, right-aligned and drawn
+    /// right to left from [`GlyphSlot::Trailing`]`(0)`.
+    pub trailing: usize,
+    /// A group's heading: small text over the rows that follow, with no
+    /// glyphs, never selected and never hit.
+    pub heading: bool,
+    /// Laid out at the foot of the list rather than after the row before it,
+    /// when the layout is given a foot (see [`SourceListLayout::for_items_in`]).
+    pub pinned: bool,
 }
 
 impl SourceListItem {
+    /// A one-line row titled `label`.
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
+            ..Self::default()
+        }
+    }
+
+    /// Adds a secondary line under the label, making this a two-line row.
+    #[must_use]
+    pub fn with_subtitle(mut self, subtitle: impl Into<String>) -> Self {
+        self.subtitle = Some(subtitle.into());
+        self
+    }
+
+    /// Reserves `count` trailing glyph slots at the row's right end.
+    #[must_use]
+    pub fn with_trailing(mut self, count: usize) -> Self {
+        self.trailing = count;
+        self
+    }
+
+    /// A group heading titled `label`, over the rows after it.
+    pub fn heading(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            heading: true,
+            ..Self::default()
+        }
+    }
+
+    /// Pins the row to the list's foot, under a hairline.
+    #[must_use]
+    pub fn pinned_to_bottom(mut self) -> Self {
+        self.pinned = true;
+        self
+    }
+
+    /// Whether the row shows a subtitle under its label.
+    pub fn is_two_line(&self) -> bool {
+        self.subtitle.is_some() && !self.heading
+    }
+
+    /// Whether the row can be selected and pressed: every row but a heading.
+    pub fn is_selectable(&self) -> bool {
+        !self.heading
+    }
+}
+
+/// Which glyph of a row the draw callback is asked to paint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlyphSlot {
+    /// The icon before the label.
+    Leading,
+    /// The `n`th trailing glyph, counted from the row's right end.
+    Trailing(usize),
+}
+
+/// How large the list's rows are.
+///
+/// `Regular` is the compact sidebar; `Large` is for a window whose sidebar is
+/// a handful of destinations, where taller rows and bigger glyphs read better.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SourceListSize {
+    #[default]
+    Regular,
+    Large,
+}
+
+/// Every measurement of a source list at one [`SourceListSize`].
+#[derive(Debug, Clone, Copy)]
+pub struct SourceListMetrics {
+    /// A one-line row's height.
+    pub item_height: f32,
+    /// A two-line row's height.
+    pub two_line_height: f32,
+    /// Vertical space between rows.
+    pub item_gap: f32,
+    /// Horizontal inset of the rows from the list's own bounds.
+    pub item_inset: f32,
+    /// The selection pill's corner radius.
+    pub corner_radius: f32,
+    /// A one-line row's leading icon side.
+    pub icon_size: f32,
+    /// A two-line row's leading icon side.
+    pub two_line_icon_size: f32,
+    /// Space between the row's left edge and a one-line row's icon.
+    pub leading_pad: f32,
+    /// Space between the icon and the label.
+    pub icon_label_gap: f32,
+    /// A trailing glyph's side.
+    pub trailing_size: f32,
+    /// Space between two trailing glyphs.
+    pub trailing_gap: f32,
+    /// Space between the row's right edge and its last trailing glyph, and
+    /// the least between a label and what follows it.
+    pub trailing_pad: f32,
+    /// The label, and the label of the selected row.
+    pub title: TextStyle,
+    pub title_selected: TextStyle,
+    /// The subtitle of a two-line row.
+    pub subtitle: TextStyle,
+    /// A heading's height, including the room above it that sets its group
+    /// apart from the rows before.
+    pub heading_height: f32,
+    /// A heading's label, set in upper case.
+    pub heading_style: TextStyle,
+}
+
+const REGULAR: SourceListMetrics = SourceListMetrics {
+    item_height: 30.0,
+    two_line_height: 42.0,
+    item_gap: 2.0,
+    item_inset: 8.0,
+    corner_radius: 7.0,
+    icon_size: 20.0,
+    two_line_icon_size: 28.0,
+    leading_pad: 7.0,
+    icon_label_gap: 6.0,
+    trailing_size: 12.0,
+    trailing_gap: 4.0,
+    trailing_pad: 8.0,
+    title: styles::SUBHEADLINE,
+    title_selected: styles::SUBHEADLINE_EMPHASIZED,
+    subtitle: styles::FOOTNOTE,
+    heading_height: 28.0,
+    heading_style: styles::CAPTION_2_EMPHASIZED,
+};
+
+const LARGE: SourceListMetrics = SourceListMetrics {
+    item_height: 38.0,
+    two_line_height: 48.0,
+    item_gap: 2.0,
+    item_inset: 8.0,
+    corner_radius: 9.0,
+    icon_size: 20.0,
+    two_line_icon_size: 32.0,
+    leading_pad: 10.0,
+    icon_label_gap: 10.0,
+    trailing_size: 14.0,
+    trailing_gap: 6.0,
+    trailing_pad: 10.0,
+    title: TextStyle {
+        family: "Inter",
+        weight: 500,
+        size: 14.0,
+    },
+    title_selected: TextStyle {
+        family: "Inter",
+        weight: 600,
+        size: 14.0,
+    },
+    subtitle: styles::SUBHEADLINE,
+    heading_height: 34.0,
+    heading_style: styles::CAPTION_1_EMPHASIZED,
+};
+
+impl SourceListSize {
+    /// The measurements rows of this size are laid out and drawn with.
+    pub const fn metrics(self) -> &'static SourceListMetrics {
+        match self {
+            Self::Regular => &REGULAR,
+            Self::Large => &LARGE,
         }
     }
 }
 
-pub const ITEM_HEIGHT: f32 = 30.0;
-pub const ITEM_STEP: f32 = 32.0;
-/// Horizontal and top/bottom inset of the row from the list's own bounds.
-pub const ITEM_INSET: f32 = 8.0;
-pub(super) const CORNER_RADIUS: f32 = 7.0;
-/// Icon box side length, centred inside the row.
-pub const ICON_SIZE: f32 = 20.0;
-/// Distance from the icon box's centre to the row's left edge.
-const ICON_CENTER_X: f32 = 17.0;
-/// Left edge of the label, past the icon.
-pub const LABEL_INSET: f32 = 33.0;
+impl SourceListMetrics {
+    /// The height of `item`'s row: a heading's, or a row's.
+    pub fn item_height(&self, item: &SourceListItem) -> f32 {
+        if item.heading {
+            self.heading_height
+        } else {
+            self.row_height(item.is_two_line())
+        }
+    }
 
-/// Geometry of the list, computed once and shared by [`draw`] and
-/// hit-testing.
+    /// A row's height.
+    pub fn row_height(&self, two_line: bool) -> f32 {
+        if two_line {
+            self.two_line_height
+        } else {
+            self.item_height
+        }
+    }
+
+    /// The leading icon's square inside `item`, centred vertically.
+    pub fn icon_rect(&self, item: Rect, two_line: bool) -> Rect {
+        let side = if two_line {
+            self.two_line_icon_size
+        } else {
+            self.icon_size
+        };
+        let left = item.left + self.icon_left_pad(two_line);
+        Rect::from_xywh(left, item.center_y() - side / 2.0, side, side)
+    }
+
+    /// Where the label starts inside `item`.
+    pub fn label_x(&self, item: Rect, two_line: bool) -> f32 {
+        self.icon_rect(item, two_line).right + self.icon_label_gap
+    }
+
+    /// The square of trailing glyph `n`, counted from the right end of `item`.
+    pub fn trailing_rect(&self, item: Rect, n: usize) -> Rect {
+        let right =
+            item.right - self.trailing_pad - n as f32 * (self.trailing_size + self.trailing_gap);
+        let half = self.trailing_size / 2.0;
+        Rect::from_ltrb(
+            right - self.trailing_size,
+            item.center_y() - half,
+            right,
+            item.center_y() + half,
+        )
+    }
+
+    /// A two-line row's icon sits as far from the left as from the top, so
+    /// the larger icon keeps even margins around it.
+    fn icon_left_pad(&self, two_line: bool) -> f32 {
+        if two_line {
+            (self.two_line_height - self.two_line_icon_size) / 2.0
+        } else {
+            self.leading_pad
+        }
+    }
+}
+
+/// Geometry of the list, computed once and shared by [`draw`], hit-testing,
+/// the keyboard and accessibility.
 #[derive(Debug, Clone)]
 pub struct SourceListLayout {
     pub item_rects: Vec<Rect>,
+    /// Which rows are two-line, by index.
+    pub two_line: Vec<bool>,
+    /// Which rows are headings, by index; they are never hit.
+    pub headings: Vec<bool>,
+    pub size: SourceListSize,
 }
 
 impl SourceListLayout {
-    /// Lay out `count` items in a list of `width`, top-left at `(x, y)`.
+    /// Lay out `count` one-line items of the regular size in a list of
+    /// `width`, top-left at `(x, y)`.
     pub fn compute(count: usize, x: f32, y: f32, width: f32) -> Self {
-        let item_rects = (0..count)
-            .map(|i| {
-                Rect::from_xywh(
-                    x + ITEM_INSET,
-                    y + i as f32 * ITEM_STEP,
-                    width - ITEM_INSET * 2.0,
-                    ITEM_HEIGHT,
-                )
+        let items = vec![SourceListItem::default(); count];
+        Self::build(SourceListSize::Regular, &items, x, y, None, width)
+    }
+
+    /// Lay out `items` at `size` in a list of `width`, top-left at `(x, y)`.
+    /// A row with a subtitle gets the two-line height.
+    pub fn for_items(
+        size: SourceListSize,
+        items: &[SourceListItem],
+        x: f32,
+        y: f32,
+        width: f32,
+    ) -> Self {
+        Self::build(size, items, x, y, None, width)
+    }
+
+    /// Lay out `items` at `size` between `top` and `bottom`, the rows
+    /// [pinned](SourceListItem::pinned_to_bottom) to the foot stacked up from
+    /// `bottom` and the others down from `top`.
+    pub fn for_items_in(
+        size: SourceListSize,
+        items: &[SourceListItem],
+        x: f32,
+        top: f32,
+        bottom: f32,
+        width: f32,
+    ) -> Self {
+        Self::build(size, items, x, top, Some(bottom), width)
+    }
+
+    fn build(
+        size: SourceListSize,
+        items: &[SourceListItem],
+        x: f32,
+        y: f32,
+        bottom: Option<f32>,
+        width: f32,
+    ) -> Self {
+        let m = size.metrics();
+        let pinned_h: f32 = items
+            .iter()
+            .filter(|i| i.pinned)
+            .map(|i| m.item_height(i) + m.item_gap)
+            .sum();
+        let mut top = y;
+        let mut foot = bottom.map(|b| b - pinned_h);
+        let item_rects = items
+            .iter()
+            .map(|item| {
+                let h = m.item_height(item);
+                let at = match (&mut foot, item.pinned) {
+                    (Some(foot), true) => foot,
+                    _ => &mut top,
+                };
+                let rect = Rect::from_xywh(x + m.item_inset, *at, width - m.item_inset * 2.0, h);
+                *at += h + m.item_gap;
+                rect
             })
             .collect();
-        Self { item_rects }
+        Self {
+            item_rects,
+            two_line: items.iter().map(SourceListItem::is_two_line).collect(),
+            headings: items.iter().map(|i| i.heading).collect(),
+            size,
+        }
+    }
+
+    /// The measurements this layout was made with.
+    pub fn metrics(&self) -> &'static SourceListMetrics {
+        self.size.metrics()
     }
 
     /// Total height from the layout's origin to the last item's bottom.
@@ -59,25 +350,42 @@ impl SourceListLayout {
         self.item_rects.last().map_or(0.0, |r| r.bottom)
     }
 
-    /// Item index under `(px, py)`, if any.
+    /// Item index under `(px, py)`, if any; a heading is never hit.
     pub fn item_at(&self, px: f32, py: f32) -> Option<usize> {
         self.item_rects
             .iter()
-            .position(|r| r.contains(Point::new(px, py)))
+            .enumerate()
+            .position(|(i, r)| !self.is_heading(i) && r.contains(Point::new(px, py)))
+    }
+
+    /// Whether row `index` is a heading.
+    pub fn is_heading(&self, index: usize) -> bool {
+        self.headings.get(index).copied().unwrap_or(false)
+    }
+
+    /// The leading icon's square for row `index`.
+    pub fn icon_rect(&self, index: usize) -> Option<Rect> {
+        let item = *self.item_rects.get(index)?;
+        Some(self.metrics().icon_rect(item, self.is_two_line(index)))
+    }
+
+    /// Draws the keyboard focus ring around row `index`, following the
+    /// selection pill's shape.
+    pub fn draw_focus_ring(&self, canvas: &Canvas, index: usize) {
+        if let Some(item) = self.item_rects.get(index) {
+            crate::focus::draw_focus_ring(canvas, *item, self.metrics().corner_radius);
+        }
+    }
+
+    fn is_two_line(&self, index: usize) -> bool {
+        self.two_line.get(index).copied().unwrap_or(false)
     }
 }
 
-/// Square the icon closure paints into, centred vertically in `item` at
-/// [`ICON_CENTER_X`] from its left edge.
+/// Square the leading icon of a regular one-line row paints into, centred
+/// vertically in `item`.
 pub fn icon_rect(item: Rect) -> Rect {
-    let half = ICON_SIZE / 2.0;
-    let cy = item.center_y();
-    Rect::from_ltrb(
-        item.left + ICON_CENTER_X - half,
-        cy - half,
-        item.left + ICON_CENTER_X + half,
-        cy + half,
-    )
+    REGULAR.icon_rect(item, false)
 }
 
 /// Icon and label colour for a row: white on the selected fill, the theme's
@@ -87,6 +395,26 @@ pub fn item_tint(theme: &Theme, selected: bool) -> Color {
         Color::WHITE
     } else {
         theme.text_primary
+    }
+}
+
+/// The leading icon's colour: the accent, so the sidebar's glyphs carry the
+/// user's colour, or white on the selected fill.
+pub fn icon_tint(theme: &Theme, selected: bool) -> Color {
+    if selected {
+        Color::WHITE
+    } else {
+        theme.accent
+    }
+}
+
+/// The subtitle's colour: secondary text, or a softened white on the
+/// selected fill.
+fn subtitle_tint(theme: &Theme, selected: bool) -> Color {
+    if selected {
+        Color::from_argb(0xC8, 0xFF, 0xFF, 0xFF)
+    } else {
+        theme.text_secondary
     }
 }
 
@@ -102,10 +430,12 @@ fn text_centered_y(
     text: &str,
     x: f32,
     cy: f32,
-    style: crate::typography::TextStyle,
+    max_w: f32,
+    style: TextStyle,
     color: Color,
 ) {
     use crate::common::Renderable;
+    let text = ellipsize(&style.font(), text, max_w.max(0.0));
     crate::components::label::Label::new(text)
         .with_style(style)
         .with_color(color)
@@ -114,44 +444,121 @@ fn text_centered_y(
 }
 
 /// Draw the list: the selected row's filled highlight, then every item's
-/// icon and label tinted to contrast against it.
+/// glyphs, label and subtitle tinted to contrast against it.
 ///
-/// `icon` is called once per item with the square from [`icon_rect`] and the
-/// tint from [`item_tint`] — the component owns none of the glyph set (see
-/// `otto-settings`'s own `glyphs` module), only where it goes and what
-/// colour it should be.
+/// `glyph` is called for each row's leading icon and each of its trailing
+/// glyphs, with the square to paint into and its tint: [`icon_tint`] for the
+/// leading icon, [`item_tint`] for trailing glyphs. The
+/// component owns no glyph set, only where each goes and what colour it is.
 pub fn draw(
     canvas: &Canvas,
     layout: &SourceListLayout,
     items: &[SourceListItem],
     selected: Option<usize>,
     theme: &Theme,
-    mut icon: impl FnMut(&Canvas, usize, Rect, Color),
+    mut glyph: impl FnMut(&Canvas, usize, GlyphSlot, Rect, Color),
 ) {
+    let m = layout.metrics();
+    let mut ruled = false;
     for (i, (item, rect)) in items.iter().zip(&layout.item_rects).enumerate() {
+        if item.heading {
+            // Low in its band, so the room above parts the group from the
+            // rows before; inset to line up with the rows' icons.
+            let x = rect.left + m.leading_pad;
+            let style = m.heading_style;
+            text_centered_y(
+                canvas,
+                &item.label.to_uppercase(),
+                x,
+                rect.bottom - style.size,
+                rect.right - x,
+                style,
+                theme.text_tertiary,
+            );
+            continue;
+        }
+        if item.pinned && !ruled {
+            // A hairline over the foot, parting it from the destinations.
+            ruled = true;
+            let y = rect.top - m.item_gap - 4.0;
+            let mut paint = fill(theme.hairline);
+            paint.set_stroke_width(1.0);
+            canvas.draw_line(Point::new(rect.left, y), Point::new(rect.right, y), &paint);
+        }
         let is_selected = selected == Some(i);
         if is_selected {
             canvas.draw_rrect(
-                RRect::new_rect_xy(*rect, CORNER_RADIUS, CORNER_RADIUS),
+                RRect::new_rect_xy(*rect, m.corner_radius, m.corner_radius),
                 &fill(theme.material_selection_focused),
             );
         }
 
+        let two_line = item.is_two_line();
         let tint = item_tint(theme, is_selected);
-        icon(canvas, i, icon_rect(*rect), tint);
-
-        text_centered_y(
+        glyph(
             canvas,
-            &item.label,
-            rect.left + LABEL_INSET,
-            rect.center_y(),
-            if is_selected {
-                styles::SUBHEADLINE_EMPHASIZED
-            } else {
-                styles::SUBHEADLINE
-            },
-            tint,
+            i,
+            GlyphSlot::Leading,
+            m.icon_rect(*rect, two_line),
+            icon_tint(theme, is_selected),
         );
+        for n in 0..item.trailing {
+            glyph(
+                canvas,
+                i,
+                GlyphSlot::Trailing(n),
+                m.trailing_rect(*rect, n),
+                tint,
+            );
+        }
+
+        let x = m.label_x(*rect, two_line);
+        let text_right = if item.trailing > 0 {
+            m.trailing_rect(*rect, item.trailing - 1).left - m.trailing_gap
+        } else {
+            rect.right - m.trailing_pad
+        };
+        let title = if is_selected {
+            m.title_selected
+        } else {
+            m.title
+        };
+        match &item.subtitle {
+            None => text_centered_y(
+                canvas,
+                &item.label,
+                x,
+                rect.center_y(),
+                text_right - x,
+                title,
+                tint,
+            ),
+            Some(subtitle) => {
+                // The two lines, at 1.2 line height and 1pt apart, centred
+                // as a block in the row.
+                let block = 1.2 * (title.size + m.subtitle.size) + 1.0;
+                let top = rect.center_y() - block / 2.0;
+                let bottom = rect.center_y() + block / 2.0;
+                text_centered_y(
+                    canvas,
+                    &item.label,
+                    x,
+                    top + 0.6 * title.size,
+                    text_right - x,
+                    title,
+                    tint,
+                );
+                text_centered_y(
+                    canvas,
+                    subtitle,
+                    x,
+                    bottom - 0.6 * m.subtitle.size,
+                    text_right - x,
+                    m.subtitle,
+                    subtitle_tint(theme, is_selected),
+                );
+            }
+        }
     }
 }
 
@@ -168,15 +575,29 @@ mod tests {
     }
 
     #[test]
-    fn layout_steps_items_evenly() {
+    fn regular_layout_keeps_its_rows() {
         let layout = SourceListLayout::compute(3, 0.0, 10.0, 200.0);
         assert_eq!(layout.item_rects.len(), 3);
         assert_eq!(layout.item_rects[0].top, 10.0);
-        assert_eq!(
-            layout.item_rects[1].top - layout.item_rects[0].top,
-            ITEM_STEP
-        );
+        assert_eq!(layout.item_rects[0].height(), 30.0);
+        assert_eq!(layout.item_rects[1].top - layout.item_rects[0].top, 32.0);
+        assert_eq!(layout.item_rects[0].left, 8.0);
         assert_eq!(layout.height(), layout.item_rects[2].bottom);
+    }
+
+    #[test]
+    fn large_rows_are_taller_and_two_line_rows_taller_still() {
+        let items = vec![
+            SourceListItem::new("Graph"),
+            SourceListItem::new("Speakers").with_subtitle("2 in · 2 out"),
+        ];
+        let layout = SourceListLayout::for_items(SourceListSize::Large, &items, 0.0, 0.0, 200.0);
+        let m = SourceListSize::Large.metrics();
+        assert_eq!(layout.item_rects[0].height(), m.item_height);
+        assert_eq!(layout.item_rects[1].height(), m.two_line_height);
+        assert_eq!(layout.item_rects[1].top, m.item_height + m.item_gap);
+        assert_eq!(layout.icon_rect(1).unwrap().width(), m.two_line_icon_size);
+        assert_eq!(layout.icon_rect(0).unwrap().width(), m.icon_size);
     }
 
     #[test]
@@ -190,11 +611,51 @@ mod tests {
 
     #[test]
     fn icon_rect_is_centred_in_the_item() {
-        let item = Rect::from_xywh(0.0, 0.0, 200.0, ITEM_HEIGHT);
+        let item = Rect::from_xywh(0.0, 0.0, 200.0, 30.0);
         let icon = icon_rect(item);
-        assert_eq!(icon.width(), ICON_SIZE);
-        assert_eq!(icon.height(), ICON_SIZE);
+        assert_eq!(icon.width(), 20.0);
+        assert_eq!(icon.height(), 20.0);
         assert_eq!(icon.center_y(), item.center_y());
+        assert_eq!(icon.center_x(), 17.0);
+    }
+
+    #[test]
+    fn trailing_glyphs_run_right_to_left_inside_the_row() {
+        let m = SourceListSize::Large.metrics();
+        let item = Rect::from_xywh(0.0, 0.0, 200.0, m.item_height);
+        let first = m.trailing_rect(item, 0);
+        let second = m.trailing_rect(item, 1);
+        assert_eq!(first.right, item.right - m.trailing_pad);
+        assert!(second.right <= first.left);
+        assert_eq!(first.center_y(), item.center_y());
+    }
+
+    #[test]
+    fn headings_are_never_hit_and_pinned_rows_sit_at_the_foot() {
+        let items = vec![
+            SourceListItem::new("Mixer"),
+            SourceListItem::heading("Advanced"),
+            SourceListItem::new("Graph"),
+            SourceListItem::new("Status").pinned_to_bottom(),
+        ];
+        let m = SourceListSize::Large.metrics();
+        let layout =
+            SourceListLayout::for_items_in(SourceListSize::Large, &items, 0.0, 0.0, 500.0, 200.0);
+        let heading = layout.item_rects[1];
+        assert_eq!(heading.height(), m.heading_height);
+        assert_eq!(layout.item_at(heading.center_x(), heading.center_y()), None);
+        assert_eq!(layout.item_rects[2].top, heading.bottom + m.item_gap);
+        let foot = layout.item_rects[3];
+        assert_eq!(foot.bottom + m.item_gap, 500.0);
+        assert_eq!(layout.item_at(foot.center_x(), foot.center_y()), Some(3));
+        assert!(!items[1].is_selectable());
+
+        // Without a foot, a pinned row flows after the others.
+        let flowing = SourceListLayout::for_items(SourceListSize::Large, &items, 0.0, 0.0, 200.0);
+        assert_eq!(
+            flowing.item_rects[3].top,
+            flowing.item_rects[2].bottom + m.item_gap
+        );
     }
 
     #[test]
@@ -202,20 +663,31 @@ mod tests {
         let theme = Theme::light();
         assert_eq!(item_tint(&theme, true), Color::WHITE);
         assert_eq!(item_tint(&theme, false), theme.text_primary);
+        assert_eq!(icon_tint(&theme, true), Color::WHITE);
+        assert_eq!(icon_tint(&theme, false), theme.accent);
     }
 
     #[test]
     fn draw_smoke_test_does_not_panic() {
-        let mut surface = skia_safe::surfaces::raster_n32_premul((100, 100)).unwrap();
-        let items = items();
-        let layout = SourceListLayout::compute(items.len(), 0.0, 0.0, 100.0);
-        draw(
-            surface.canvas(),
-            &layout,
-            &items,
-            Some(1),
-            &Theme::light(),
-            |_, _, _, _| {},
+        let mut surface = skia_safe::surfaces::raster_n32_premul((200, 200)).unwrap();
+        let mut items = items();
+        items.push(
+            SourceListItem::new("Mic")
+                .with_subtitle("1 in")
+                .with_trailing(2),
         );
+        items.push(SourceListItem::heading("Advanced"));
+        items.push(SourceListItem::new("Status").pinned_to_bottom());
+        for size in [SourceListSize::Regular, SourceListSize::Large] {
+            let layout = SourceListLayout::for_items(size, &items, 0.0, 0.0, 200.0);
+            draw(
+                surface.canvas(),
+                &layout,
+                &items,
+                Some(1),
+                &Theme::light(),
+                |_, _, _, _, _| {},
+            );
+        }
     }
 }

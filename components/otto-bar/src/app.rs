@@ -40,6 +40,9 @@ const OTTO_MENU: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0
 /// The network indicator's.
 const NETWORK: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0005);
 
+/// The sound indicator's.
+const SOUND: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0006);
+
 /// One menu's, by its place on the bar.
 fn menu_focus(index: usize) -> otto_kit::focus::FocusId {
     otto_kit::focus::FocusId::new(format!("menu-{index}"))
@@ -133,6 +136,9 @@ pub struct TopBarApp {
     /// last update, to scan when it opens.
     network_submenu_was_open: bool,
     last_network_gen: u64,
+    /// The sound menu, while it is open.
+    open_sound_menu: Option<ContextMenu>,
+    last_sound_gen: u64,
     /// The Wi-Fi password dialog, while it is up.
     join_dialog: Option<crate::join_dialog::JoinDialog>,
     /// The Otto menu, hanging from the mark at the left end, while it is open.
@@ -170,6 +176,8 @@ impl TopBarApp {
             open_network_menu: None,
             network_submenu_was_open: false,
             last_network_gen: 0,
+            open_sound_menu: None,
+            last_sound_gen: 0,
             join_dialog: None,
             open_otto_menu: None,
             app_name_menu_open: false,
@@ -743,6 +751,101 @@ impl TopBarApp {
         }
     }
 
+    fn close_sound_menu(&mut self) {
+        if let Some(menu) = self.open_sound_menu.take() {
+            menu.hide_animated();
+        }
+        if let Some(ref surface) = self.right_surface {
+            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+        }
+        if self.right.sound_active {
+            self.right.sound_active = false;
+            self.redraw_right();
+        }
+    }
+
+    /// Open the sound menu, or close it when it is open: the same toggle for
+    /// a pointer and for a screen reader.
+    fn toggle_sound_menu(&mut self) {
+        let was_open = self.open_sound_menu.is_some();
+        self.close_menu();
+        self.close_power_menu();
+        self.close_layout_menu();
+        self.close_network_menu();
+        self.close_sound_menu();
+        if !was_open {
+            self.show_sound_menu();
+        }
+    }
+
+    /// Show the sound menu: output, input, the apps playing, and the way to
+    /// the Mixer app.
+    fn show_sound_menu(&mut self) {
+        let Some(ref surface) = self.right_surface else {
+            return;
+        };
+        let Some((ix, iy, iw, ih)) = self.right.sound_pill_rect() else {
+            return;
+        };
+        let items = crate::sound::menu_items(&crate::sound::snapshot());
+        let menu = ContextMenu::new(items)
+            .on_item_click(|action_id| {
+                if crate::sound::activate(action_id) {
+                    let (program, args) = crate::sound::audio_app();
+                    spawn_detached(program, args);
+                }
+            })
+            .on_slider(crate::sound::slider_changed);
+
+        let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) else {
+            return;
+        };
+        let style = otto_kit::components::context_menu::ContextMenuStyle::default();
+        let state = menu.state();
+        let menu_items = state.borrow().items_at_depth(0).to_vec();
+        let (menu_w, menu_h) =
+            otto_kit::components::context_menu::ContextMenuRenderer::measure_items(
+                &menu_items,
+                &style,
+            );
+        positioner.set_size(menu_w as i32, menu_h as i32);
+        positioner.set_anchor_rect(ix as i32, iy as i32, iw as i32, ih as i32);
+        positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
+        positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
+        positioner.set_offset(0, 1);
+        positioner.set_constraint_adjustment(
+            xdg_positioner::ConstraintAdjustment::SlideX
+                | xdg_positioner::ConstraintAdjustment::SlideY
+                | xdg_positioner::ConstraintAdjustment::FlipX
+                | xdg_positioner::ConstraintAdjustment::FlipY,
+        );
+
+        menu.show_for_layer(&surface.layer_surface(), &positioner);
+        surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        self.open_sound_menu = Some(menu);
+        self.right.sound_active = true;
+        self.redraw_right();
+    }
+
+    /// The graph changed under an open sound menu: a volume moved, an app
+    /// started playing. Redrawn in place, or shown again at its new size
+    /// when rows came or went. A menu whose indicator went away closes with
+    /// it.
+    fn refresh_sound_menu(&mut self) {
+        let Some(menu) = self.open_sound_menu.as_ref() else {
+            return;
+        };
+        if !crate::sound::visible() {
+            self.close_sound_menu();
+            return;
+        }
+        let items = crate::sound::menu_items(&crate::sound::snapshot());
+        if let MenuRefresh::Resized = menu.refresh(items) {
+            self.close_sound_menu();
+            self.show_sound_menu();
+        }
+    }
+
     /// Open the password dialog for `purpose`. Only called with none up:
     /// the next question waits in its queue until this one ends.
     fn open_join_dialog(&mut self, purpose: crate::join_dialog::Purpose) {
@@ -937,6 +1040,12 @@ impl TopBarApp {
         let x = event.position.0 as f32;
 
         // The layout indicator, like the battery, owns its slice of the panel.
+        if self.right.sound_at(x) {
+            self.toggle_sound_menu();
+            return;
+        }
+        self.close_sound_menu();
+
         if self.right.network_at(x) {
             self.toggle_network_menu();
             return;
@@ -1003,6 +1112,10 @@ impl TopBarApp {
     /// Handle middle-click on the right panel: call SNI SecondaryActivate.
     fn handle_right_middle_click(&mut self, event: &PointerEvent) {
         let x = event.position.0 as f32;
+        if self.right.sound_at(x) {
+            crate::sound::toggle_mute();
+            return;
+        }
         if let Some(index) = self.right.tray_item_at(x) {
             crate::tray::secondary_activate_item(index, x as i32, event.position.1 as i32);
         }
@@ -1167,6 +1280,7 @@ impl App for TopBarApp {
         crate::power::spawn_power_watcher();
         crate::keyboard_layout::spawn_watcher();
         crate::network::spawn_watcher();
+        crate::sound::spawn_watcher();
         crate::clock::spawn_watcher();
 
         Ok(())
@@ -1253,6 +1367,14 @@ impl App for TopBarApp {
             return;
         }
 
+        if let Some(ref mut menu) = self.open_sound_menu {
+            menu.handle_key(key, state);
+            if !menu.is_visible() {
+                self.close_sound_menu();
+            }
+            return;
+        }
+
         if let Some(ref mut menu) = self.open_otto_menu {
             menu.handle_key(key, state);
             if !menu.is_visible() {
@@ -1304,6 +1426,9 @@ impl App for TopBarApp {
         }
         if self.open_network_menu.is_some() {
             self.close_network_menu();
+        }
+        if self.open_sound_menu.is_some() {
+            self.close_sound_menu();
         }
         if self.open_otto_menu.is_some() {
             self.close_otto_menu();
@@ -1450,6 +1575,25 @@ impl App for TopBarApp {
             );
         }
 
+        // The sound indicator reads as the output, its volume and whether it
+        // is muted, and is announced as that changes.
+        if let Some((x, y, w, h)) = self.right.sound_rect() {
+            let label = crate::sound::label();
+            tree.control(
+                SOUND,
+                Rect::from_xywh(x, y, w, h),
+                Role::Button,
+                true,
+                |node| {
+                    node.set_label(label);
+                    node.set_expanded(self.open_sound_menu.is_some());
+                    node.set_has_popup(otto_kit::accessibility::HasPopup::Menu);
+                    node.add_action(Action::Click);
+                    node.set_live(otto_kit::accessibility::Live::Polite);
+                },
+            );
+        }
+
         // The layout indicator reads as the layout's name, not its code, and
         // is announced when it changes: a switch from a key combination is
         // otherwise silent.
@@ -1551,6 +1695,11 @@ impl App for TopBarApp {
             return;
         }
 
+        if node == otto_kit::accessibility::node_id(SOUND) {
+            self.toggle_sound_menu();
+            return;
+        }
+
         if node == otto_kit::accessibility::node_id(KEYBOARD_LAYOUT) {
             let was_open = self.open_layout_menu.is_some();
             self.close_layout_menu();
@@ -1618,6 +1767,14 @@ impl App for TopBarApp {
             self.close_network_menu();
             dirty = true;
         }
+        let sound_menu_gone = self
+            .open_sound_menu
+            .as_ref()
+            .is_some_and(|m| !m.is_visible());
+        if sound_menu_gone {
+            self.close_sound_menu();
+            dirty = true;
+        }
         let otto_menu_gone = self
             .open_otto_menu
             .as_ref()
@@ -1677,6 +1834,14 @@ impl App for TopBarApp {
             self.refresh_network_menu();
             dirty = true;
         }
+        // A volume, a default or an app playing changed, or the setting.
+        let sound_gen = crate::sound::generation();
+        if sound_gen != self.last_sound_gen {
+            self.last_sound_gen = sound_gen;
+            self.refresh_sound_menu();
+            dirty = true;
+        }
+
         // The connecting animation moved on a step.
         if crate::network::step_changed() {
             self.redraw_right();
@@ -1904,6 +2069,11 @@ impl App for TopBarApp {
             if on_left && matches!(event.kind, PointerEventKind::Motion { .. }) {
                 self.handle_left_motion(event.position.0 as f32);
             }
+            if let PointerEventKind::Axis { vertical, .. } = event.kind {
+                if on_right && self.right.sound_at(event.position.0 as f32) {
+                    crate::sound::scroll(vertical.value120, vertical.absolute);
+                }
+            }
             if let PointerEventKind::Press { button, .. } = event.kind {
                 if on_right {
                     match button {
@@ -2039,19 +2209,26 @@ fn power_menu_items(cpu: &crate::power::Cpu) -> Vec<KitMenuItem> {
 }
 
 /// Launch the settings app (`battery.settings_command`) with `extra` after
-/// its own arguments.
-///
-/// Detached into its own process group with no stdio, and reaped on a thread
-/// so each launch does not leave a zombie behind until the bar exits.
+/// its own arguments, through [`spawn_detached`].
 fn open_settings(extra: &[&str]) {
-    use std::os::unix::process::CommandExt;
     let cfg = battery_config();
     let Some((program, args)) = cfg.settings_command.split_first() else {
         return;
     };
+    let args: Vec<&str> = args
+        .iter()
+        .map(String::as_str)
+        .chain(extra.iter().copied())
+        .collect();
+    spawn_detached(program, &args);
+}
+
+/// Run `program` with `args`, detached into its own process group with no
+/// stdio, and reaped on a thread so a launch leaves no zombie behind.
+fn spawn_detached(program: &str, args: &[&str]) {
+    use std::os::unix::process::CommandExt;
     let spawned = std::process::Command::new(program)
         .args(args)
-        .args(extra)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -2063,7 +2240,7 @@ fn open_settings(extra: &[&str]) {
                 let _ = child.wait();
             });
         }
-        Err(e) => tracing::warn!("battery.settings_command: {e}"),
+        Err(e) => tracing::warn!("{program}: {e}"),
     }
 }
 

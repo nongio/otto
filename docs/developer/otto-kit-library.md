@@ -322,12 +322,13 @@ if let SliderResponse::Changed(v) = drag.on_pointer_down(rect, 0.0, 100.0, None,
 
 ![A three-way text control and a three-way glyph control](images/otto-kit/segmented.png)
 
-A row of mutually exclusive choices on one track, the chosen one raised on a
-pill. Segments are words or Solar glyphs. Use it for a small, fixed set of
+A row of mutually exclusive choices on a recessed track, the chosen one raised
+on a lighter pill with a hairline edge, its label in primary ink at medium
+weight. Segments are words or Solar glyphs. Use it for a small, fixed set of
 modes, such as a view switcher.
 
 - **Shape:** draw function. `segmented::draw(canvas, rect, &segments, selected, interaction, theme)`, with `segment_at` for hits.
-- **Types:** `Segment`, `SegmentedInteraction`, `draw`, `segment_at`, `segment_rect`, `HEIGHT`.
+- **Types:** `Segment`, `SegmentedInteraction`, `draw`, `segment_at`, `segment_rect`, `HEIGHT`; `label_style`, `label_color`, `LABEL` and `LABEL_CHOSEN` for a caller drawing its own labels over the track.
 - **Source:** [`segmented/`](../../components/otto-kit/src/components/segmented/)
 - **Used by:** otto-files.
 
@@ -522,23 +523,29 @@ let row = layout.row_at(x, y);
 
 A sidebar of places or sections with an icon and a label each, the selected
 one on the accent. The caller draws the icons, in the tint the list hands it.
+Two sizes: `SourceListSize::Regular`, the compact default, and
+`SourceListSize::Large`, with taller rows and a 14pt label for a window whose
+sidebar is a handful of destinations. Either size takes an optional subtitle
+under the label (a two-line row: taller, with a larger leading icon) and small
+trailing glyphs at the row's right end. Every measurement lives in the size's
+`SourceListMetrics`.
 
-- **Shape:** draw function over a layout. `SourceListLayout::compute(count, x, y, width)`, then `source_list::draw(canvas, &layout, &items, selected, theme, |canvas, index, rect, tint| ..)`.
-- **Types:** `SourceListItem`, `SourceListLayout`, `draw`, `icon_rect`, `item_tint`.
+- **Shape:** draw function over a layout. `SourceListLayout::compute(count, x, y, width)` for regular one-line rows, or `SourceListLayout::for_items(size, &items, x, y, width)`; then `source_list::draw(canvas, &layout, &items, selected, theme, |canvas, index, slot, rect, tint| ..)`, where `slot` is `GlyphSlot::Leading` or `GlyphSlot::Trailing(n)`. `layout.draw_focus_ring(canvas, index)` draws the keyboard ring in the pill's shape.
+- **Types:** `SourceListItem` (`with_subtitle`, `with_trailing`), `SourceListLayout`, `SourceListSize`, `SourceListMetrics`, `GlyphSlot`, `draw`, `icon_rect`, `item_tint`.
 - **Source:** [`source_list/`](../../components/otto-kit/src/components/source_list/)
-- **Used by:** no crate yet; `examples/sidebar_window.rs` and `examples/list_gallery.rs` show it.
+- **Used by:** otto-mixer and otto-settings, both at the large size; `examples/sidebar_window.rs` and `examples/list_gallery.rs` show it.
 
 ```rust
-use otto_kit::components::source_list;
+use otto_kit::components::source_list::{self, GlyphSlot, SourceListItem, SourceListLayout, SourceListSize};
 
 let items = vec![
-    SourceListItem::new("Appearance"),
-    SourceListItem::new("Displays"),
-    SourceListItem::new("Dock"),
+    SourceListItem::new("Graph"),
+    SourceListItem::new("Built-in Audio").with_subtitle("2 in · 2 out").with_trailing(1),
+    SourceListItem::new("Effects"),
 ];
-let layout = SourceListLayout::compute(items.len(), 0.0, 0.0, 200.0);
-source_list::draw(canvas, &layout, &items, Some(1), theme, |canvas, index, rect, tint| {
-    // Draw item `index`'s icon into `rect`, in `tint`.
+let layout = SourceListLayout::for_items(SourceListSize::Large, &items, 0.0, 0.0, 216.0);
+source_list::draw(canvas, &layout, &items, Some(1), theme, |canvas, index, slot, rect, tint| {
+    // Draw item `index`'s leading icon or trailing glyph `slot` into `rect`, in `tint`.
 });
 
 // Input: the item a press landed on.

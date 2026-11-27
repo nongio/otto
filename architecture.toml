@@ -53,7 +53,13 @@ forbid_deps = [
 [[layer]]
 name = "service"
 description = "Clients of system services with no toolkit: search, the agents protocol, PDFium"
-crates = ["otto-search", "otto-agents-client", "otto-pdf", "otto-network"]
+crates = [
+    "otto-search",
+    "otto-agents-client",
+    "otto-pdf",
+    "otto-network",
+    "otto-audio-graph",
+]
 may_use = ["foundation"]
 lib_lints = ["unreachable_pub"]
 forbid_deps = [
@@ -105,6 +111,7 @@ crates = [
     "otto-setup",
     "otto-agents",
     "otto-rdp",
+    "otto-mixer",
     "xdg-desktop-portal-otto",
 ]
 may_use = ["foundation", "service", "toolkit", "kit"]

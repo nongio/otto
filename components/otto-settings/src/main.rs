@@ -1246,6 +1246,9 @@ fn select_pane(app: &SettingsApp, index: usize) -> bool {
     *current = index;
     drop(current);
 
+    // Picked with the keyboard or from search, the row may be scrolled off.
+    let height = app.size.lock().unwrap().1;
+    view::reveal_sidebar_row(index, view::pane_count(), height);
     if let Some(window) = app.window.as_ref() {
         window.set_title(&window_title(index));
     }
@@ -2515,7 +2518,21 @@ impl App for SettingsApp {
                             .panel(win_w, win_h)
                             .is_some_and(|panel| panel.contains(otto_kit::skia::Point::new(x, y)));
                         if current_sheet().is_none() && !over_list {
-                            handle_wheel(&pane, vertical);
+                            // Over the sidebar the wheel scrolls its list;
+                            // anywhere else, the pane.
+                            if x < view::SIDEBAR_W {
+                                if view::sidebar_wheel(
+                                    vertical.absolute as f32,
+                                    vertical.discrete != 0,
+                                    vertical.stop,
+                                    view::pane_count(),
+                                    win_h,
+                                ) {
+                                    needs_redraw = true;
+                                }
+                            } else {
+                                handle_wheel(&pane, vertical);
+                            }
                         }
                     }
                     PointerEventKind::Release { .. } => {
@@ -3164,6 +3181,8 @@ impl App for SettingsApp {
         *size = (width, height);
         drop(size);
         self.search.lock().unwrap().fit(height);
+        // A taller window may leave the sidebar scrolled past its end.
+        view::set_sidebar_scroll(view::sidebar_scroll(), view::pane_count(), height);
 
         // The pane's surfaces are placed against the window's size, so they
         // have to be told about the new one and repainted at it.
@@ -3187,6 +3206,14 @@ impl App for SettingsApp {
             self.reveal(target);
         }
         self.scroll_focus_into_view();
+
+        // The sidebar coasts on the app's clock once the fingers lift.
+        let height = self.size.lock().unwrap().1;
+        if view::sidebar_tick(view::pane_count(), height) {
+            if let Some(window) = &self.window {
+                window.request_frame();
+            }
+        }
 
         // The Search pane polls the file index only while it is on screen.
         panes::search::set_shown(*self.selected.lock().unwrap() == model::SEARCH_PANE);
@@ -3839,6 +3866,7 @@ impl App for SettingsApp {
         // A blinking caret needs one too: nothing else wakes the loop while
         // the user is looking at a field they have stopped typing into.
         let animating = self.pane_busy
+            || view::sidebar_scroll_animating()
             || self
                 .pane
                 .borrow()

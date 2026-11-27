@@ -1097,6 +1097,15 @@ bar-logout-title = Вийти зараз?
 bar-logout-body = Спершу застосунки отримають запит на закриття, щоб незбережене можна було зберегти.
 
 
+## Menus
+##
+## Parts of the menus every app shares.
+
+# Beside a slider in a menu, such as a volume. $percent is a whole number,
+# 0 to 100.
+menu-slider-percent = { $percent } %
+
+
 ## Settings — widgets
 ##
 ## The controls themselves, rather than the settings they edit.
@@ -2260,6 +2269,7 @@ settings-network-wifi-soft-blocked = Вимкнено режимом польо�
 settings-network-current = Мережа
 settings-network-not-connected = Не під’єднано
 settings-show-network = Показувати стан мережі на верхній панелі
+settings-show-sound = Показувати звук на верхній панелі
 settings-group-network-status = Стан
 settings-group-network-known = Відомі мережі
 settings-network-kind-wifi = Wi-Fi
@@ -2386,6 +2396,42 @@ bar-network-settings = Налаштування мережі…
 bar-network-join-other = Під’єднатися до іншої мережі…
 bar-network-ethernet-connected-speed = Ethernet — під’єднано, { $speed }
 bar-network-channel = канал { $channel }
+
+## Top bar — sound
+##
+## The speaker in the top bar and the menu under it.
+
+# Captions over the menu's groups: where sound plays, where it is recorded
+# from, and the apps playing.
+bar-sound-output = Вихід
+bar-sound-input = Вхід
+bar-sound-apps = Застосунки
+# Screen-reader names of the sliders. $app is an app's name, e.g. Firefox.
+bar-sound-output-volume = Гучність виходу
+bar-sound-input-volume = Гучність входу
+bar-sound-app-volume = { $app }: гучність
+# Screen-reader names of the round mute buttons beside the sliders.
+bar-sound-mute-output = Вимкнути звук виходу
+bar-sound-mute-input = Вимкнути звук входу
+bar-sound-mute-app = Вимкнути звук: { $app }
+bar-sound-app-output-default = Типовий
+bar-sound-app-follow-default = Як типовий
+bar-sound-app-output = { $app }: вихід
+# Beside each output and input, in the shortcut column: what kind of device
+# it is. Virtual is one made in software, such as a mix or an effect.
+bar-sound-kind-bluetooth = Bluetooth
+bar-sound-kind-usb = USB
+bar-sound-kind-hdmi = HDMI
+bar-sound-kind-virtual = Віртуальне
+bar-sound-kind-built-in = Вбудоване
+bar-sound-kind-airplay = AirPlay
+# The menu's last row, which opens the Mixer app.
+bar-sound-open-mixer = Відкрити мікшер…
+# What a screen reader calls the indicator. $percent is a whole number and
+# $device the output's name.
+bar-sound-label = Звук, { $percent } %, { $device }
+bar-sound-label-muted = Звук вимкнено, { $device }
+bar-sound-label-none = Звук, немає виходу
 bar-join-title = Під’єднатися до «{ $name }»
 bar-join-body = Введи пароль цієї мережі Wi-Fi.
 bar-join-body-wep = Введи ключ WEP цієї мережі Wi-Fi.
@@ -2411,6 +2457,482 @@ bar-network-signal-good = добрий
 bar-network-signal-excellent = відмінний
 schema-topbar-show-network-label = Показувати стан мережі
 schema-topbar-show-network-description = Індикатор Wi-Fi і дротової мережі на верхній панелі, з меню для під’єднання до мережі. З’являється там, де працює NetworkManager.
+schema-topbar-show-sound-label = Показувати звук
+schema-topbar-show-sound-description = Значок динаміка на верхній панелі, з меню гучності, виходу та входу й застосунків, що відтворюють звук. З’являється там, де працює PipeWire.
+
+## otto-mixer: the PipeWire graph as a patchbay (Graph), and the sound
+## server's rate and buffer size (Engine). A card is about 220 px wide; the
+## toolbar and the banner share one line with their buttons.
+
+audio-title = Мікшер
+audio-window-title = Мікшер Otto — { $pane }
+audio-pane-graph = Граф
+audio-pane-engine = Рушій
+audio-no-server-title = Звуковий сервер не запущено
+audio-no-server-body = Мікшер під’єднається, щойно запуститься PipeWire.
+audio-no-server-start = Запустити PipeWire
+audio-graph-empty = Із цими фільтрами немає що показати
+audio-filter-audio = Аудіо
+audio-filter-midi = MIDI
+audio-filter-video = Відео
+# Zooms the canvas so every card is in view.
+audio-fit = Умістити
+# The toolbar's key to the wires: solid ones are kept by the audio service.
+audio-legend-saved = Збережені
+audio-legend-unsaved = Незбережені
+# Headings over the canvas's default columns.
+audio-column-sources = Джерела
+audio-column-between = Ефекти й віртуальні пристрої
+audio-column-destinations = Призначення
+audio-column-midi-video = MIDI і відео
+# The title bar's readout of the engine, e.g. "48 kHz · 256 · 5.3 ms".
+audio-readout = { $rate } · { $frames } · { $ms } ms
+# Saves every link on the canvas so the audio service puts them back.
+audio-save-routing = Зберегти маршрути
+# On the selected wire.
+audio-save-link = Зберегти зв’язок
+audio-forget-link = Забути
+audio-remove-link = Вилучити
+audio-service-down = Збережені зв’язки не відновлюються, поки служба аудіо вимкнена.
+audio-service-start = Запустити службу
+# The sidebar's foot: whether the audio service is keeping saved links.
+audio-service-on = Служба аудіо працює
+audio-service-off = Служба аудіо вимкнена
+# What a card stands for, under its name.
+audio-role-playing = Відтворює звук
+audio-role-recording = Записує
+audio-role-output-device = Пристрій виведення
+audio-role-input-device = Пристрій введення
+audio-role-virtual-output = Віртуальний вихід
+audio-role-virtual-input = Віртуальний вхід
+audio-role-airplay = Колонка AirPlay
+audio-role-duplex = Вхід і вихід
+audio-role-midi = MIDI
+audio-role-video = Відео
+audio-role-other = Інше
+# A folded row with more channels than fit, e.g. "8 channels".
+audio-channels = { $count ->
+    [one] { $count } канал
+    [few] { $count } канали
+    [many] { $count } каналів
+   *[other] { $count } каналу
+}
+# A sink's monitor ports folded into one row, e.g. "Monitor FL FR".
+audio-monitor = Монітор { $channels }
+audio-state-running = Працює
+audio-state-idle = Простоює
+audio-state-suspended = Призупинено
+audio-state-error = Помилка
+audio-state-creating = Запускається
+audio-detail-app = Програма
+audio-detail-class = Клас медіа
+audio-detail-state = Стан
+# How saved links name this node across plugs and restarts.
+audio-detail-identity = Збережено як
+# Over the details panel's name.
+audio-detail-selected = Вибрано
+audio-detail-format = Формат
+audio-detail-latency = Затримка
+audio-detail-delay = Відставання
+# A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
+audio-detail-channels = { $count ->
+    [one] { $count } канал
+    [few] { $count } канали
+    [many] { $count } каналів
+   *[other] { $count } каналу
+}
+audio-detail-links = Зв’язки
+audio-detail-no-links = Немає зв’язків
+# A connection the audio service keeps.
+audio-detail-saved = Збережено
+# Saves one connection, from the details panel.
+audio-save = Зберегти
+# Connections past the ones listed, e.g. "3 more".
+audio-detail-more-links = Ще { $count }
+# The node's raw PipeWire properties, folded away, e.g. "Properties (42)".
+audio-detail-properties-count = Властивості ({ $count })
+audio-engine-title = Рушій
+audio-engine-rate = Частота дискретизації
+audio-engine-rate-auto = { $rate }, вибрана рушієм
+audio-engine-rate-forced = { $rate }, задана тут
+# Lets the engine pick the value itself.
+audio-engine-auto = Авто
+# A sample rate, e.g. "48 kHz" or "44.1 kHz".
+audio-khz = { $value } kHz
+audio-engine-quantum = Розмір буфера
+# Under the buffer tiles, e.g. "Default 1024, from 32 to 2048 frames".
+audio-engine-quantum-range-short = Типово { $default }, від { $min } до { $max } фреймів
+audio-engine-intro = Як часто працює звуковий сервер і скільки звуку він обробляє за раз.
+audio-engine-latency-now = Поточна затримка
+# e.g. "256 frames at 48000 Hz"
+audio-engine-frames-at = { $frames ->
+    [one] { $frames } фрейм за { $rate } Hz
+    [few] { $frames } фрейми за { $rate } Hz
+    [many] { $frames } фреймів за { $rate } Hz
+   *[other] { $frames } фрейму за { $rate } Hz
+}
+# A value forced in this app rather than left to the engine.
+audio-engine-set-here = Задано тут
+audio-engine-rate-note = Потоки з іншою частотою передискретизуються.
+# Milliseconds, alone after a large number, and with one.
+audio-ms = ms
+audio-ms-value = { $ms } ms
+# A rate in a tight control, e.g. "48k" or "44.1k".
+audio-khz-short = { $value }k
+audio-engine-reset = Скинути
+audio-engine-note = Зміни застосовуються одразу. Служба аудіо відновлює їх після перезапуску звукового сервера.
+audio-pane-devices = Пристрої
+audio-devices-title = Пристрої
+audio-devices-intro = Зміни застосовуються одразу, і звуковий сервер їх запам’ятовує.
+audio-devices-empty = Немає звукових пристроїв
+# Row labels on a device's card.
+audio-devices-profile = Профіль
+audio-devices-codec = Кодек
+audio-devices-output-port = Порт виходу
+audio-devices-input-port = Порт входу
+# Where the device's volume is set: on its own hardware mixer, or in software.
+audio-devices-volume = Керування гучністю
+audio-devices-volume-hardware = Апаратне
+audio-devices-volume-software = Програмне
+# When output and input differ, e.g. "Output: Hardware · Input: Software".
+audio-devices-volume-output = Вихід: { $control }
+audio-devices-volume-input = Вхід: { $control }
+# A port with nothing plugged in, e.g. "Headphones (unplugged)".
+audio-devices-unplugged = { $port } (не під’єднано)
+# Under a Bluetooth device's codecs.
+audio-devices-codec-note = Зміна кодека ненадовго перериває звук.
+# Beside a device's name: the channels it records and plays now, e.g. "2 in · 2 out".
+audio-devices-inputs = { $count } вх.
+audio-devices-outputs = { $count } вих.
+# Beside a device's name when its profile is Off.
+audio-devices-off = Вимк.
+# What a device is, under its name.
+audio-devices-kind-bluetooth = Bluetooth-пристрій
+audio-devices-kind-bluetooth-headphones = Bluetooth-навушники
+audio-devices-kind-bluetooth-headset = Bluetooth-гарнітура
+audio-devices-kind-bluetooth-speaker = Bluetooth-колонка
+audio-devices-kind-usb = USB-аудіо
+audio-devices-kind-built-in = Вбудоване аудіо
+audio-devices-kind-other = Звукова карта
+
+# The AirPlay speakers card under the device cards: a switch that has the
+# audio service look for AirPlay speakers on the network.
+audio-airplay-title = Колонки AirPlay
+audio-airplay-intro = Відтворення на колонках і ресиверах AirPlay у мережі.
+audio-airplay-service-down = Колонки AirPlay з’являються, лише поки працює служба аудіо.
+# { $package } is a package name, such as pipewire-zeroconf.
+audio-airplay-missing-module = Для AirPlay потрібен пакет { $package }, але його не встановлено.
+# The command is typed as is; keep it untranslated.
+audio-airplay-missing-avahi = Щоб знаходити колонки, AirPlay потрібен Avahi. Увімкнути: systemctl enable --now avahi-daemon
+audio-airplay-searching = Пошук колонок у мережі…
+# Beside a speaker that's playing now; the others say audio-airplay-tag.
+audio-airplay-playing = Грає
+audio-airplay-tag = AirPlay
+audio-airplay-delay = Колонки AirPlay відстають приблизно на 2 секунди, тому звук не збігається з відео.
+# The value of the Delay fact in the Graph's details panel.
+audio-airplay-delay-short = Близько 2 с, через мережу
+
+## otto-mixer — Virtual devices: outputs, inputs and loopbacks the audio
+## service makes. The cards are about 260 px wide; the form's labels sit in a
+## column of about 78 px.
+
+audio-pane-virtual = Віртуальні пристрої
+audio-virtual-title = Віртуальні пристрої
+audio-virtual-intro = Виходи, входи й петлі, які створює служба аудіо. Застосунки бачать їх як будь-які інші пристрої.
+audio-virtual-service-down = Віртуальні пристрої існують, лише поки працює служба аудіо.
+audio-virtual-new-heading = Новий віртуальний пристрій
+audio-virtual-name = Назва
+# Greyed out in the empty name field.
+audio-virtual-name-placeholder = Мікс для стриму, Вхід для дзвінків…
+audio-virtual-kind = Тип
+audio-virtual-channels = Канали
+audio-virtual-add = Додати
+audio-virtual-kind-output = Вихід
+audio-virtual-kind-input = Вхід
+# Plays what reaches its input straight out of its output.
+audio-virtual-kind-loopback = Петля
+audio-virtual-about-output = Застосунки відтворюють у нього, як у динамік. Звук виходить через його монітор, щоб інший застосунок міг його записати.
+audio-virtual-about-input = Застосунки записують із нього, як із мікрофона. На вкладці «Граф» до нього можна під’єднати будь-що.
+audio-virtual-about-loopback = Передає вхід просто на вихід. Спочатку ні з чим не зв’язана: обидві сторони зв’язуються на вкладці «Граф».
+# Channel layouts. 5.1 and 7.1 are surround layouts; keep the numbers.
+audio-virtual-mono = Моно
+audio-virtual-stereo = Стерео
+audio-virtual-quad = Квадро
+audio-virtual-surround-51 = 5.1
+audio-virtual-surround-71 = 7.1
+audio-virtual-made-heading = Пристрої
+audio-virtual-none = Віртуальних пристроїв поки немає
+# Under a device's name, e.g. "Output · Stereo".
+audio-virtual-card-kind = { $kind } · { $channels }
+# The service runs but the device has not appeared yet.
+audio-virtual-state-waiting = Створюється
+audio-virtual-state-no-service = Буде створено під час запуску служби аудіо
+audio-virtual-rename = Перейменувати
+audio-virtual-remove = Вилучити
+audio-virtual-save-name = Зберегти
+audio-virtual-cancel = Скасувати
+# Example devices the offscreen preview shows when none are saved.
+audio-virtual-sample-output = Мікс для стриму
+audio-virtual-sample-input = Вхід для дзвінків
+audio-virtual-sample-loopback = Монітор мікрофона
+
+# The Graph section's view switch, in its toolbar: cards and wires, a grid
+# of sources against destinations, or one row per path the sound takes.
+audio-view-patchbay = Патчбей
+audio-view-matrix = Матриця
+audio-view-lanes = Доріжки
+# The matrix's top-left corner: rows are where sound comes from, columns
+# where it goes.
+audio-matrix-corner = Звідки ↓ · Куди →
+# Over the Lanes view, which shows links but does not make them.
+audio-lanes-note = Кожна доріжка простежує звук від початку шляху до кінця. Зв’язки створюються на вкладках «Патчбей» і «Матриця».
+audio-lanes-empty = Із цими фільтрами нічого не зв’язано
+## otto-mixer — Effects: equalisers, limiters, compressors and noise
+## suppression the audio service hosts, each sitting on a device. The list
+## beside the editor is about 230 px wide; band cards are about 130 px wide.
+
+audio-pane-effects = Ефекти
+audio-effects-service-down = Ефекти існують, лише поки працює служба аудіо.
+# List headings, shown in small capitals.
+audio-effects-outputs = Ефекти виходу
+audio-effects-inputs = Ефекти входу
+audio-effects-none = Поки немає
+audio-effects-new = Новий ефект
+# Under an effect's name in the list, e.g. "Equaliser · Headphones".
+audio-effects-caption = { $kind } · { $place }
+# The list caption of an effect that is switched off.
+audio-effects-caption-off = { $caption } · Вимк.
+# Where an effect that sits on another effect is, e.g. "after Headphone EQ".
+audio-effects-after = після { $name }
+audio-effects-kind-equaliser = Еквалайзер
+audio-effects-kind-limiter = Лімітер
+audio-effects-kind-compressor = Компресор
+audio-effects-kind-noise = Шумозаглушення
+audio-effects-about-equaliser = Формує звук за допомогою до десяти смуг або профілю навушників з AutoEQ.
+audio-effects-about-limiter = Тримає піки нижче стелі, щоб ніщо не звучало гучніше за заданий рівень.
+audio-effects-about-compressor = Вирівнює гучні й тихі фрагменти для рівного звучання.
+audio-effects-about-noise = Прибирає фоновий шум із голосу. Для мікрофонів.
+audio-effects-kind-speaker = Корекція динаміків
+audio-effects-about-speaker = Налаштовує динаміки за файлом імпульсної характеристики, як це робить виробник ноутбука. Може спершу зрізати низькі частоти.
+# A kind whose plugin is missing, in the new effect form. $package is a
+# distribution package name; keep it as it is.
+audio-effects-missing = Потрібен пакет { $package }, але його не встановлено
+# Over an effect whose plugin is missing.
+audio-effects-missing-made = Цьому ефекту потрібен пакет { $package }, але його не встановлено, тож служба аудіо не може його створити.
+audio-effects-new-heading = Новий ефект
+# Whether the effect is for what plays (output) or what is recorded (input).
+audio-effects-side = Для
+audio-effects-side-output = Вихід
+audio-effects-side-input = Вхід
+# The device the new effect sits on.
+audio-effects-device = Пристрій
+audio-effects-no-device = Немає пристрою
+audio-effects-add = Додати ефект
+audio-effects-cancel = Скасувати
+# Beside the switch that turns the effect on and off.
+audio-effects-on = Увімк.
+audio-effects-remove = Вилучити
+audio-effects-import = Імпортувати
+# The equaliser's preset pop-up, showing the preset last applied.
+audio-effects-preset-custom = Власний
+audio-effects-preset-flat = Рівний
+audio-effects-preset-import = Імпорт файлу AutoEQ…
+# A preset imported from an AutoEQ file named after the headphones.
+audio-effects-preset-autoeq = { $name } (AutoEQ)
+audio-effects-import-title = Імпорт профілю AutoEQ
+# File dialog filters.
+audio-effects-import-filter = Профілі AutoEQ (ParametricEQ.txt)
+audio-effects-import-all = Усі файли
+audio-effects-imported =
+    { $count ->
+        [one] Імпортовано { $count } смугу.
+        [few] Імпортовано { $count } смуги.
+        [many] Імпортовано { $count } смуг.
+       *[other] Імпортовано { $count } смуги.
+    }
+audio-effects-imported-skipped =
+    { $count ->
+        [one] Імпортовано { $count } смугу
+        [few] Імпортовано { $count } смуги
+        [many] Імпортовано { $count } смуг
+       *[other] Імпортовано { $count } смуги
+    }; { $skipped ->
+        [one] { $skipped } фільтр пропущено.
+        [few] { $skipped } фільтри пропущено.
+        [many] { $skipped } фільтрів пропущено.
+       *[other] { $skipped } фільтра пропущено.
+    }
+audio-effects-import-failed = Цей файл не є профілем AutoEQ ParametricEQ.
+audio-effects-import-unreadable = Не вдалося прочитати цей файл.
+# The first step of the chain line when nothing plays through the effect.
+audio-effects-chain-no-apps = Немає застосунків
+# Heading of the frequency response curve, in small capitals.
+audio-effects-response = АЧХ
+# The gain applied before the bands.
+audio-effects-preamp = Передпідсилювач
+audio-effects-band = Смуга { $number }
+audio-effects-band-low-shelf = Полиця НЧ
+audio-effects-band-peak = Пік
+audio-effects-band-high-shelf = Полиця ВЧ
+audio-effects-band-low-pass = ФНЧ
+audio-effects-band-high-pass = ФВЧ
+# Band card rows: frequency, gain and Q (the band's width). Keep them short.
+audio-effects-freq = Частота
+audio-effects-gain = Підсилення
+audio-effects-q = Q
+audio-effects-add-band = Додати смугу
+audio-effects-hint = Перетягування точки на кривій зсуває смугу, а прокручування над нею змінює ширину. Значення змінюється перетягуванням убік. Кожну зміну чути одразу.
+# Units. $value is already formatted, with its sign.
+audio-effects-db = { $value } dB
+audio-effects-hz = { $value } Hz
+audio-effects-khz = { $value } kHz
+audio-effects-seconds = { $value } s
+# A compression ratio, e.g. "4.0:1".
+audio-effects-ratio = { $value }:1
+audio-effects-percent = { $value } %
+audio-effects-param-input-gain = Вхідне підсилення
+audio-effects-param-limit = Стеля
+audio-effects-param-release = Відновлення
+audio-effects-param-threshold = Поріг
+audio-effects-param-ratio = Ступінь стиснення
+audio-effects-param-attack = Атака
+audio-effects-param-knee = Коліно
+audio-effects-param-makeup = Компенсація підсилення
+# How sure noise suppression must be that it hears a voice before it lets
+# sound through.
+audio-effects-param-voice-threshold = Поріг голосу
+# How long sound keeps going through after the voice stops.
+audio-effects-param-grace = Утримання
+# Example effects the offscreen preview shows when none are saved.
+audio-effects-sample-eq = EQ для навушників
+audio-effects-sample-mic = Очищення мікрофона
+audio-effects-sample-preset = WH-1000XM5 (AutoEQ)
+# Speaker correction: the impulse response file it plays through, and
+# Choose File… to pick one.
+audio-effects-impulse = Імпульсна характеристика
+audio-effects-impulse-none = Поки немає, звук проходить без змін
+audio-effects-choose-file = Обрати файл…
+audio-effects-impulse-title = Вибір імпульсної характеристики
+# File dialog filter.
+audio-effects-impulse-filter = Імпульсні характеристики (.irs, .wav, .flac)
+audio-effects-impulse-failed = Не вдалося скопіювати цю імпульсну характеристику.
+# $file is the impulse response's file name.
+audio-effects-impulse-gone = Файлу { $file } немає в папці даних Otto, тож служба аудіо не може створити цей ефект. Обери файл ще раз.
+# A switch and a frequency slider: sound below the frequency is cut.
+audio-effects-param-highpass = Зріз НЧ нижче
+audio-effects-param-output-gain = Вихідне підсилення
+# Importing an EasyEffects output preset into a speaker correction.
+audio-effects-import-easyeffects = Імпорт пресету EasyEffects…
+audio-effects-easyeffects-title = Імпорт пресету EasyEffects
+# File dialog filter.
+audio-effects-easyeffects-filter = Пресети EasyEffects (.json)
+audio-effects-easyeffects-failed = Цей файл не є вихідним пресетом EasyEffects зі згорткою.
+# $file is the impulse response the preset names.
+audio-effects-easyeffects-find-kernel = Імпульсної характеристики пресету, { $file }, немає поруч із ним. Обери її, щоб завершити імпорт.
+audio-effects-easyeffects-stopped = Імпорт зупинено: пресету потрібна його імпульсна характеристика.
+audio-effects-easyeffects-imported = Пресет імпортовано з файлом { $file }.
+audio-effects-easyeffects-imported-limiter = Пресет імпортовано з файлом { $file }, після нього додано лімітер.
+# $imported is one of the two lines above; $skipped lists the preset's
+# effects this one doesn't do, from the names below.
+audio-effects-easyeffects-skipped = { $imported } Пропущено: { $skipped }.
+audio-effects-ee-bass-enhancer = підсилювач басів
+audio-effects-ee-multiband-compressor = багатосмуговий компресор
+audio-effects-ee-stereo-tools = стереоінструменти
+audio-effects-ee-limiter = лімітер
+audio-effects-ee-filter = фільтр
+
+audio-pane-mixer = Мікшер
+audio-pane-status = Стан
+audio-sidebar-advanced = Додатково
+audio-status-line-on = Аудіослужба увімкнена
+audio-status-line-off = Аудіослужба вимкнена
+audio-status-short-device-missing = { $device } не під'єднано
+audio-status-short-no-output = У { $app } немає виходу
+audio-status-short-dropouts = Пропуски на { $device }
+audio-status-short-clipping = { $name } перевантажує
+audio-status-line-more = { $first } +{ $count }
+audio-kind-hdmi = HDMI
+audio-kind-virtual = Віртуальний
+audio-mixer-title = Мікшер
+audio-mixer-intro = Де грає звук, наскільки гучно і які застосунки ним користуються.
+audio-mixer-service-down = Правила застосунків і приглушення під час дзвінків працюють, лише поки працює аудіослужба.
+audio-mixer-outputs = Виходи
+audio-mixer-apps = Застосунки, що грають
+audio-mixer-inputs = Входи
+audio-mixer-calls-heading = Під час дзвінків
+audio-mixer-default = Типовий
+audio-mixer-no-tuning = Без налаштування
+audio-mixer-tuning-off = { $name } (вимк.)
+audio-mixer-used-by = Використовують: { $apps }
+audio-mixer-not-used = Жоден застосунок не записує звідси
+audio-mixer-no-outputs = Виходів не знайдено
+audio-mixer-no-inputs = Входів не знайдено
+audio-mixer-nothing-playing = Зараз нічого не грає.
+audio-mixer-follow-default = Як типовий
+audio-mixer-default-output = Типовий ({ $name })
+audio-mixer-always-here = Завжди грати { $app } тут
+audio-mixer-calls-lower = Коли застосунок використовує мікрофон, приглушувати інші до
+audio-status-title = Стан
+audio-effects-not-in-use = Не використовується
+audio-devices-details = Профіль, кодек і порти
+audio-devices-sound = Звук
+audio-devices-sound-intro = Як звучить цей вихід для всіх застосунків, що на ньому грають.
+audio-devices-tuning = Налаштування
+audio-devices-compare = Порівняти
+audio-devices-loudness = Гучність
+audio-devices-protect = Захист від перевантаження
+audio-devices-tuning-none = Немає
+audio-devices-tuning-edit = Змінити…
+audio-devices-tuning-new = Новий еквалайзер
+audio-devices-tuning-new-name = EQ { $device }
+audio-devices-compare-off = Вимк.
+audio-devices-compare-on = Налаштовано
+audio-devices-bt-title = Найкращий звук чи мікрофон
+audio-devices-bt-about = Через Bluetooth навушники дають найкращий звук, лише поки мікрофон вимкнений. Профіль гарнітури вмикає мікрофон, але звук падає до якості дзвінка.
+audio-devices-bt-best = Найкращий звук
+audio-devices-bt-headset = Гарнітура з мікрофоном
+audio-devices-bt-switch = Перемикати на гарнітуру, коли дзвінку потрібен мікрофон, і назад після
+audio-status-intro = Що потребує уваги і куди зараз іде звук.
+audio-status-worth-a-look = Варто перевірити
+audio-status-nothing = Ніщо не потребує уваги.
+audio-status-playing = Зараз грає
+audio-status-facts = Відомості
+audio-status-service-off = Аудіослужбу вимкнено, тож правила, ефекти й збережені з'єднання не підтримуються.
+audio-status-rule-missing = { $app } має грати на { $device }, але цей пристрій не під'єднано.
+audio-status-stream-missing = { $app } надіслано на пристрій, який не під'єднано.
+audio-status-dropouts =
+    { $count ->
+        [one] { $count } збій на { $device } за останні 10 хвилин.
+        [few] { $count } збої на { $device } за останні 10 хвилин.
+       *[other] { $count } збоїв на { $device } за останні 10 хвилин.
+    }
+audio-status-raise-buffer = { $frames } кадрів
+audio-status-boost = { $name } підсилює до { $db } дБ, гучні місця можуть спотворюватися.
+audio-status-lower-preamp = Знизити попереднє підсилення на { $db } дБ
+audio-status-not-playing-anywhere = Ще не під'єднано
+audio-status-fact-dropouts = Збої за 10 хвилин
+audio-status-dropouts-count = { $count }
+audio-status-fact-delay = Затримка
+audio-status-delay = { $ms } мс ({ $frames } кадрів при { $rate })
+audio-status-fact-service = Аудіослужба
+audio-status-service-is-on = Працює
+audio-status-service-is-off = Вимкнена
+audio-status-fact-airplay = AirPlay
+audio-status-airplay-off = Вимкнено
+audio-status-airplay-no-module = Увімкнено, але модуль AirPlay для PipeWire не встановлено
+audio-status-airplay-no-avahi = Увімкнено, але Avahi не запущено
+audio-status-airplay-found =
+    { $count ->
+        [0] Увімкнено, шукає колонки
+        [one] Увімкнено, знайдено { $count } колонку
+        [few] Увімкнено, знайдено { $count } колонки
+       *[other] Увімкнено, знайдено { $count } колонок
+    }
+audio-virtual-recording-mix = Мікс для запису
+audio-virtual-recording-mix-add = Мікс для запису
+audio-virtual-hears-none = Поки нічого не чує. Застосунки з'являються тут, поки грають.
+audio-engine-low-latency = Низька затримка
+
 
 ## Sleep, hibernate, restart and shut down
 

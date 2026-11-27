@@ -1034,6 +1034,15 @@ bar-logout-title = 现在注销?
 bar-logout-body = 会先请各个应用关闭,让未保存的内容有机会保存。
 
 
+## Menus
+##
+## Parts of the menus every app shares.
+
+# Beside a slider in a menu, such as a volume. $percent is a whole number,
+# 0 to 100.
+menu-slider-percent = { $percent }%
+
+
 ## Settings — widgets
 ##
 ## The controls themselves, rather than the settings they edit.
@@ -2171,6 +2180,7 @@ settings-network-wifi-soft-blocked = 已被飞行模式关闭。打开 Wi-Fi 即
 settings-network-current = 网络
 settings-network-not-connected = 未连接
 settings-show-network = 在顶部栏显示网络状态
+settings-show-sound = 在顶部栏显示声音
 settings-group-network-status = 状态
 settings-group-network-known = 已知网络
 settings-network-kind-wifi = Wi-Fi
@@ -2297,6 +2307,42 @@ bar-network-settings = 网络设置…
 bar-network-join-other = 加入其他网络…
 bar-network-ethernet-connected-speed = 以太网 — 已连接，{ $speed }
 bar-network-channel = 信道 { $channel }
+
+## Top bar — sound
+##
+## The speaker in the top bar and the menu under it.
+
+# Captions over the menu's groups: where sound plays, where it is recorded
+# from, and the apps playing.
+bar-sound-output = 输出
+bar-sound-input = 输入
+bar-sound-apps = 应用
+# Screen-reader names of the sliders. $app is an app's name, e.g. Firefox.
+bar-sound-output-volume = 输出音量
+bar-sound-input-volume = 输入音量
+bar-sound-app-volume = { $app } 音量
+# Screen-reader names of the round mute buttons beside the sliders.
+bar-sound-mute-output = 将输出静音
+bar-sound-mute-input = 将输入静音
+bar-sound-mute-app = 将 { $app } 静音
+bar-sound-app-output-default = 默认
+bar-sound-app-follow-default = 跟随默认设备
+bar-sound-app-output = { $app } 的输出
+# Beside each output and input, in the shortcut column: what kind of device
+# it is. Virtual is one made in software, such as a mix or an effect.
+bar-sound-kind-bluetooth = 蓝牙
+bar-sound-kind-usb = USB
+bar-sound-kind-hdmi = HDMI
+bar-sound-kind-virtual = 虚拟
+bar-sound-kind-built-in = 内置
+bar-sound-kind-airplay = AirPlay
+# The menu's last row, which opens the Mixer app.
+bar-sound-open-mixer = 打开混音器…
+# What a screen reader calls the indicator. $percent is a whole number and
+# $device the output's name.
+bar-sound-label = 声音，{ $percent }%，{ $device }
+bar-sound-label-muted = 声音已静音，{ $device }
+bar-sound-label-none = 声音，无输出
 bar-join-title = 加入“{ $name }”
 bar-join-body = 输入此 Wi-Fi 网络的密码。
 bar-join-body-wep = 输入此 Wi-Fi 网络的 WEP 密钥。
@@ -2322,6 +2368,443 @@ bar-network-signal-good = 良好
 bar-network-signal-excellent = 极佳
 schema-topbar-show-network-label = 显示网络状态
 schema-topbar-show-network-description = 顶部栏中的 Wi-Fi 和有线网络指示器，附带用于加入网络的菜单。在运行 NetworkManager 的系统上显示。
+schema-topbar-show-sound-label = 显示声音
+schema-topbar-show-sound-description = 顶部栏中的扬声器，附带用于调节音量、输出和输入以及正在播放的应用的菜单。在运行 PipeWire 的系统上显示。
+
+## otto-mixer: the PipeWire graph as a patchbay (Graph), and the sound
+## server's rate and buffer size (Engine). A card is about 220 px wide; the
+## toolbar and the banner share one line with their buttons.
+
+audio-title = 混音器
+audio-window-title = Otto 混音器 —— { $pane }
+audio-pane-graph = 连接图
+audio-pane-engine = 引擎
+audio-no-server-title = 声音服务器未运行
+audio-no-server-body = PipeWire 启动后，混音器会立即连接。
+audio-no-server-start = 启动 PipeWire
+audio-graph-empty = 在这些过滤条件下没有可显示的内容
+audio-filter-audio = 音频
+audio-filter-midi = MIDI
+audio-filter-video = 视频
+# Zooms the canvas so every card is in view.
+audio-fit = 适合
+# The toolbar's key to the wires: solid ones are kept by the audio service.
+audio-legend-saved = 已存储
+audio-legend-unsaved = 未存储
+# Headings over the canvas's default columns.
+audio-column-sources = 来源
+audio-column-between = 效果和虚拟设备
+audio-column-destinations = 目标
+audio-column-midi-video = MIDI 和视频
+# The title bar's readout of the engine, e.g. "48 kHz · 256 · 5.3 ms".
+audio-readout = { $rate } · { $frames } · { $ms } ms
+# Saves every link on the canvas so the audio service puts them back.
+audio-save-routing = 存储路由
+# On the selected wire.
+audio-save-link = 存储连接
+audio-forget-link = 忘记
+audio-remove-link = 移除
+audio-service-down = 音频服务关闭时，已存储的连接不会保留。
+audio-service-start = 启动服务
+# The sidebar's foot: whether the audio service is keeping saved links.
+audio-service-on = 音频服务正在运行
+audio-service-off = 音频服务已关闭
+# What a card stands for, under its name.
+audio-role-playing = 播放声音
+audio-role-recording = 录音
+audio-role-output-device = 输出设备
+audio-role-input-device = 输入设备
+audio-role-virtual-output = 虚拟输出
+audio-role-virtual-input = 虚拟输入
+audio-role-airplay = AirPlay 扬声器
+audio-role-duplex = 输入和输出
+audio-role-midi = MIDI
+audio-role-video = 视频
+audio-role-other = 其他
+# A folded row with more channels than fit, e.g. "8 channels".
+audio-channels = { $count } 个声道
+# A sink's monitor ports folded into one row, e.g. "Monitor FL FR".
+audio-monitor = 监听 { $channels }
+audio-state-running = 运行中
+audio-state-idle = 空闲
+audio-state-suspended = 已挂起
+audio-state-error = 错误
+audio-state-creating = 正在启动
+audio-detail-app = 应用
+audio-detail-class = 媒体类别
+audio-detail-state = 状态
+# How saved links name this node across plugs and restarts.
+audio-detail-identity = 存储为
+# Over the details panel's name.
+audio-detail-selected = 已选中
+audio-detail-format = 格式
+audio-detail-latency = 延迟
+audio-detail-delay = 滞后
+# A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
+audio-detail-channels = { $count } 声道
+audio-detail-links = 连接
+audio-detail-no-links = 没有连接
+# A connection the audio service keeps.
+audio-detail-saved = 已存储
+# Saves one connection, from the details panel.
+audio-save = 存储
+# Connections past the ones listed, e.g. "3 more".
+audio-detail-more-links = 还有 { $count } 个
+# The node's raw PipeWire properties, folded away, e.g. "Properties (42)".
+audio-detail-properties-count = 属性（{ $count }）
+audio-engine-title = 引擎
+audio-engine-rate = 采样率
+audio-engine-rate-auto = { $rate }，由引擎选择
+audio-engine-rate-forced = { $rate }，在此设定
+# Lets the engine pick the value itself.
+audio-engine-auto = 自动
+# A sample rate, e.g. "48 kHz" or "44.1 kHz".
+audio-khz = { $value } kHz
+audio-engine-quantum = 缓冲区大小
+# Under the buffer tiles, e.g. "Default 1024, from 32 to 2048 frames".
+audio-engine-quantum-range-short = 默认 { $default }，范围 { $min } 至 { $max } 帧
+audio-engine-intro = 声音服务器运行的频率，以及每次处理的声音量。
+audio-engine-latency-now = 当前延迟
+# e.g. "256 frames at 48000 Hz"
+audio-engine-frames-at = { $rate } Hz 下 { $frames } 帧
+# A value forced in this app rather than left to the engine.
+audio-engine-set-here = 在此设定
+audio-engine-rate-note = 其他采样率的音频流会被重新采样。
+# Milliseconds, alone after a large number, and with one.
+audio-ms = ms
+audio-ms-value = { $ms } ms
+# A rate in a tight control, e.g. "48k" or "44.1k".
+audio-khz-short = { $value }k
+audio-engine-reset = 重置
+audio-engine-note = 更改立即生效。声音服务器重启时，音频服务会恢复这些设置。
+audio-pane-devices = 设备
+audio-devices-title = 设备
+audio-devices-intro = 更改立即生效，声音服务器会记住它们。
+audio-devices-empty = 没有声音设备
+# Row labels on a device's card.
+audio-devices-profile = 配置
+audio-devices-codec = 编解码器
+audio-devices-output-port = 输出端口
+audio-devices-input-port = 输入端口
+# Where the device's volume is set: on its own hardware mixer, or in software.
+audio-devices-volume = 音量控制
+audio-devices-volume-hardware = 硬件
+audio-devices-volume-software = 软件
+# When output and input differ, e.g. "Output: Hardware · Input: Software".
+audio-devices-volume-output = 输出：{ $control }
+audio-devices-volume-input = 输入：{ $control }
+# A port with nothing plugged in, e.g. "Headphones (unplugged)".
+audio-devices-unplugged = { $port }（未插入）
+# Under a Bluetooth device's codecs.
+audio-devices-codec-note = 切换编解码器会让声音短暂中断。
+# Beside a device's name: the channels it records and plays now, e.g. "2 in · 2 out".
+audio-devices-inputs = 输入 { $count }
+audio-devices-outputs = 输出 { $count }
+# Beside a device's name when its profile is Off.
+audio-devices-off = 关闭
+# What a device is, under its name.
+audio-devices-kind-bluetooth = 蓝牙设备
+audio-devices-kind-bluetooth-headphones = 蓝牙耳机
+audio-devices-kind-bluetooth-headset = 蓝牙耳麦
+audio-devices-kind-bluetooth-speaker = 蓝牙扬声器
+audio-devices-kind-usb = USB 音频
+audio-devices-kind-built-in = 内置音频
+audio-devices-kind-other = 声卡
+
+# The AirPlay speakers card under the device cards: a switch that has the
+# audio service look for AirPlay speakers on the network.
+audio-airplay-title = AirPlay 扬声器
+audio-airplay-intro = 在网络中的 AirPlay 扬声器和接收器上播放。
+audio-airplay-service-down = AirPlay 扬声器只在音频服务运行时显示。
+# { $package } is a package name, such as pipewire-zeroconf.
+audio-airplay-missing-module = AirPlay 需要 { $package }，但它未安装。
+# The command is typed as is; keep it untranslated.
+audio-airplay-missing-avahi = AirPlay 需要 Avahi 才能找到扬声器。启用命令：systemctl enable --now avahi-daemon
+audio-airplay-searching = 正在网络中查找扬声器…
+# Beside a speaker that's playing now; the others say audio-airplay-tag.
+audio-airplay-playing = 正在播放
+audio-airplay-tag = AirPlay
+audio-airplay-delay = AirPlay 扬声器的声音会滞后约 2 秒，因此无法与视频保持同步。
+# The value of the Delay fact in the Graph's details panel.
+audio-airplay-delay-short = 约 2 秒，经由网络
+
+## otto-mixer — Virtual devices: outputs, inputs and loopbacks the audio
+## service makes. The cards are about 260 px wide; the form's labels sit in a
+## column of about 78 px.
+
+audio-pane-virtual = 虚拟设备
+audio-virtual-title = 虚拟设备
+audio-virtual-intro = 音频服务创建的输出、输入和回环。应用看到的它们与其他设备无异。
+audio-virtual-service-down = 虚拟设备只在音频服务运行时存在。
+audio-virtual-new-heading = 新建虚拟设备
+audio-virtual-name = 名称
+# Greyed out in the empty name field.
+audio-virtual-name-placeholder = 直播混音、通话输入…
+audio-virtual-kind = 类型
+audio-virtual-channels = 声道
+audio-virtual-add = 添加
+audio-virtual-kind-output = 输出
+audio-virtual-kind-input = 输入
+# Plays what reaches its input straight out of its output.
+audio-virtual-kind-loopback = 回环
+audio-virtual-about-output = 应用像向扬声器一样向它播放。播放的内容从它的监听端口输出，可供其他应用录制。
+audio-virtual-about-input = 应用像从麦克风一样从它录音。可在连接图中把任何内容连接到它。
+audio-virtual-about-loopback = 把输入直接传到输出。初始时未连接：两端都在连接图中连接。
+# Channel layouts. 5.1 and 7.1 are surround layouts; keep the numbers.
+audio-virtual-mono = 单声道
+audio-virtual-stereo = 立体声
+audio-virtual-quad = 四声道
+audio-virtual-surround-51 = 5.1
+audio-virtual-surround-71 = 7.1
+audio-virtual-made-heading = 设备
+audio-virtual-none = 还没有虚拟设备
+# Under a device's name, e.g. "Output · Stereo".
+audio-virtual-card-kind = { $kind } · { $channels }
+# The service runs but the device has not appeared yet.
+audio-virtual-state-waiting = 正在创建
+audio-virtual-state-no-service = 音频服务启动时创建
+audio-virtual-rename = 重命名
+audio-virtual-remove = 移除
+audio-virtual-save-name = 存储
+audio-virtual-cancel = 取消
+# Example devices the offscreen preview shows when none are saved.
+audio-virtual-sample-output = 直播混音
+audio-virtual-sample-input = 通话输入
+audio-virtual-sample-loopback = 麦克风监听
+
+# The Graph section's view switch, in its toolbar: cards and wires, a grid
+# of sources against destinations, or one row per path the sound takes.
+audio-view-patchbay = 跳线盘
+audio-view-matrix = 矩阵
+audio-view-lanes = 泳道
+# The matrix's top-left corner: rows are where sound comes from, columns
+# where it goes.
+audio-matrix-corner = 从 ↓ · 到 →
+# Over the Lanes view, which shows links but does not make them.
+audio-lanes-note = 每条泳道跟随声音从起点走到终点。连接请在跳线盘或矩阵中进行。
+audio-lanes-empty = 在这些过滤条件下没有连接
+## otto-mixer — Effects: equalisers, limiters, compressors and noise
+## suppression the audio service hosts, each sitting on a device. The list
+## beside the editor is about 230 px wide; band cards are about 130 px wide.
+
+audio-pane-effects = 效果
+audio-effects-service-down = 效果只在音频服务运行时存在。
+# List headings, shown in small capitals.
+audio-effects-outputs = 输出效果
+audio-effects-inputs = 输入效果
+audio-effects-none = 暂无
+audio-effects-new = 新建效果
+# Under an effect's name in the list, e.g. "Equaliser · Headphones".
+audio-effects-caption = { $kind } · { $place }
+# The list caption of an effect that is switched off.
+audio-effects-caption-off = { $caption } · 关闭
+# Where an effect that sits on another effect is, e.g. "after Headphone EQ".
+audio-effects-after = 位于 { $name } 之后
+audio-effects-kind-equaliser = 均衡器
+audio-effects-kind-limiter = 限制器
+audio-effects-kind-compressor = 压缩器
+audio-effects-kind-noise = 降噪
+audio-effects-about-equaliser = 用最多十个频段，或来自 AutoEQ 的耳机配置文件来塑造声音。
+audio-effects-about-limiter = 把峰值压在上限之下，声音不会超过你设定的响度。
+audio-effects-about-compressor = 平衡响亮与轻柔的段落，让聆听更平稳。
+audio-effects-about-noise = 去除人声中的背景噪音。适用于麦克风。
+audio-effects-kind-speaker = 扬声器校正
+audio-effects-about-speaker = 用脉冲响应文件调校扬声器，就像笔记本厂商自带的扬声器调校。也可以先切除低频。
+# A kind whose plugin is missing, in the new effect form. $package is a
+# distribution package name; keep it as it is.
+audio-effects-missing = 需要 { $package }，但尚未安装
+# Over an effect whose plugin is missing.
+audio-effects-missing-made = 此效果需要 { $package }，但它尚未安装，因此音频服务无法创建此效果。
+audio-effects-new-heading = 新建效果
+# Whether the effect is for what plays (output) or what is recorded (input).
+audio-effects-side = 用于
+audio-effects-side-output = 输出
+audio-effects-side-input = 输入
+# The device the new effect sits on.
+audio-effects-device = 设备
+audio-effects-no-device = 无设备
+audio-effects-add = 添加效果
+audio-effects-cancel = 取消
+# Beside the switch that turns the effect on and off.
+audio-effects-on = 开启
+audio-effects-remove = 移除
+audio-effects-import = 导入
+# The equaliser's preset pop-up, showing the preset last applied.
+audio-effects-preset-custom = 自定义
+audio-effects-preset-flat = 平直
+audio-effects-preset-import = 导入 AutoEQ 文件…
+# A preset imported from an AutoEQ file named after the headphones.
+audio-effects-preset-autoeq = { $name } (AutoEQ)
+audio-effects-import-title = 导入 AutoEQ 配置文件
+# File dialog filters.
+audio-effects-import-filter = AutoEQ 配置文件 (ParametricEQ.txt)
+audio-effects-import-all = 所有文件
+audio-effects-imported = 已导入 { $count } 个频段。
+audio-effects-imported-skipped = 已导入 { $count } 个频段；{ $skipped } 个滤波器未导入。
+audio-effects-import-failed = 该文件不是 AutoEQ ParametricEQ 配置文件。
+audio-effects-import-unreadable = 无法读取该文件。
+# The first step of the chain line when nothing plays through the effect.
+audio-effects-chain-no-apps = 无应用
+# Heading of the frequency response curve, in small capitals.
+audio-effects-response = 频率响应
+# The gain applied before the bands.
+audio-effects-preamp = 前级放大
+audio-effects-band = 频段 { $number }
+audio-effects-band-low-shelf = 低架
+audio-effects-band-peak = 峰值
+audio-effects-band-high-shelf = 高架
+audio-effects-band-low-pass = 低通
+audio-effects-band-high-pass = 高通
+# Band card rows: frequency, gain and Q (the band's width). Keep them short.
+audio-effects-freq = 频率
+audio-effects-gain = 增益
+audio-effects-q = Q
+audio-effects-add-band = 添加频段
+audio-effects-hint = 拖移曲线上的点可移动频段；在点上滚动可更改其宽度。左右拖移数值可更改数值。每次更改都能立即听到。
+# Units. $value is already formatted, with its sign.
+audio-effects-db = { $value } dB
+audio-effects-hz = { $value } Hz
+audio-effects-khz = { $value } kHz
+audio-effects-seconds = { $value } s
+# A compression ratio, e.g. "4.0:1".
+audio-effects-ratio = { $value }:1
+audio-effects-percent = { $value } %
+audio-effects-param-input-gain = 输入增益
+audio-effects-param-limit = 上限
+audio-effects-param-release = 释放
+audio-effects-param-threshold = 阈值
+audio-effects-param-ratio = 比率
+audio-effects-param-attack = 起音
+audio-effects-param-knee = 拐点
+audio-effects-param-makeup = 补偿增益
+# How sure noise suppression must be that it hears a voice before it lets
+# sound through.
+audio-effects-param-voice-threshold = 人声阈值
+# How long sound keeps going through after the voice stops.
+audio-effects-param-grace = 保持
+# Example effects the offscreen preview shows when none are saved.
+audio-effects-sample-eq = 耳机均衡
+audio-effects-sample-mic = 麦克风降噪
+audio-effects-sample-preset = WH-1000XM5 (AutoEQ)
+# Speaker correction: the impulse response file it plays through, and
+# Choose File… to pick one.
+audio-effects-impulse = 脉冲响应
+audio-effects-impulse-none = 暂无，声音原样通过
+audio-effects-choose-file = 选取文件…
+audio-effects-impulse-title = 选择脉冲响应
+# File dialog filter.
+audio-effects-impulse-filter = 脉冲响应 (.irs, .wav, .flac)
+audio-effects-impulse-failed = 无法复制该脉冲响应。
+# $file is the impulse response's file name.
+audio-effects-impulse-gone = Otto 的数据文件夹中缺少 { $file }，因此音频服务无法创建此效果。请重新选择该文件。
+# A switch and a frequency slider: sound below the frequency is cut.
+audio-effects-param-highpass = 低切
+audio-effects-param-output-gain = 输出增益
+# Importing an EasyEffects output preset into a speaker correction.
+audio-effects-import-easyeffects = 导入 EasyEffects 预设…
+audio-effects-easyeffects-title = 导入 EasyEffects 预设
+# File dialog filter.
+audio-effects-easyeffects-filter = EasyEffects 预设 (.json)
+audio-effects-easyeffects-failed = 该文件不是带卷积器的 EasyEffects 输出预设。
+# $file is the impulse response the preset names.
+audio-effects-easyeffects-find-kernel = 预设所需的脉冲响应 { $file } 不在同一位置。选择它即可完成导入。
+audio-effects-easyeffects-stopped = 导入已停止：预设需要其脉冲响应。
+audio-effects-easyeffects-imported = 已导入预设（使用 { $file }）。
+audio-effects-easyeffects-imported-limiter = 已导入预设（使用 { $file }），并在其后添加了限制器。
+# $imported is one of the two lines above; $skipped lists the preset's
+# effects this one doesn't do, from the names below.
+audio-effects-easyeffects-skipped = { $imported }已跳过：{ $skipped }。
+audio-effects-ee-bass-enhancer = 低音增强
+audio-effects-ee-multiband-compressor = 多段压缩器
+audio-effects-ee-stereo-tools = 立体声工具
+audio-effects-ee-limiter = 限制器
+audio-effects-ee-filter = 滤波器
+
+audio-pane-mixer = 混音器
+audio-pane-status = 状态
+audio-sidebar-advanced = 高级
+audio-status-line-on = 音频服务已开启
+audio-status-line-off = 音频服务已关闭
+audio-status-short-device-missing = { $device } 未连接
+audio-status-short-no-output = { $app } 没有输出设备
+audio-status-short-dropouts = { $device } 出现断音
+audio-status-short-clipping = { $name } 出现削波
+audio-status-line-more = { $first } +{ $count }
+audio-kind-hdmi = HDMI
+audio-kind-virtual = 虚拟
+audio-mixer-title = 混音器
+audio-mixer-intro = 声音在哪里播放、音量多大，以及哪些应用在使用。
+audio-mixer-service-down = 应用规则和通话时调低其他应用，只在音频服务运行时有效。
+audio-mixer-outputs = 输出
+audio-mixer-apps = 正在播放的应用
+audio-mixer-inputs = 输入
+audio-mixer-calls-heading = 通话时
+audio-mixer-default = 默认
+audio-mixer-no-tuning = 无调音
+audio-mixer-tuning-off = { $name }（关）
+audio-mixer-used-by = 使用中：{ $apps }
+audio-mixer-not-used = 没有应用从这里录音
+audio-mixer-no-outputs = 没有找到输出
+audio-mixer-no-inputs = 没有找到输入
+audio-mixer-nothing-playing = 现在没有播放任何内容。
+audio-mixer-follow-default = 跟随默认
+audio-mixer-default-output = 默认（{ $name }）
+audio-mixer-always-here = 总是在这里播放 { $app }
+audio-mixer-calls-lower = 有应用使用麦克风时，把其他应用调低到
+audio-status-title = 状态
+audio-effects-not-in-use = 未使用
+audio-devices-details = 配置、编解码器和端口
+audio-devices-sound = 声音
+audio-devices-sound-intro = 这个输出的声音，对在上面播放的每个应用都有效。
+audio-devices-tuning = 调音
+audio-devices-compare = 对比
+audio-devices-loudness = 响度
+audio-devices-protect = 防止削波
+audio-devices-tuning-none = 无
+audio-devices-tuning-edit = 编辑…
+audio-devices-tuning-new = 新建均衡器
+audio-devices-tuning-new-name = { $device } EQ
+audio-devices-compare-off = 关
+audio-devices-compare-on = 已调音
+audio-devices-bt-title = 最佳音质还是麦克风
+audio-devices-bt-about = 通过蓝牙，耳机只有在麦克风关闭时才有最佳音质。耳麦配置会打开麦克风，但音质会降到通话水平。
+audio-devices-bt-best = 最佳音质
+audio-devices-bt-headset = 带麦克风的耳麦
+audio-devices-bt-switch = 通话需要麦克风时切换到耳麦，结束后切回
+audio-status-intro = 需要你留意的事情，以及现在声音的去向。
+audio-status-worth-a-look = 值得一看
+audio-status-nothing = 没有需要留意的事情。
+audio-status-playing = 正在播放
+audio-status-facts = 概况
+audio-status-service-off = 音频服务已关闭，规则、效果和已保存的连接都不会保持。
+audio-status-rule-missing = { $app } 设置为在 { $device } 上播放，但它没有连接。
+audio-status-stream-missing = { $app } 被发送到一个没有连接的设备。
+audio-status-dropouts = 过去 10 分钟内 { $device } 中断了 { $count } 次。
+audio-status-raise-buffer = 使用 { $frames } 帧
+audio-status-boost = { $name } 最多提升 { $db } dB，响亮的部分可能会削波。
+audio-status-lower-preamp = 前级降低 { $db } dB
+audio-status-not-playing-anywhere = 尚未连接
+audio-status-fact-dropouts = 中断（过去 10 分钟）
+audio-status-dropouts-count = { $count }
+audio-status-fact-delay = 延迟
+audio-status-delay = { $ms } ms（{ $rate } 下 { $frames } 帧）
+audio-status-fact-service = 音频服务
+audio-status-service-is-on = 运行中
+audio-status-service-is-off = 已关闭
+audio-status-fact-airplay = AirPlay
+audio-status-airplay-off = 关
+audio-status-airplay-no-module = 已开启，但未安装 PipeWire 的 AirPlay 模块
+audio-status-airplay-no-avahi = 已开启，但 Avahi 没有运行
+audio-status-airplay-found =
+    { $count ->
+        [0] 已开启，正在寻找扬声器
+       *[other] 已开启，找到 { $count } 个扬声器
+    }
+audio-virtual-recording-mix = 录音混音
+audio-virtual-recording-mix-add = 录音混音
+audio-virtual-hears-none = 还没有听到任何内容。应用播放时会显示在这里。
+audio-engine-low-latency = 低延迟
+
 
 ## Sleep, hibernate, restart and shut down
 

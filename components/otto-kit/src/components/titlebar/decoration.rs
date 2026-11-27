@@ -117,6 +117,11 @@ pub struct WindowDecoration {
     /// How much of a decoration this window gets. A tile gets less; see
     /// [`DecorationVariant`].
     pub variant: DecorationVariant,
+    /// Draw the traffic lights and nothing else: no material, no title. For
+    /// a window whose sidebar runs up under the lights and which titles its
+    /// content itself, so the bar is the window's own ground rather than a
+    /// strip laid across it.
+    pub controls_only: bool,
 }
 
 impl Default for WindowDecoration {
@@ -139,6 +144,7 @@ impl Default for WindowDecoration {
             title_style: Self::DEFAULT_TITLE_STYLE,
             controls_side: crate::controls_side::side(),
             variant: DecorationVariant::Floating,
+            controls_only: false,
         }
     }
 }
@@ -195,6 +201,21 @@ impl WindowDecoration {
     /// The bar height a variant asks for, in logical points. The one place
     /// the compositor and a client both read, so a tile's client area is
     /// configured with exactly what the bar leaves.
+    /// Height of the bar on a window whose sidebar runs up under the traffic
+    /// lights (see [`Self::controls_only`]): taller than the plain strip, so
+    /// the lights sit clear of the corner over the sidebar's first rows.
+    pub const SIDEBAR_HEIGHT: f32 = 38.0;
+
+    /// The bar height for a sidebar window wearing `variant`: its own taller
+    /// bar while it floats or wears the full tile bar, the shared answer
+    /// otherwise, so a tile still lines up with its neighbours.
+    pub fn sidebar_height_for(variant: DecorationVariant) -> f32 {
+        match variant {
+            DecorationVariant::Floating | DecorationVariant::Normal => Self::SIDEBAR_HEIGHT,
+            variant => Self::height_for(variant),
+        }
+    }
+
     pub fn height_for(variant: DecorationVariant) -> f32 {
         match variant {
             DecorationVariant::Floating | DecorationVariant::Normal => Self::DEFAULT_HEIGHT,
@@ -275,6 +296,11 @@ impl WindowDecoration {
     /// Put the traffic lights at one end of the bar or the other.
     pub fn with_controls_side(mut self, side: ControlsSide) -> Self {
         self.controls_side = side;
+        self
+    }
+
+    pub fn with_controls_only(mut self, controls_only: bool) -> Self {
+        self.controls_only = controls_only;
         self
     }
 
@@ -486,13 +512,16 @@ impl WindowDecoration {
             .with_height(self.titlebar_height)
             .with_corner_radius(self.corner_radius)
             .with_padding(self.padding())
-            .with_horizontal_padding(self.horizontal_padding())
-            .with_material(self.material())
-            .with_title(
+            .with_horizontal_padding(self.horizontal_padding());
+        titlebar = if self.controls_only {
+            titlebar.with_background(Color::TRANSPARENT)
+        } else {
+            titlebar.with_material(self.material()).with_title(
                 Label::new(&self.title)
                     .with_style(self.resolved_title_style())
                     .with_color(self.title_color()),
-            );
+            )
+        };
 
         // `Titlebar` places its leading group at the left edge and its trailing
         // one at the right, so which group the lights go in *is* the side they

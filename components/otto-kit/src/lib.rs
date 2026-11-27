@@ -98,6 +98,18 @@ pub use app_runner::{
 // Re-export cursor shape type for apps
 pub use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape as CursorShape;
 
+/// The pointer, keyboard and configure events the toolkit hands an app, through
+/// [`App`] and [`Window`]'s callbacks, so an app can name and match them without
+/// depending on `smithay-client-toolkit` or `wayland-client` itself.
+pub mod events {
+    pub use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym, Modifiers};
+    pub use smithay_client_toolkit::seat::pointer::{
+        AxisScroll, PointerEvent, PointerEventKind, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
+    };
+    pub use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
+    pub use wayland_client::protocol::wl_keyboard::KeyState;
+}
+
 /// Convenience prelude for application development
 pub mod prelude {
     pub use crate::accent::current_accent;

@@ -980,7 +980,7 @@ impl ScrollSurfaces {
             // it was worked out for.
             self.last_thumb_rect = None;
             self.place_thumb(extent, window, origin);
-            let color = theme.fill_secondary;
+            let color = super::renderer::thumb_color(theme);
             let pill = match self.axis {
                 Axis::Vertical => Rect::from_xywh(THUMB_STRIP - thickness, 0.0, thickness, length),
                 Axis::Horizontal => {

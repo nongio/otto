@@ -378,7 +378,10 @@ on the first. The sidebar lists them the system first, then the desktop, input,
 and accounts, with About last: General, Appearance, Displays, Network, Sound, Power, Dock,
 Top bar, Tiling, Search, Agents, Keyboard, Dictation, Trackpad & Mouse, Users,
 Lock & Login, Privacy, About. Dictation sits with the keyboard because it is
-another way of typing. The panes are:
+another way of typing. The sidebar draws them as the toolkit's source list at
+its large size; a list taller than the window scrolls under the search field
+with the wheel over the sidebar, and a pane picked with the keyboard or from
+search is scrolled into view. The panes are:
 
 - **Users** — not Otto settings: everyone who can log in.
   It is a list and a detail. The users list (otto-kit's `selection_list`) sits
@@ -527,6 +530,8 @@ another way of typing. The panes are:
   The *Network* group has one toggle, *Show network status in the top bar*
   (`topbar.show_network`, live, on by default). It sits here rather than on
   the Network pane so that it is reachable on a machine without Wi-Fi.
+  The *Sound* group has one toggle too, *Show sound in the top bar*
+  (`topbar.show_sound`, live, on by default).
 - **Keyboard** — repeat delay and rate, the input sources (see below), then
   shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.

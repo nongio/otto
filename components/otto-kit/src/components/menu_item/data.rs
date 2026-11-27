@@ -1,7 +1,7 @@
 use std::hash::Hash;
 
 /// Icon associated with a menu item
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MenuItemIcon {
     /// Named icon from the XDG icon theme
     Named(String),
@@ -18,7 +18,7 @@ pub enum MenuItemIcon {
 }
 
 /// Type of menu item
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum MenuItemKind {
     Action {
         label: String,
@@ -30,6 +30,71 @@ pub enum MenuItemKind {
         items: Vec<MenuItem>,
     },
     Separator,
+    /// A value on a track, such as a volume, which the menu stays open for.
+    Slider(MenuSlider),
+    /// A small caption over the rows of one group.
+    Header {
+        label: String,
+    },
+}
+
+/// A slider row: an optional round toggle, an optional name, the track and
+/// the value in percent.
+///
+/// The value is changed in place, so a drag answers at once: the menu draws
+/// the new value itself and reports it through
+/// [`ContextMenu::on_slider`](crate::components::context_menu::ContextMenu::on_slider).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MenuSlider {
+    /// What the change is reported with.
+    pub action_id: String,
+    /// The slider's name for a screen reader, such as "Output volume".
+    pub accessible_name: String,
+    /// From 0.0 to 1.0.
+    pub value: f32,
+    /// A name drawn before the track, such as an app's.
+    pub label: Option<String>,
+    /// The round button before the track.
+    pub toggle: Option<SliderToggle>,
+    /// A compact button after the percentage that opens a submenu, such as
+    /// the output an app plays to.
+    pub picker: Option<SliderPicker>,
+}
+
+/// The pop-up button at the end of a slider row: it shows the current
+/// choice and opens the choices as a submenu under it.
+///
+/// The choices are ordinary menu rows. Picking one reports its action id
+/// through [`ContextMenu::on_item_click`](crate::components::context_menu::ContextMenu::on_item_click)
+/// and closes the menu, as any submenu row does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SliderPicker {
+    /// The current choice, drawn on the button and cut short to fit it.
+    pub label: String,
+    /// What the button does, for a screen reader: "Output for Firefox".
+    pub accessible_label: String,
+    /// The rows of the submenu it opens.
+    pub items: Vec<MenuItem>,
+}
+
+/// The round button of a slider row, a toggle such as mute.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SliderToggle {
+    /// The glyph drawn inside it.
+    pub icon: MenuItemIcon,
+    /// On draws it filled with the accent.
+    pub on: bool,
+    /// What pressing it does, for a screen reader: "Mute output".
+    pub label: String,
+}
+
+/// What changed on a slider row.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SliderChange {
+    /// The value moved to this, from 0.0 to 1.0.
+    Value(f32),
+    /// The toggle was pressed and is now this.
+    Toggled(bool),
 }
 
 impl std::fmt::Debug for MenuItemKind {
@@ -48,9 +113,16 @@ impl std::fmt::Debug for MenuItemKind {
                 .field("items", items)
                 .finish(),
             Self::Separator => write!(f, "Separator"),
+            Self::Slider(slider) => slider.fmt(f),
+            Self::Header { label } => f.debug_struct("Header").field("label", label).finish(),
         }
     }
 }
+
+/// How tall a slider row is: room for the round toggle and the knob.
+pub const SLIDER_HEIGHT: f32 = 32.0;
+/// How tall a header is.
+pub const HEADER_HEIGHT: f32 = 22.0;
 
 /// Visual interaction state of a menu item
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -63,7 +135,7 @@ pub enum VisualState {
 /// Pure state/data for a MenuItem
 ///
 /// No rendering, no I/O, just data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MenuItem {
     /// The kind of menu item
     pub kind: MenuItemKind,
@@ -119,6 +191,26 @@ impl Hash for MenuItem {
             MenuItemKind::Separator => {
                 2u8.hash(state);
             }
+            MenuItemKind::Slider(slider) => {
+                3u8.hash(state);
+                slider.action_id.hash(state);
+                slider.accessible_name.hash(state);
+                slider.value.to_bits().hash(state);
+                slider.label.hash(state);
+                if let Some(toggle) = &slider.toggle {
+                    toggle.on.hash(state);
+                    toggle.label.hash(state);
+                }
+                if let Some(picker) = &slider.picker {
+                    picker.label.hash(state);
+                    picker.accessible_label.hash(state);
+                    picker.items.hash(state);
+                }
+            }
+            MenuItemKind::Header { label } => {
+                4u8.hash(state);
+                label.hash(state);
+            }
         }
         self.visual_state.hash(state);
         self.enabled.hash(state);
@@ -134,7 +226,9 @@ impl MenuItem {
     pub fn new(kind: MenuItemKind) -> Self {
         let height = match kind {
             MenuItemKind::Separator => 11.0, // MenuItemStyle::separator_height
-            _ => 23.0,                       // MenuItemStyle::line_height
+            MenuItemKind::Slider(_) => SLIDER_HEIGHT,
+            MenuItemKind::Header { .. } => HEADER_HEIGHT,
+            _ => 23.0, // MenuItemStyle::line_height
         };
 
         Self {
@@ -164,6 +258,30 @@ impl MenuItem {
         Self::new(MenuItemKind::Separator)
     }
 
+    /// A slider row reporting changes as `action_id`, named
+    /// `accessible_name` for a screen reader, at `value` from 0.0 to 1.0.
+    pub fn slider(
+        action_id: impl Into<String>,
+        accessible_name: impl Into<String>,
+        value: f32,
+    ) -> Self {
+        Self::new(MenuItemKind::Slider(MenuSlider {
+            action_id: action_id.into(),
+            accessible_name: accessible_name.into(),
+            value: value.clamp(0.0, 1.0),
+            label: None,
+            toggle: None,
+            picker: None,
+        }))
+    }
+
+    /// A caption over a group of rows.
+    pub fn header(label: impl Into<String>) -> Self {
+        Self::new(MenuItemKind::Header {
+            label: label.into(),
+        })
+    }
+
     /// Create a submenu item
     pub fn submenu(label: impl Into<String>, items: Vec<MenuItem>) -> Self {
         Self::new(MenuItemKind::Submenu {
@@ -190,14 +308,49 @@ impl MenuItem {
         matches!(self.kind, MenuItemKind::Separator)
     }
 
+    /// Whether the keyboard can land on this row: anything but a separator
+    /// or a header.
+    pub fn is_selectable(&self) -> bool {
+        !matches!(
+            self.kind,
+            MenuItemKind::Separator | MenuItemKind::Header { .. }
+        )
+    }
+
+    /// The slider, for a slider row.
+    pub fn slider_data(&self) -> Option<&MenuSlider> {
+        match &self.kind {
+            MenuItemKind::Slider(slider) => Some(slider),
+            _ => None,
+        }
+    }
+
+    /// The slider, to change in place.
+    pub fn slider_data_mut(&mut self) -> Option<&mut MenuSlider> {
+        match &mut self.kind {
+            MenuItemKind::Slider(slider) => Some(slider),
+            _ => None,
+        }
+    }
+
     pub fn has_submenu(&self) -> bool {
         matches!(self.kind, MenuItemKind::Submenu { .. })
+    }
+
+    /// Whether this row can open a submenu: a submenu row, which opens on
+    /// hover, or a slider row with a picker, which opens on a press.
+    pub fn opens_submenu(&self) -> bool {
+        self.submenu_items().is_some()
     }
 
     pub fn label(&self) -> Option<&str> {
         match &self.kind {
             MenuItemKind::Action { label, .. } => Some(label),
             MenuItemKind::Submenu { label, .. } => Some(label),
+            MenuItemKind::Header { label } => Some(label),
+            // Its accessible name, which is what keeps a highlight on it
+            // when the menu's items are replaced.
+            MenuItemKind::Slider(slider) => Some(&slider.accessible_name),
             MenuItemKind::Separator => None,
         }
     }
@@ -219,6 +372,10 @@ impl MenuItem {
     pub fn submenu_items(&self) -> Option<&[MenuItem]> {
         match &self.kind {
             MenuItemKind::Submenu { items, .. } => Some(items),
+            MenuItemKind::Slider(MenuSlider {
+                picker: Some(picker),
+                ..
+            }) => Some(&picker.items),
             _ => None,
         }
     }
@@ -249,6 +406,51 @@ impl MenuItem {
                 action_id: Some(id.into()),
                 shortcut,
             };
+        }
+        self
+    }
+
+    /// A name drawn before a slider's track.
+    pub fn with_slider_label(mut self, label: impl Into<String>) -> Self {
+        if let Some(slider) = self.slider_data_mut() {
+            slider.label = Some(label.into());
+        }
+        self
+    }
+
+    /// A round toggle before a slider's track, drawn with `icon`, filled
+    /// while `on`, and called `label` for a screen reader.
+    pub fn with_slider_toggle(
+        mut self,
+        icon: MenuItemIcon,
+        on: bool,
+        label: impl Into<String>,
+    ) -> Self {
+        if let Some(slider) = self.slider_data_mut() {
+            slider.toggle = Some(SliderToggle {
+                icon,
+                on,
+                label: label.into(),
+            });
+        }
+        self
+    }
+
+    /// A pop-up button after a slider's percentage, showing `label` and
+    /// opening `items` as a submenu under it; called `accessible_label` for
+    /// a screen reader.
+    pub fn with_slider_picker(
+        mut self,
+        label: impl Into<String>,
+        accessible_label: impl Into<String>,
+        items: Vec<MenuItem>,
+    ) -> Self {
+        if let Some(slider) = self.slider_data_mut() {
+            slider.picker = Some(SliderPicker {
+                label: label.into(),
+                accessible_label: accessible_label.into(),
+                items,
+            });
         }
         self
     }
@@ -376,6 +578,42 @@ mod tests {
         assert!(item.has_submenu());
         assert_eq!(item.label(), Some("File"));
         assert_eq!(item.submenu_items().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_slider_keeps_its_value_in_range_and_a_header_is_not_selectable() {
+        let slider = MenuItem::slider("out", "Output volume", 1.4).with_slider_toggle(
+            MenuItemIcon::Named("audio-volume-high-symbolic".into()),
+            true,
+            "Mute output",
+        );
+        assert_eq!(slider.slider_data().map(|s| s.value), Some(1.0));
+        assert!(slider.is_selectable());
+        assert_eq!(slider.label(), Some("Output volume"));
+        assert_eq!(slider.height, SLIDER_HEIGHT);
+
+        let header = MenuItem::header("Output");
+        assert!(!header.is_selectable());
+        assert_eq!(header.label(), Some("Output"));
+    }
+
+    #[test]
+    fn a_slider_picker_opens_its_choices_as_a_submenu() {
+        let plain = MenuItem::slider("app:Firefox", "Firefox volume", 0.5);
+        assert!(!plain.opens_submenu());
+
+        let picked = plain.with_slider_picker(
+            "Speakers",
+            "Output for Firefox",
+            vec![
+                MenuItem::action("Follow the default").with_checked(false),
+                MenuItem::action("Speakers").with_checked(true),
+            ],
+        );
+        assert!(picked.opens_submenu());
+        // Not a hover submenu: it opens from its button.
+        assert!(!picked.has_submenu());
+        assert_eq!(picked.submenu_items().map(<[MenuItem]>::len), Some(2));
     }
 
     #[test]

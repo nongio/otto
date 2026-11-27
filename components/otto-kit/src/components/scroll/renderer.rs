@@ -21,9 +21,17 @@ const GUTTER_WIDTH: f32 = 14.0;
 const TRACK_ALPHA: f32 = 0.6;
 
 /// How much stronger the thumb is than the fill token it is derived from.
-/// `fill_secondary` is tuned for large flat areas; at a 6pt handle the same
-/// alpha reads as a smudge rather than something you could grab.
-const THUMB_ALPHA_BOOST: f32 = 1.9;
+/// `fill_primary` is tuned for large flat areas; a 6pt handle needs more to
+/// read as something you could grab, on a near-white pane especially.
+const THUMB_ALPHA_BOOST: f32 = 1.5;
+
+/// The thumb's colour at full opacity, for both the painted bar and the one
+/// on its own subsurface.
+pub(super) fn thumb_color(theme: &Theme) -> skia_safe::Color {
+    let fill = theme.fill_primary;
+    let alpha = (fill.a() as f32 * THUMB_ALPHA_BOOST).min(255.0) as u8;
+    fill.with_a(alpha)
+}
 /// The thumb squashes against an end while the content is rubber-banded past
 /// it, but never below this fraction of its length.
 const SQUASH_FLOOR: f32 = 0.4;
@@ -239,9 +247,7 @@ impl ScrollRenderer {
 
         let mut thumb_paint = Paint::default();
         thumb_paint.set_anti_alias(true);
-        let mut thumb_color = faded(theme.fill_secondary, opacity);
-        thumb_color.a = (thumb_color.a * THUMB_ALPHA_BOOST).min(opacity);
-        thumb_paint.set_color4f(thumb_color, None);
+        thumb_paint.set_color4f(faded(thumb_color(theme), opacity), None);
         canvas.draw_rrect(RRect::new_rect_xy(thumb, radius, radius), &thumb_paint);
     }
 }

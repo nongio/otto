@@ -55,6 +55,13 @@ pub fn build() -> Pane {
                 ],
             ),
             group(
+                otto_kit::t!("settings-pane-sound"),
+                vec![
+                    Row::new(otto_kit::t!("settings-show-sound"), Control::Toggle(true))
+                        .id("topbar.show_sound"),
+                ],
+            ),
+            group(
                 otto_kit::t!("settings-group-clock"),
                 vec![
                     Row::new(otto_kit::t!("settings-show-clock"), Control::Toggle(true))

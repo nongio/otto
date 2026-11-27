@@ -110,10 +110,13 @@ pub fn draw(canvas: &Canvas, rect: Rect, label: &str, button: PushButton, theme:
     paint.set_color(ground);
     canvas.draw_rrect(rrect, &paint);
     if !accent {
+        // The controls' shared edge, stroked inside the button so its outer
+        // edge is the rect's.
         paint.set_style(PaintStyle::Stroke);
         paint.set_stroke_width(1.0);
-        paint.set_color(theme.fill_secondary);
-        canvas.draw_rrect(rrect, &paint);
+        paint.set_color(theme.control_edge);
+        let edge = RRect::new_rect_xy(rect.with_inset((0.5, 0.5)), radius - 0.5, radius - 0.5);
+        canvas.draw_rrect(edge, &paint);
     }
     let color = match (button.enabled, accent) {
         (false, _) => theme.text_tertiary,

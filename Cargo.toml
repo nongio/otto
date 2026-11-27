@@ -181,6 +181,8 @@ members = [
     "components/otto-canvas",
     "components/otto-search",
     "components/otto-network",
+    "components/otto-audio-graph",
+    "components/otto-mixer",
     "components/otto-foundations",
     "components/otto-dictate",
     "crates/otto-render",
@@ -365,6 +367,8 @@ assets = [
     ["target/release/otto-setup", "usr/bin/", "755"],
     ["target/release/otto-search", "usr/bin/", "755"],
     ["target/release/otto-agents", "usr/bin/", "755"],
+    ["target/release/otto-mixer", "usr/bin/", "755"],
+    ["target/release/otto-mixer-service", "usr/bin/", "755"],
     # Alias: a symlink to otto-launcher, which opens in ask mode under this
     # name. Kept as a link by preserve-symlinks.
     ["resources/bin/otto-ask", "usr/bin/", "777"],
@@ -380,6 +384,7 @@ assets = [
     ["resources/otto-files.desktop", "usr/share/applications/", "644"],
     ["resources/otto-preview.desktop", "usr/share/applications/", "644"],
     ["resources/otto-settings.desktop", "usr/share/applications/", "644"],
+    ["resources/otto-mixer.desktop", "usr/share/applications/", "644"],
     # The Trash window: otto-files behind its own entry, so it gets its own
     # icon in the dock and the applications list.
     ["resources/otto-trash.desktop", "usr/share/applications/", "644"],
@@ -399,6 +404,7 @@ assets = [
     ["components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service", "usr/lib/systemd/user/", "644"],
     ["components/otto-agents/otto-agents.service", "usr/lib/systemd/user/", "644"],
     ["components/otto-agents/otto-agents-bridge.service", "usr/lib/systemd/user/", "644"],
+    ["components/otto-mixer/otto-mixer-service.service", "usr/lib/systemd/user/", "644"],
     # The plugin otto-agents hands agents, by directory (see resources/plugins/README.md).
     # Globs keep the path under their fixed prefix; the script is listed apart so it stays executable.
     ["resources/plugins/otto/.claude-plugin/*", "usr/share/otto/plugins/otto/.claude-plugin/", "644"],
@@ -476,11 +482,14 @@ assets = [
     { source = "target/release/otto-setup", dest = "/usr/bin/otto-setup", mode = "755" },
     { source = "target/release/otto-search", dest = "/usr/bin/otto-search", mode = "755" },
     { source = "target/release/otto-agents", dest = "/usr/bin/otto-agents", mode = "755" },
+    { source = "target/release/otto-mixer", dest = "/usr/bin/otto-mixer", mode = "755" },
+    { source = "target/release/otto-mixer-service", dest = "/usr/bin/otto-mixer-service", mode = "755" },
     { source = "target/release/otto-media-worker", dest = "/usr/bin/otto-media-worker", mode = "755" },
     { source = "resources/bin/otto-look", dest = "/usr/bin/otto-look", mode = "755" },
     { source = "resources/otto-files.desktop", dest = "/usr/share/applications/otto-files.desktop", mode = "644" },
     { source = "resources/otto-preview.desktop", dest = "/usr/share/applications/otto-preview.desktop", mode = "644" },
     { source = "resources/otto-settings.desktop", dest = "/usr/share/applications/otto-settings.desktop", mode = "644" },
+    { source = "resources/otto-mixer.desktop", dest = "/usr/share/applications/otto-mixer.desktop", mode = "644" },
     { source = "resources/otto-trash.desktop", dest = "/usr/share/applications/otto-trash.desktop", mode = "644" },
     # otto-files app icon (hicolor theme)
     { source = "components/otto-files/resources/icons/hicolor/16x16/apps/otto-files.png", dest = "/usr/share/icons/hicolor/16x16/apps/otto-files.png", mode = "644" },
@@ -526,6 +535,7 @@ assets = [
     { source = "components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service", dest = "/usr/lib/systemd/user/xdg-desktop-portal-otto.service", mode = "644" },
     { source = "components/otto-agents/otto-agents.service", dest = "/usr/lib/systemd/user/otto-agents.service", mode = "644" },
     { source = "components/otto-agents/otto-agents-bridge.service", dest = "/usr/lib/systemd/user/otto-agents-bridge.service", mode = "644" },
+    { source = "components/otto-mixer/otto-mixer-service.service", dest = "/usr/lib/systemd/user/otto-mixer-service.service", mode = "644" },
     # The plugin otto-agents hands agents (see resources/plugins/README.md); the script is listed apart so it stays executable.
     { source = "resources/plugins/otto/.claude-plugin/*", dest = "/usr/share/otto/plugins/otto/.claude-plugin/", mode = "644" },
     { source = "resources/plugins/otto/agents/*.md", dest = "/usr/share/otto/plugins/otto/agents/", mode = "644" },
@@ -652,6 +662,9 @@ files = [
     ["target/release/otto-setup", "/usr/bin/otto-setup", "755"],
     ["target/release/otto-search", "/usr/bin/otto-search", "755"],
     ["target/release/otto-agents", "/usr/bin/otto-agents", "755"],
+    ["target/release/otto-mixer", "/usr/bin/otto-mixer", "755"],
+    ["target/release/otto-mixer-service", "/usr/bin/otto-mixer-service", "755"],
+    ["components/otto-mixer/otto-mixer-service.service", "/usr/lib/systemd/user/otto-mixer-service.service", "644"],
     ["components/otto-agents/otto-agents.service", "/usr/lib/systemd/user/otto-agents.service", "644"],
     ["components/otto-agents/otto-agents-bridge.service", "/usr/lib/systemd/user/otto-agents-bridge.service", "644"],
     # The plugin otto-agents hands agents (see resources/plugins/README.md); the script is listed apart so it stays executable.
@@ -676,6 +689,7 @@ files = [
     ["resources/otto-files.desktop", "/usr/share/applications/otto-files.desktop", "644"],
     ["resources/otto-preview.desktop", "/usr/share/applications/otto-preview.desktop", "644"],
     ["resources/otto-settings.desktop", "/usr/share/applications/otto-settings.desktop", "644"],
+    ["resources/otto-mixer.desktop", "/usr/share/applications/otto-mixer.desktop", "644"],
     ["resources/otto-trash.desktop", "/usr/share/applications/otto-trash.desktop", "644"],
     # otto-files app icon (hicolor theme)
     ["components/otto-files/resources/icons/hicolor/16x16/apps/otto-files.png", "/usr/share/icons/hicolor/16x16/apps/otto-files.png", "644"],
