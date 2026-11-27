@@ -1,10 +1,8 @@
-//! Suspend, restart and shut down, for the panel's power buttons.
+//! Sleep, hibernate, restart and shut down, for the panel's power buttons.
 //!
-//! Asked of logind over the system bus rather than by running `systemctl`:
-//! logind is what `systemctl` would have asked anyway, and it says why it
-//! refused in a D-Bus error instead of on a stderr nobody reads. Whether the
-//! greeter's or the locked session's user may do this is polkit's call;
-//! `interactive` lets polkit ask for a password where its policy says to.
+//! The asking is [`otto_kit::power`]'s, shared with the bar's Otto menu.
+//! Whether the greeter's or the locked session's user may do this is
+//! polkit's call.
 //!
 //! The call runs on a thread of its own. logind answers suspend only once the
 //! machine is on its way down, and polkit can take as long as it likes — the
@@ -13,42 +11,26 @@
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use otto_kit::dbus::login1::Login1ManagerProxyBlocking;
+pub use otto_kit::power::PowerError;
 
 use crate::PowerAction;
 
-/// Why logind did not do what was asked.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PowerError {
-    /// polkit said no.
-    Denied,
-    /// logind could not be reached, or failed for a reason of its own.
-    Failed(String),
-}
-
-impl PowerError {
-    /// What the panel says about it, in `client`'s words: `{client}-power-
-    /// {action}-denied` or `-failed` from the catalogue, as with
-    /// [`crate::reader::request_line`].
-    pub fn line(&self, action: PowerAction, client: &str) -> String {
-        let action = match action {
-            PowerAction::Suspend => "suspend",
-            PowerAction::Restart => "restart",
-            PowerAction::Shutdown => "shutdown",
-        };
-        match self {
-            PowerError::Denied => {
-                otto_kit::i18n::lookup(&format!("{client}-power-{action}-denied"), None)
-                    .into_owned()
-            }
-            PowerError::Failed(error) => {
-                let args = otto_kit::i18n::args_from(vec![(
-                    "error",
-                    otto_kit::i18n::FluentValue::from(error.clone()),
-                )]);
-                otto_kit::i18n::lookup(&format!("{client}-power-{action}-failed"), Some(&args))
-                    .into_owned()
-            }
+/// What the panel says about a refusal or failure, in `client`'s words:
+/// `{client}-power-{action}-denied` or `-failed` from the catalogue, as with
+/// [`crate::reader::request_line`].
+pub fn error_line(error: &PowerError, action: PowerAction, client: &str) -> String {
+    let action = action.name();
+    match error {
+        PowerError::Denied => {
+            otto_kit::i18n::lookup(&format!("{client}-power-{action}-denied"), None).into_owned()
+        }
+        PowerError::Failed(error) => {
+            let args = otto_kit::i18n::args_from(vec![(
+                "error",
+                otto_kit::i18n::FluentValue::from(error.clone()),
+            )]);
+            otto_kit::i18n::lookup(&format!("{client}-power-{action}-failed"), Some(&args))
+                .into_owned()
         }
     }
 }
@@ -67,7 +49,7 @@ impl PowerRequest {
         let spawned = std::thread::Builder::new()
             .name("power".to_string())
             .spawn(move || {
-                let _ = tx.send(call(action));
+                let _ = tx.send(otto_kit::power::request(action));
                 otto_kit::AppContext::request_wakeup();
             });
         if let Err(err) = spawned {
@@ -91,38 +73,4 @@ impl PowerRequest {
             ))),
         }
     }
-}
-
-fn call(action: PowerAction) -> Result<(), PowerError> {
-    let failed = |err: zbus::Error| {
-        tracing::warn!(?action, %err, "logind unavailable");
-        PowerError::Failed(err.to_string())
-    };
-    let connection = zbus::blocking::Connection::system().map_err(failed)?;
-    let manager = Login1ManagerProxyBlocking::new(&connection).map_err(failed)?;
-    let result = match action {
-        PowerAction::Suspend => manager.suspend(true),
-        PowerAction::Restart => manager.reboot(true),
-        PowerAction::Shutdown => manager.power_off(true),
-    };
-    match result {
-        Ok(()) => {
-            tracing::info!(?action, "logind accepted");
-            Ok(())
-        }
-        Err(zbus::Error::MethodError(name, message, _)) if is_refusal(name.as_str()) => {
-            tracing::warn!(?action, %name, ?message, "logind refused");
-            Err(PowerError::Denied)
-        }
-        Err(err) => Err(failed(err)),
-    }
-}
-
-/// The D-Bus errors polkit's refusals come back as.
-fn is_refusal(name: &str) -> bool {
-    matches!(
-        name,
-        "org.freedesktop.DBus.Error.AccessDenied"
-            | "org.freedesktop.DBus.Error.InteractiveAuthorizationRequired"
-    )
 }

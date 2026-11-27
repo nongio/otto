@@ -261,6 +261,14 @@ That one renders as `March 23, Thursday 21:16`. Some other useful formats:
 | `"%I:%M %p"` | `09:16 PM` |
 | `"%Y-%m-%d %H:%M:%S"` | `2026-03-23 21:16:04` |
 
+## The Otto menu
+
+The two dots at the far left open the Otto menu: **About Otto**,
+**Settings…**, **Sleep**, **Restart…**, **Shut Down…** and **Log Out**. Hold
+Cmd while it is open and **Sleep** becomes **Hibernate**, where the machine
+can hibernate. Restart, Shut Down and Log Out ask before they act. See
+[Power Management](power-management.md#sleep-and-hibernate).
+
 ## New versions
 
 When a newer Otto has been released, the Otto menu (the two dots at the far

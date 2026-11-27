@@ -2352,3 +2352,26 @@ bar-network-signal-good = bon
 bar-network-signal-excellent = excellent
 schema-topbar-show-network-label = Afficher l’état du réseau
 schema-topbar-show-network-description = L’indicateur Wi-Fi et filaire de la barre supérieure, avec un menu pour rejoindre un réseau. Présent là où NetworkManager est lancé.
+
+## Sleep, hibernate, restart and shut down
+
+settings-sleep = Veille
+settings-sleep-detail = Maintiens Cmd sur un bouton de veille pour passer à l'autre mode
+settings-choice-sleep-suspend = Suspendre
+settings-choice-sleep-hibernate = Hiberner
+bar-otto-sleep = Veille
+bar-otto-hibernate = Hiberner
+bar-otto-restart = Redémarrer…
+bar-otto-shut-down = Éteindre…
+bar-restart-title = Redémarrer maintenant ?
+bar-restart-body = Ce qui n'est pas enregistré dans tes apps sera perdu.
+bar-restart-grant = Redémarrer
+bar-shutdown-title = Éteindre maintenant ?
+bar-shutdown-body = Ce qui n'est pas enregistré dans tes apps sera perdu.
+bar-shutdown-grant = Éteindre
+schema-power-management-sleep-label = Veille
+schema-power-management-sleep-description = Comment les boutons de veille mettent en veille. Avec Cmd enfoncé, l'autre mode.
+greeter-power-hibernate-denied = Hibernation non autorisée
+greeter-power-hibernate-failed = Impossible d'hiberner
+lock-power-hibernate-denied = Hibernation non autorisée
+lock-power-hibernate-failed = Impossible d'hiberner : { $error }

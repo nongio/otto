@@ -65,6 +65,24 @@ impl ContextMenuState {
         }
     }
 
+    /// Swap every item's alternate in (`on`, Cmd held) or out, submenus
+    /// included. Returns whether any item changed.
+    pub fn show_alternates(&mut self, on: bool) -> bool {
+        fn walk(items: &mut [MenuItem], on: bool) -> bool {
+            let mut changed = false;
+            for item in items {
+                changed |= item.show_alternate(on);
+                if let crate::components::menu_item::MenuItemKind::Submenu { items, .. } =
+                    &mut item.kind
+                {
+                    changed |= walk(items, on);
+                }
+            }
+            changed
+        }
+        walk(&mut self.items, on)
+    }
+
     // === Getters ===
 
     pub fn items(&self) -> &[MenuItem] {

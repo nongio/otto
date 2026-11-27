@@ -2347,3 +2347,26 @@ bar-network-signal-good = buono
 bar-network-signal-excellent = ottimo
 schema-topbar-show-network-label = Mostra lo stato della rete
 schema-topbar-show-network-description = L’indicatore Wi-Fi e via cavo nella barra superiore, con un menu per accedere a una rete. Presente dove è in esecuzione NetworkManager.
+
+## Sleep, hibernate, restart and shut down
+
+settings-sleep = Stop
+settings-sleep-detail = Tieni premuto Cmd su un pulsante di stop per usare l'altro modo
+settings-choice-sleep-suspend = Sospensione
+settings-choice-sleep-hibernate = Ibernazione
+bar-otto-sleep = Stop
+bar-otto-hibernate = Iberna
+bar-otto-restart = Riavvia…
+bar-otto-shut-down = Spegni…
+bar-restart-title = Riavviare adesso?
+bar-restart-body = Quello che non hai salvato nelle app andrà perso.
+bar-restart-grant = Riavvia
+bar-shutdown-title = Spegnere adesso?
+bar-shutdown-body = Quello che non hai salvato nelle app andrà perso.
+bar-shutdown-grant = Spegni
+schema-power-management-sleep-label = Stop
+schema-power-management-sleep-description = Come mettono in stop i pulsanti di stop. Tenendo premuto Cmd si usa l'altro modo.
+greeter-power-hibernate-denied = Ibernazione non consentita
+greeter-power-hibernate-failed = Ibernazione non riuscita
+lock-power-hibernate-denied = Ibernazione non consentita
+lock-power-hibernate-failed = Ibernazione non riuscita: { $error }

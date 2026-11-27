@@ -7,7 +7,8 @@ exactly as you left it: windows, workspaces, focus, running programs.
 ![The Otto lock screen](images/lock-screen.jpg)
 
 The clock and date sit top left, the panel is centred, and sleep, restart and
-power sit bottom right. The panel carries the account's avatar (or its initials
+power sit bottom right (hold Cmd and sleep hibernates instead; see
+[Power Management](power-management.md#sleep-and-hibernate)). The panel carries the account's avatar (or its initials
 when there is no avatar file), the account name, and the password field.
 
 ## Otto-lock

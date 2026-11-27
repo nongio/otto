@@ -35,7 +35,7 @@ which is off by default so the greeter never links libpam.
 | `pam` | The PAM conversation on a thread of its own (`pam` feature). `Attempt::start` runs a `Service` stack; `Attempt::with_conversation` runs any other conversation the same way, which is how otto-authorize relays polkit's helper. The panel polls it with `Attempt::poll` and answers with `Attempt::answer`. |
 | `secret` | `SecretInput`, the field's buffer. Reserved in full up front and never grown, and wiped whenever anything leaves it. |
 | `reader` | Recognises `pam_fprintd`'s request for a finger and its no-match report, and says them again from Otto's own catalogues in the panel's locale. |
-| `power` | Suspend, restart and shut down, asked of logind (`org.freedesktop.login1.Manager`) on the system bus from a thread of its own. polkit decides whether the user may. |
+| `power` | Runs `otto_kit::power::request` (sleep, hibernate, restart, shut down, asked of logind) on a thread of its own and words its refusals for the client. polkit decides whether the user may. The panel's first power button is the sleep button: the client sets which sleep it shows with `Panel::set_sleep`, from `otto_kit::power::Sleep` and whether Cmd is held. |
 | `user` | The user's display name from `/etc/passwd` and the avatar from the usual locations; a suggested login name for the greeter. |
 | `appearance` | Wallpaper, background, accent, font and colour scheme, read straight from Otto's `config.toml` (system, then the user's). |
 | `pacing` | `frame_in_flight` bounds how long a client trusts frame callbacks; `Clock` notices the minute turn so the clock is redrawn. |

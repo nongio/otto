@@ -2423,3 +2423,26 @@ bar-network-signal-good = dobry
 bar-network-signal-excellent = doskonały
 schema-topbar-show-network-label = Pokazuj stan sieci
 schema-topbar-show-network-description = Wskaźnik Wi-Fi i sieci przewodowej na górnym pasku, z menu do łączenia z siecią. Widoczny tam, gdzie działa NetworkManager.
+
+## Sleep, hibernate, restart and shut down
+
+settings-sleep = Uśpij
+settings-sleep-detail = Przytrzymaj Cmd na przycisku uśpienia, aby użyć drugiego sposobu
+settings-choice-sleep-suspend = Wstrzymanie
+settings-choice-sleep-hibernate = Hibernacja
+bar-otto-sleep = Uśpij
+bar-otto-hibernate = Hibernuj
+bar-otto-restart = Uruchom ponownie…
+bar-otto-shut-down = Wyłącz…
+bar-restart-title = Uruchomić ponownie teraz?
+bar-restart-body = Niezapisane zmiany w aplikacjach zostaną utracone.
+bar-restart-grant = Uruchom ponownie
+bar-shutdown-title = Wyłączyć teraz?
+bar-shutdown-body = Niezapisane zmiany w aplikacjach zostaną utracone.
+bar-shutdown-grant = Wyłącz
+schema-power-management-sleep-label = Uśpienie
+schema-power-management-sleep-description = Jak usypiają przyciski uśpienia. Przytrzymanie Cmd wybiera drugi sposób.
+greeter-power-hibernate-denied = Hibernacja niedozwolona
+greeter-power-hibernate-failed = Nie udało się zahibernować
+lock-power-hibernate-denied = Hibernacja niedozwolona
+lock-power-hibernate-failed = Nie udało się zahibernować: { $error }

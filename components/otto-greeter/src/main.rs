@@ -20,6 +20,7 @@ use otto_auth_ui::{
     frame_in_flight, reader, Action, Appearance, Clock, Field, Finger, Panel, PowerAction,
     SecretInput, Status, User, View,
 };
+use otto_kit::power::Sleep;
 use otto_kit::{surfaces::LayerShellSurface, App, AppContext, AppRunner};
 use session::Session;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
@@ -148,6 +149,13 @@ struct Greeter {
     clock: Clock,
     /// A power button's request, until logind has answered it.
     power_request: Option<PowerRequest>,
+    /// Which way the sleep button sleeps, once logind has said whether
+    /// hibernating is possible. See [`Sleep::current_in_background`].
+    sleep: std::sync::Arc<std::sync::OnceLock<Sleep>>,
+    /// Whether Cmd is held, which swaps the sleep button to the other sleep.
+    cmd_held: bool,
+    /// The sleep the button was last drawn with.
+    drawn_sleep: PowerAction,
 }
 
 impl Greeter {
@@ -226,6 +234,9 @@ impl Greeter {
             session_index,
             clock: Clock::default(),
             power_request: None,
+            sleep: Sleep::current_in_background(),
+            cmd_held: false,
+            drawn_sleep: PowerAction::Suspend,
         }
     }
 
@@ -697,6 +708,7 @@ impl Greeter {
         let Some(mut panel) = self.panel.take() else {
             return;
         };
+        panel.set_sleep(self.drawn_sleep);
         panel.update(&self.view());
         self.panel = Some(panel);
 
@@ -766,7 +778,17 @@ impl Greeter {
         }
     }
 
-    /// Suspend, restart or shut down, through logind.
+    /// Settle which sleep the sleep button offers. Returns whether it changed,
+    /// so the panel needs redrawing.
+    fn sleep_moved(&mut self) -> bool {
+        let sleep = self.sleep.get().copied().unwrap_or(Sleep::SUSPEND);
+        let action = sleep.action(self.cmd_held);
+        let moved = action != self.drawn_sleep;
+        self.drawn_sleep = action;
+        moved
+    }
+
+    /// Sleep, restart or shut down, through logind.
     ///
     /// Whether an unprivileged greeter may do this is polkit's call, not the
     /// greeter's. The answer arrives in [`Greeter::power_answered`]; a refusal
@@ -785,7 +807,7 @@ impl Greeter {
         };
         let action = self.power_request.take().expect("polled above").action();
         if let Err(err) = answer {
-            self.error = Some(err.line(action, "greeter"));
+            self.error = Some(otto_auth_ui::power::error_line(&err, action, "greeter"));
         }
         true
     }
@@ -848,7 +870,7 @@ impl App for Greeter {
     fn on_update(&mut self, _ctx: &AppContext) {
         // Collect anything greetd has said since the last pass. The socket is
         // in the loop's poll set, so this runs when it has something to say.
-        if self.pump() | self.power_answered() || self.tick() {
+        if self.pump() | self.power_answered() | self.sleep_moved() || self.tick() {
             self.draw();
             return;
         }
@@ -916,6 +938,13 @@ impl App for Greeter {
         }
 
         if acted {
+            self.draw();
+        }
+    }
+
+    fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: otto_kit::Modifiers) {
+        self.cmd_held = otto_kit::cmd_held(modifiers);
+        if self.sleep_moved() {
             self.draw();
         }
     }

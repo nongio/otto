@@ -1,4 +1,5 @@
 use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
+use otto_kit::power::PowerAction;
 use otto_kit::skia::Rect;
 use otto_kit::{
     components::context_menu::{ContextMenu, MenuRefresh},
@@ -14,6 +15,7 @@ use smithay_client_toolkit::{
     shell::xdg::XdgPositioner,
 };
 use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, OnceLock};
 use wayland_client::protocol::{wl_keyboard, wl_surface};
 use wayland_client::Proxy;
 use wayland_protocols::xdg::shell::client::xdg_positioner;
@@ -380,6 +382,10 @@ impl TopBarApp {
                 }
                 "about" => open_settings(&["--pane", "about"]),
                 "settings" => open_settings(&[]),
+                "suspend" => crate::logout::power(PowerAction::Suspend),
+                "hibernate" => crate::logout::power(PowerAction::Hibernate),
+                "restart" => crate::logout::confirm_and_restart(),
+                "shutdown" => crate::logout::confirm_and_shut_down(),
                 "logout" => crate::logout::confirm_and_log_out(),
                 _ => {}
             })
@@ -2062,8 +2068,9 @@ fn open_settings(extra: &[&str]) {
 }
 
 /// The Otto menu's items. About and Settings both open the settings app,
-/// so they go only where it is configured; Log Out is always there. A newer
-/// release, when there is one, goes first.
+/// so they go only where it is configured; the way out (sleep, restart,
+/// shut down, log out) is always there. A newer release, when there is one,
+/// goes first.
 fn otto_menu_items() -> Vec<KitMenuItem> {
     let mut items = Vec::new();
     if crate::update::available().is_some() {
@@ -2084,10 +2091,49 @@ fn otto_menu_items() -> Vec<KitMenuItem> {
         );
         items.push(KitMenuItem::separator());
     }
+    items.push(sleep_item(sleep()));
+    items.push(
+        KitMenuItem::action(otto_kit::t!("bar-otto-restart")).with_action_id("restart".to_string()),
+    );
+    items.push(
+        KitMenuItem::action(otto_kit::t!("bar-otto-shut-down"))
+            .with_action_id("shutdown".to_string()),
+    );
+    items.push(KitMenuItem::separator());
     items.push(
         KitMenuItem::action(otto_kit::t!("bar-otto-log-out")).with_action_id("logout".to_string()),
     );
     items
+}
+
+/// Which way the Otto menu sleeps. Whether the machine can hibernate is
+/// asked of logind off the draw thread, once, at the first menu; until it
+/// has answered, sleeping is a suspend. After that the preference is read
+/// again at each menu, so a change in Settings shows at the next one.
+fn sleep() -> otto_kit::power::Sleep {
+    use otto_kit::power::Sleep;
+    static ASKED: LazyLock<Arc<OnceLock<Sleep>>> = LazyLock::new(Sleep::current_in_background);
+    match ASKED.get() {
+        Some(_) => Sleep::current(),
+        None => Sleep::SUSPEND,
+    }
+}
+
+/// The sleep item: the preferred sleep, with the other one swapped in
+/// while Cmd is held where the machine can hibernate.
+fn sleep_item(sleep: otto_kit::power::Sleep) -> KitMenuItem {
+    let item = |action: PowerAction| {
+        let label = match action {
+            PowerAction::Hibernate => otto_kit::t!("bar-otto-hibernate"),
+            _ => otto_kit::t!("bar-otto-sleep"),
+        };
+        KitMenuItem::action(label).with_action_id(action.name().to_string())
+    };
+    let preferred = item(sleep.preferred);
+    match sleep.alternative {
+        Some(alternative) => preferred.with_alternate(item(alternative)),
+        None => preferred,
+    }
 }
 
 /// The menu under the application's name: what Otto does with the focused

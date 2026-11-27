@@ -40,6 +40,7 @@ pub fn is_applied_live(id: &str) -> bool {
             | "power_management.manage_lid_switch"
             | "power_management.on_lid_close"
             | "power_management.on_power_button"
+            | "power_management.sleep"
             | "lock.locker_command"
             | "lock.locker_args"
             | "lock.auto_lock_timeout"
@@ -371,6 +372,9 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         "power_management.manage_lid_switch"
         | "power_management.on_lid_close"
         | "power_management.on_power_button" => Ok(()),
+        // Not the compositor's: the login and lock screens and the bar read
+        // it from the config files as they draw their sleep buttons.
+        "power_management.sleep" => Ok(()),
         // `lock::locker_command` reads both at the moment something asks for
         // the session to be locked, so the next lock uses the new locker.
         "lock.locker_command" | "lock.locker_args" => Ok(()),
@@ -531,6 +535,7 @@ mod tests {
             "power_management.manage_lid_switch",
             "power_management.on_lid_close",
             "power_management.on_power_button",
+            "power_management.sleep",
             "lock.locker_command",
             "lock.locker_args",
             "lock.auto_lock_timeout",

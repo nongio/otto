@@ -1929,6 +1929,24 @@ pub struct PowerManagementConfig {
     /// Set to "ignore" to leave the key to systemd-logind / the focused client.
     #[serde(default = "default_on_power_button")]
     pub on_power_button: PowerButtonAction,
+
+    /// How the sleep buttons sleep (default: "suspend"): the login and lock
+    /// screens' and the Otto menu's. Holding Cmd swaps to the other one where
+    /// the machine can hibernate. The compositor only carries the value; the
+    /// clients read it from the config files themselves (`otto_kit::power`).
+    #[serde(default)]
+    pub sleep: SleepAction,
+}
+
+/// Which way of sleeping the sleep buttons take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SleepAction {
+    /// Suspend to RAM.
+    #[default]
+    Suspend,
+    /// Write memory to disk and power off.
+    Hibernate,
 }
 
 /// Action to take when laptop lid is closed
@@ -1971,6 +1989,7 @@ impl Default for PowerManagementConfig {
             manage_lid_switch: default_manage_lid_switch(),
             on_lid_close: default_on_lid_close(),
             on_power_button: default_on_power_button(),
+            sleep: SleepAction::default(),
         }
     }
 }

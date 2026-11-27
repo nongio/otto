@@ -1266,13 +1266,18 @@ fn move_focus_for_key(event: &KeyEvent) -> bool {
     true
 }
 
-/// Whether a key press is the close-window shortcut.
+/// Whether Cmd is down.
 ///
 /// Cmd reaches a client as `logo`, or as `ctrl` where the session remaps the
-/// Cmd keys (`altwin:ctrl_win`, Otto's default) — a client cannot tell that
-/// apart from the real Ctrl key, and does not need to.
+/// Cmd keys (`altwin:ctrl_win`, Otto's default). A client cannot tell that
+/// apart from the real Ctrl key, so either counts.
+pub fn cmd_held(modifiers: Modifiers) -> bool {
+    modifiers.ctrl || modifiers.logo
+}
+
+/// Whether a key press is the close-window shortcut: Cmd+W.
 fn is_close_window_key(keysym: Keysym, modifiers: Modifiers) -> bool {
-    keysym == Keysym::w && (modifiers.ctrl || modifiers.logo) && !modifiers.alt && !modifiers.shift
+    keysym == Keysym::w && cmd_held(modifiers) && !modifiers.alt && !modifiers.shift
 }
 
 impl<A: App + 'static> AppData<A> {
@@ -1454,6 +1459,7 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         _layout: u32,
     ) {
         AppContext::set_current_modifiers(modifiers);
+        AppContext::dispatch_modifiers(modifiers);
         let ctx = AppContext::new(&self.context_data);
         self.app.on_modifiers(&ctx, modifiers);
     }

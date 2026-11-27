@@ -24,6 +24,15 @@ pub trait Login1Manager {
     /// Suspend to RAM. Answers once the machine is on its way down.
     fn suspend(&self, interactive: bool) -> zbus::Result<()>;
 
+    /// Hibernate: write memory to swap and power off. Answers once the
+    /// machine is on its way down.
+    fn hibernate(&self, interactive: bool) -> zbus::Result<()>;
+
+    /// Whether hibernating would work for this caller: `"yes"`,
+    /// `"challenge"` (polkit would ask), `"no"` or `"na"` (no swap or resume
+    /// device to hibernate to).
+    fn can_hibernate(&self) -> zbus::Result<String>;
+
     /// Sent with `true` as the machine is about to sleep, and with `false`
     /// once it has woken.
     #[zbus(signal)]
