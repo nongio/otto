@@ -5,11 +5,11 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use otto_audio::graph_view::GraphMode;
-use otto_audio::WINDOW_APP;
 use otto_audio_graph::Connection;
 use otto_kit::skia::{surfaces, EncodedImageFormat};
 use otto_kit::theme::Theme;
+use otto_mixer::graph_view::GraphMode;
+use otto_mixer::WINDOW_APP;
 
 use crate::ui::{Pane, Ui};
 

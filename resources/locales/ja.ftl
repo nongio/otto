@@ -2321,6 +2321,9 @@ bar-sound-app-volume = { $app } の音量
 bar-sound-mute-output = 出力を消音
 bar-sound-mute-input = 入力を消音
 bar-sound-mute-app = { $app } を消音
+bar-sound-app-output-default = デフォルト
+bar-sound-app-follow-default = デフォルトに従う
+bar-sound-app-output = { $app } の出力先
 # Beside each output and input, in the shortcut column: what kind of device
 # it is. Virtual is one made in software, such as a mix or an effect.
 bar-sound-kind-bluetooth = Bluetooth
@@ -2329,8 +2332,8 @@ bar-sound-kind-hdmi = HDMI
 bar-sound-kind-virtual = 仮想
 bar-sound-kind-built-in = 内蔵
 bar-sound-kind-airplay = AirPlay
-# The menu's last row, which opens the Audio app.
-bar-sound-open-audio = オーディオ…
+# The menu's last row, which opens the Mixer app.
+bar-sound-open-mixer = ミキサーを開く…
 # What a screen reader calls the indicator. $percent is a whole number and
 # $device the output's name.
 bar-sound-label = サウンド、{ $percent }%、{ $device }
@@ -2364,16 +2367,16 @@ schema-topbar-show-network-description = 上部バーの Wi-Fi と有線のイ�
 schema-topbar-show-sound-label = サウンドを表示
 schema-topbar-show-sound-description = 上部バーのスピーカー。音量、出力と入力、再生中のアプリを扱うメニュー付き。PipeWire が動作している場合に表示されます。
 
-## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
+## otto-mixer: the PipeWire graph as a patchbay (Graph), and the sound
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = オーディオ設定
-audio-window-title = Otto オーディオ設定 — { $pane }
+audio-title = ミキサー
+audio-window-title = Otto ミキサー — { $pane }
 audio-pane-graph = グラフ
 audio-pane-engine = エンジン
 audio-no-server-title = サウンドサーバが動作していません
-audio-no-server-body = PipeWire が起動すると、すぐにオーディオが接続されます。
+audio-no-server-body = PipeWire が起動すると、すぐにミキサーが接続されます。
 audio-no-server-start = PipeWire を起動
 audio-graph-empty = このフィルタでは表示するものがありません
 audio-filter-audio = オーディオ
@@ -2521,7 +2524,7 @@ audio-airplay-delay = AirPlay スピーカーの音は約 2 秒遅れるため�
 # The value of the Delay fact in the Graph's details panel.
 audio-airplay-delay-short = 約 2 秒（ネットワーク経由）
 
-## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
+## otto-mixer — Virtual devices: outputs, inputs and loopbacks the audio
 ## service makes. The cards are about 260 px wide; the form's labels sit in a
 ## column of about 78 px.
 
@@ -2576,7 +2579,7 @@ audio-matrix-corner = 送り元 ↓ · 送り先 →
 # Over the Lanes view, which shows links but does not make them.
 audio-lanes-note = 各レーンは、音が始まる場所から終わる場所までをたどります。リンクはパッチベイかマトリクスで行います。
 audio-lanes-empty = このフィルタではリンクがありません
-## otto-audio — Effects: equalisers, limiters, compressors and noise
+## otto-mixer — Effects: equalisers, limiters, compressors and noise
 ## suppression the audio service hosts, each sitting on a device. The list
 ## beside the editor is about 230 px wide; band cards are about 130 px wide.
 
@@ -2712,3 +2715,88 @@ audio-effects-ee-multiband-compressor = マルチバンドコンプレッサ
 audio-effects-ee-stereo-tools = ステレオツール
 audio-effects-ee-limiter = リミッタ
 audio-effects-ee-filter = フィルタ
+
+audio-pane-mixer = ミキサー
+audio-pane-status = 状態
+audio-sidebar-advanced = 詳細
+audio-status-line-on = オーディオサービス: オン
+audio-status-line-off = オーディオサービス: オフ
+audio-status-short-device-missing = { $device } が接続されていません
+audio-status-short-no-output = { $app } の出力先がありません
+audio-status-short-dropouts = { $device } で音切れ
+audio-status-short-clipping = { $name } がクリップしています
+audio-status-line-more = { $first } +{ $count }
+audio-kind-hdmi = HDMI
+audio-kind-virtual = 仮想
+audio-mixer-title = ミキサー
+audio-mixer-intro = どこで鳴っているか、音量、使っているアプリ。
+audio-mixer-service-down = アプリのルールと通話中に音を下げる機能は、オーディオサービスの実行中のみ働きます。
+audio-mixer-outputs = 出力
+audio-mixer-apps = 再生中のアプリ
+audio-mixer-inputs = 入力
+audio-mixer-calls-heading = 通話中
+audio-mixer-default = デフォルト
+audio-mixer-no-tuning = 調整なし
+audio-mixer-tuning-off = { $name }（オフ）
+audio-mixer-used-by = 使用中: { $apps }
+audio-mixer-not-used = ここから録音しているアプリはありません
+audio-mixer-no-outputs = 出力が見つかりません
+audio-mixer-no-inputs = 入力が見つかりません
+audio-mixer-nothing-playing = いまは何も再生していません。
+audio-mixer-follow-default = デフォルトに従う
+audio-mixer-default-output = デフォルト（{ $name }）
+audio-mixer-always-here = { $app } を常にここで再生
+audio-mixer-calls-lower = アプリがマイクを使うとき、ほかのアプリの音量を下げる:
+audio-status-title = 状態
+audio-effects-not-in-use = 未使用
+audio-devices-details = プロファイル、コーデック、ポート
+audio-devices-sound = サウンド
+audio-devices-sound-intro = この出力で再生するすべてのアプリの聞こえ方。
+audio-devices-tuning = 調整
+audio-devices-compare = 比較
+audio-devices-loudness = ラウドネス
+audio-devices-protect = クリップを防ぐ
+audio-devices-tuning-none = なし
+audio-devices-tuning-edit = 編集…
+audio-devices-tuning-new = 新しいイコライザ
+audio-devices-tuning-new-name = { $device } EQ
+audio-devices-compare-off = オフ
+audio-devices-compare-on = 調整あり
+audio-devices-bt-title = 最高の音質かマイクか
+audio-devices-bt-about = Bluetooth のヘッドホンは、マイクがオフのときだけ最高の音質で鳴ります。ヘッドセットのプロファイルではマイクが使えますが、音質は通話並みになります。
+audio-devices-bt-best = 最高の音質
+audio-devices-bt-headset = マイク付きヘッドセット
+audio-devices-bt-switch = 通話でマイクが必要なときヘッドセットに切り替え、終わったら戻す
+audio-status-intro = 確認が必要なことと、いま音がどこへ流れているか。
+audio-status-worth-a-look = 確認したい項目
+audio-status-nothing = 確認が必要なものはありません。
+audio-status-playing = 再生中
+audio-status-facts = 概要
+audio-status-service-off = オーディオサービスが停止しているため、ルール、エフェクト、保存した接続は維持されません。
+audio-status-rule-missing = { $app } は { $device } で再生する設定ですが、接続されていません。
+audio-status-stream-missing = { $app } は接続されていないデバイスに送られています。
+audio-status-dropouts = 直近 10 分間に { $device } で { $count } 回の音切れ。
+audio-status-raise-buffer = { $frames } フレームにする
+audio-status-boost = { $name } は最大 { $db } dB 持ち上げるため、大きな音がクリップすることがあります。
+audio-status-lower-preamp = プリアンプを { $db } dB 下げる
+audio-status-not-playing-anywhere = まだ接続されていません
+audio-status-fact-dropouts = 音切れ（直近 10 分）
+audio-status-dropouts-count = { $count }
+audio-status-fact-delay = 遅延
+audio-status-delay = { $ms } ms（{ $rate } で { $frames } フレーム）
+audio-status-fact-service = オーディオサービス
+audio-status-service-is-on = 実行中
+audio-status-service-is-off = 停止中
+audio-status-fact-airplay = AirPlay
+audio-status-airplay-off = オフ
+audio-status-airplay-no-module = オン（PipeWire の AirPlay モジュールが未インストール）
+audio-status-airplay-no-avahi = オン（Avahi が動いていません）
+audio-status-airplay-found =
+    { $count ->
+        [0] オン、スピーカーを探しています
+       *[other] オン、スピーカー { $count } 台
+    }
+audio-virtual-recording-mix = 録音用ミックス
+audio-virtual-recording-mix-add = 録音用ミックス
+audio-virtual-hears-none = まだ何も聞いていません。再生中のアプリがここに表示されます。
+audio-engine-low-latency = 低遅延

@@ -239,6 +239,18 @@ pub enum Event {
         node: u32,
         volume: crate::mixer::Volume,
     },
+    /// A stream was asked to go to the node `target` names (its
+    /// `target.object` in the `default` metadata), or, with `None`, to
+    /// follow the default again.
+    Target { stream: u32, target: Option<String> },
+    /// Driver node `driver`, called `name`, has missed its deadline `count`
+    /// times since it started, as the profiler counts; reported to a
+    /// connection that follows dropouts, when the count changes.
+    Dropouts {
+        driver: u32,
+        name: String,
+        count: u32,
+    },
     /// AirPlay discovery on this connection changed: turned on or off with
     /// [`Connection::keep_airplay`](crate::Connection::keep_airplay), or
     /// unable to work.
@@ -258,6 +270,8 @@ pub struct Graph {
     synced: bool,
     pub(crate) mixer: crate::mixer::Mixer,
     airplay: crate::airplay::AirPlay,
+    /// Each driver's dropout count and name, by node id.
+    dropouts: BTreeMap<u32, (String, u32)>,
 }
 
 impl Graph {
@@ -297,6 +311,7 @@ impl Graph {
                 self.links.remove(&id);
                 self.clients.remove(&id);
                 self.devices.remove(&id);
+                self.dropouts.remove(&id);
                 self.mixer.remove(id);
             }
             Event::Setting { key, value } => match value {
@@ -312,6 +327,14 @@ impl Graph {
             }
             Event::Default { endpoint, name } => self.mixer.set_default(endpoint, name),
             Event::Volume { node, volume } => self.mixer.set_volume(node, volume),
+            Event::Target { stream, target } => self.mixer.set_target(stream, target),
+            Event::Dropouts {
+                driver,
+                name,
+                count,
+            } => {
+                self.dropouts.insert(driver, (name, count));
+            }
             Event::AirPlay(airplay) => self.airplay = airplay,
         }
     }
@@ -323,6 +346,7 @@ impl Graph {
         self.clients.clear();
         self.settings.clear();
         self.devices.clear();
+        self.dropouts.clear();
         self.mixer = crate::mixer::Mixer::default();
         self.airplay = crate::airplay::AirPlay::Off;
         self.synced = false;
@@ -434,6 +458,14 @@ impl Graph {
                 .get(&port.node)
                 .map_or(MediaType::Other, Node::media_type),
         }
+    }
+
+    /// Each driver's dropouts since it started, as `(node id, name, count)`,
+    /// on a connection that follows them.
+    pub fn dropouts(&self) -> impl Iterator<Item = (u32, &str, u32)> {
+        self.dropouts
+            .iter()
+            .map(|(id, (name, count))| (*id, name.as_str(), *count))
     }
 
     /// Every device, by id.

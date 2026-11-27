@@ -56,6 +56,7 @@ pub(crate) enum Command {
     Effects(Vec<Effect>),
     AirPlay(bool),
     EffectControls(Box<Effect>),
+    Dropouts(bool),
     Device(crate::devices::DeviceCommand),
     Mixer(crate::mixer::Command),
 }
@@ -123,8 +124,11 @@ impl Connection {
     /// Keep exactly `effects` made while this connection lasts, making them
     /// again whenever the server comes back. A change to an effect's values
     /// is made live through its controls. They go when this program does.
+    /// An effect on no device (see [`Effect::is_placed`]) is left unmade.
     pub fn keep_effects(&self, effects: Vec<Effect>) {
-        self.send(Command::Effects(effects));
+        // An effect on no device is a tuning kept for later: not made.
+        let placed = effects.into_iter().filter(Effect::is_placed).collect();
+        self.send(Command::Effects(placed));
     }
 
     /// Keep AirPlay discovery loaded while this connection lasts, or not.
@@ -135,6 +139,14 @@ impl Connection {
     /// [`Event::AirPlay`] once it changes.
     pub fn keep_airplay(&self, on: bool) {
         self.send(Command::AirPlay(on));
+    }
+
+    /// Follow every driver's dropouts (xruns) through PipeWire's profiler
+    /// while this connection lasts, or stop. Each change of a driver's
+    /// count is reported as [`Event::Dropouts`]. The profiler measures every
+    /// cycle while anyone listens, so turn it on only while it is shown.
+    pub fn watch_dropouts(&self, on: bool) {
+        self.send(Command::Dropouts(on));
     }
 
     /// Set `effect`'s controls on its node now, whoever made it, so a change
@@ -203,6 +215,7 @@ fn session(
     emit(Event::Connected);
 
     let state = Rc::new(State::default());
+    state.dropouts_wanted.set(wanted.dropouts.get());
     state
         .virtual_devices
         .borrow_mut()
@@ -274,6 +287,10 @@ fn session(
                 if let Some(ports) = state.links.borrow_mut().remove(&id) {
                     state.owned.borrow_mut().remove(&ports);
                 }
+                if state.profiler_id.get() == Some(id) {
+                    state.profiler_id.set(None);
+                    *state.profiler.borrow_mut() = None;
+                }
                 if *state.settings_id.borrow() == Some(id) {
                     *state.settings.borrow_mut() = None;
                     *state.settings_id.borrow_mut() = None;
@@ -306,6 +323,11 @@ fn session(
                     .borrow_mut()
                     .sync(&context, &state, &wanted.effects.borrow());
             }
+            Command::Dropouts(on) => {
+                wanted.dropouts.set(on);
+                state.dropouts_wanted.set(on);
+                state.follow_dropouts(&registry, &emit);
+            }
             Command::AirPlay(on) => {
                 wanted.airplay.set(on);
                 if let Some(status) = state.airplay.borrow_mut().sync(&context, on) {
@@ -329,6 +351,7 @@ struct Wanted {
     devices: RefCell<Vec<VirtualDevice>>,
     effects: RefCell<Vec<Effect>>,
     airplay: Cell<bool>,
+    dropouts: Cell<bool>,
 }
 
 /// What the thread keeps for one connection.
@@ -356,10 +379,16 @@ pub(crate) struct State {
     airplay: RefCell<crate::airplay::Discovery>,
     /// The defaults, the volumes and the cards' routes.
     pub(crate) mixer: Rc<crate::mixer::Thread>,
+    /// The profiler global, and the profiler bound while dropouts are
+    /// followed.
+    profiler_id: Cell<Option<u32>>,
+    profiler: RefCell<Option<crate::profiler::Profiler>>,
+    dropouts_wanted: Cell<bool>,
 }
 
 impl State {
     fn clear(&self) {
+        *self.profiler.borrow_mut() = None;
         self.airplay.borrow_mut().clear();
         self.effects.borrow_mut().clear();
         self.virtual_devices.borrow_mut().clear();
@@ -371,6 +400,22 @@ impl State {
 }
 
 impl State {
+    /// Bind the profiler when dropouts are wanted and it is there, or let
+    /// it go when they are not.
+    fn follow_dropouts(&self, registry: &pw::registry::RegistryRc, emit: &Rc<dyn Fn(Event)>) {
+        let mut profiler = self.profiler.borrow_mut();
+        match (self.dropouts_wanted.get(), self.profiler_id.get()) {
+            (true, Some(id)) if profiler.is_none() => {
+                *profiler = crate::profiler::Profiler::bind(registry, id, emit);
+                if profiler.is_none() {
+                    tracing::debug!(id, "binding the profiler failed");
+                }
+            }
+            (false, _) => *profiler = None,
+            _ => {}
+        }
+    }
+
     /// The global id of the node called `name`.
     pub(crate) fn node_named(&self, name: &str) -> Option<u32> {
         self.nodes
@@ -462,6 +507,10 @@ fn on_global(
                 input_port,
                 client: parse_id(props, "client.id"),
             }));
+        }
+        ObjectType::Profiler => {
+            state.profiler_id.set(Some(id));
+            state.follow_dropouts(registry, emit);
         }
         ObjectType::Client => {
             let app = global
@@ -619,7 +668,10 @@ fn run_command(
             Some(metadata) => metadata.set_property(0, &key, None, value.as_deref()),
             None => tracing::warn!(key, "no settings metadata to set"),
         },
-        Command::VirtualDevices(_) | Command::Effects(_) | Command::AirPlay(_) => {}
+        Command::VirtualDevices(_)
+        | Command::Effects(_)
+        | Command::AirPlay(_)
+        | Command::Dropouts(_) => {}
         Command::EffectControls(effect) => {
             if !crate::effects::set_controls(state, &effect) {
                 tracing::debug!(id = effect.id, "the effect's node is not there to set");

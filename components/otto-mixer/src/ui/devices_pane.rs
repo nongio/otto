@@ -1,5 +1,7 @@
-//! The Devices section: one card per sound device, with its profile, the
-//! port each of its outputs and inputs uses, and a Bluetooth device's codec.
+//! The Devices section: a list of the sound devices, and the one picked: how
+//! its output sounds (see `device_sound.rs`), a Bluetooth device's choice
+//! between its best sound and its microphone, and, folded away, its profile,
+//! the port each of its outputs and inputs uses, and a Bluetooth codec.
 //!
 //! Every choice is a device param the server keeps, so nothing here is
 //! written to the routing file, except the AirPlay speakers switch under the
@@ -8,15 +10,15 @@
 // Rust guideline compliant 2026-02-21
 
 use otto_audio_graph::{
-    codec_named, AirPlayMissing, Availability, Device, Direction, Profile, AIRPLAY_PACKAGE,
+    codec_named, AirPlayMissing, Availability, Device, Direction, Endpoint, Profile,
+    AIRPLAY_PACKAGE,
 };
 use otto_kit::components::dropdown::{field as dropdown, DropdownInteraction};
 use otto_kit::components::toggle::{self, ToggleInteraction};
 
+use super::device_sound::{Block, DeviceAction, Shown, DEVICE_LIST_W, DISCLOSURE_H, LIST_ITEM_H};
 use super::*;
 
-/// The narrowest a device card goes before the grid drops a column.
-const DEVICE_CARD_MIN_W: f32 = 420.0;
 const DEVICE_GAP: f32 = 16.0;
 /// A card's inner margin.
 const DEVICE_PAD: f32 = 20.0;
@@ -28,7 +30,8 @@ const DEVICE_ROW_H: f32 = 42.0;
 const DEVICE_NOTE_H: f32 = 30.0;
 /// The label column of a card's rows.
 const DEVICE_LABEL_W: f32 = 130.0;
-/// The title and intro above the cards, which stay put while they scroll.
+/// The device's name and kind above its cards, which stay put while they
+/// scroll.
 const DEVICES_HEADER_H: f32 = 72.0;
 /// The most choices a segmented control holds before a pop-up takes over.
 const MAX_SEGMENTS: usize = 5;
@@ -67,7 +70,7 @@ enum Row {
 
 /// A card's content, read from the device and the nodes it has.
 #[derive(Debug, Clone, PartialEq)]
-struct DeviceCard {
+pub(super) struct DeviceCard {
     title: String,
     kind: String,
     /// On the right of the title: what it offers now, or that it is off.
@@ -77,7 +80,7 @@ struct DeviceCard {
 }
 
 impl DeviceCard {
-    fn height(&self) -> f32 {
+    pub(super) fn height(&self) -> f32 {
         let note = if self.note.is_some() {
             DEVICE_NOTE_H
         } else {
@@ -88,11 +91,12 @@ impl DeviceCard {
 }
 
 impl Ui {
-    /// The cards' scrolling area, under the section's title.
+    /// The detail's scrolling area, right of the device list and under the
+    /// selected device's name.
     pub(super) fn devices_viewport(&self) -> Rect {
         let content = self.content();
         Rect::from_ltrb(
-            content.left,
+            content.left + DEVICE_LIST_W,
             content.top + DEVICES_HEADER_H,
             content.right,
             content.bottom,
@@ -109,56 +113,115 @@ impl Ui {
         devices
     }
 
+    /// What the detail shows: the device picked in the list, else the one
+    /// playing the default output, else the first.
+    pub(super) fn shown_device(&self) -> Shown {
+        let devices = self.sound_devices();
+        match self.devices.selected {
+            Some(Shown::AirPlay) => return Shown::AirPlay,
+            Some(Shown::Device(id)) if devices.iter().any(|d| d.id == id) => {
+                return Shown::Device(id)
+            }
+            _ => {}
+        }
+        let default = self
+            .graph
+            .default_node(Endpoint::Output)
+            .and_then(|n| n.prop("device.id"))
+            .and_then(|id| id.parse::<u32>().ok());
+        default
+            .filter(|id| devices.iter().any(|d| d.id == *id))
+            .or_else(|| devices.first().map(|d| d.id))
+            .map_or(Shown::AirPlay, Shown::Device)
+    }
+
     pub(super) fn draw_devices(&mut self, canvas: &Canvas, theme: &Theme) {
         let content = self.content();
-        canvas.draw_rect(content, &fill(graph_view::canvas_ground(theme)));
-        let left = content.left + 28.0;
-        let right = content.right - 28.0;
+        let list = Rect::from_ltrb(
+            content.left,
+            content.top,
+            content.left + DEVICE_LIST_W,
+            content.bottom,
+        );
+        let main = Rect::from_ltrb(list.right, content.top, content.right, content.bottom);
+        canvas.draw_rect(main, &fill(graph_view::canvas_ground(theme)));
+        let shown = self.shown_device();
+        self.draw_device_list(canvas, list, shown, theme);
+
+        let left = main.left + 28.0;
+        let right = main.right - 28.0;
         let width = (right - left).max(1.0);
         let top = content.top + 24.0;
-        Label::new(t!("audio-devices-title"))
+        let device = match shown {
+            Shown::Device(id) => self.graph.device(id).cloned(),
+            Shown::AirPlay => None,
+        };
+        let (title, subtitle) = match &device {
+            Some(device) => {
+                let card = self.device_card(device);
+                let subtitle = match card.badge {
+                    Some(badge) => format!("{} · {badge}", card.kind),
+                    None => card.kind,
+                };
+                (card.title, subtitle)
+            }
+            None => (
+                t!("audio-airplay-title").to_string(),
+                t!("audio-airplay-intro").to_string(),
+            ),
+        };
+        let title_font = styles::TITLE_2_EMPHASIZED.font();
+        Label::new(ellipsize(&title_font, &title, width))
             .with_style(styles::TITLE_2_EMPHASIZED)
             .with_color(theme.text_primary)
             .centered_on(left, top + 12.0)
             .render(canvas);
         let intro_font = styles::SUBHEADLINE.font();
-        Label::new(ellipsize(&intro_font, t!("audio-devices-intro"), width))
+        Label::new(ellipsize(&intro_font, &subtitle, width))
             .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_secondary)
             .centered_on(left, top + 38.0)
             .render(canvas);
 
-        let cards: Vec<(u32, DeviceCard)> = self
-            .sound_devices()
-            .into_iter()
-            .map(|device| (device.id, self.device_card(device)))
-            .collect();
         let viewport = self.devices_viewport();
-
-        // A grid of columns at least `DEVICE_CARD_MIN_W` wide; each row of
-        // cards is as tall as its tallest.
-        let columns = ((width + DEVICE_GAP) / (DEVICE_CARD_MIN_W + DEVICE_GAP))
-            .floor()
-            .max(1.0) as usize;
-        let card_w = (width - (columns - 1) as f32 * DEVICE_GAP) / columns as f32;
-        let mut placed = Vec::with_capacity(cards.len());
         let mut y = 4.0;
-        // With no device, a line saying so where the cards would be.
-        let empty_at = cards.is_empty().then(|| {
-            y += 48.0;
-            y - 24.0
-        });
-        for row in cards.chunks(columns) {
-            let row_h = row.iter().map(|(_, c)| c.height()).fold(0.0, f32::max);
-            for (col, (_, card)) in row.iter().enumerate() {
-                let x = left + col as f32 * (card_w + DEVICE_GAP);
-                placed.push(Rect::from_xywh(x, y, card_w, card.height()));
+        let mut placed: Vec<(Rect, Block)> = Vec::new();
+        match &device {
+            None => {
+                let airplay = self.airplay_card();
+                placed.push((
+                    Rect::from_xywh(left, y, width, airplay.height()),
+                    Block::AirPlay(airplay),
+                ));
+                y += placed[0].0.height() + DEVICE_GAP;
             }
-            y += row_h + DEVICE_GAP;
+            Some(device) => {
+                if let Some(sound) = self.sound_card(device) {
+                    let h = sound.height();
+                    placed.push((Rect::from_xywh(left, y, width, h), Block::Sound(sound)));
+                    y += h + DEVICE_GAP;
+                }
+                if let Some(bluetooth) = self.bluetooth_card(device) {
+                    let h = bluetooth.height(width - 2.0 * DEVICE_PAD);
+                    placed.push((
+                        Rect::from_xywh(left, y, width, h),
+                        Block::Bluetooth(bluetooth),
+                    ));
+                    y += h + DEVICE_GAP;
+                }
+                placed.push((
+                    Rect::from_xywh(left, y, width, DISCLOSURE_H),
+                    Block::Disclosure,
+                ));
+                y += DISCLOSURE_H + 8.0;
+                if self.devices.details {
+                    let card = self.device_card(device);
+                    let h = card.height();
+                    placed.push((Rect::from_xywh(left, y, width, h), Block::Details(card)));
+                    y += h + DEVICE_GAP;
+                }
+            }
         }
-        let airplay = self.airplay_card();
-        let airplay_at = Rect::from_xywh(left, y, width, airplay.height());
-        y += airplay.height() + DEVICE_GAP;
         self.devices_scroll.set_viewport(viewport);
         self.devices_scroll.set_content_length(y + 8.0);
         self.devices_scroll.tick();
@@ -166,22 +229,127 @@ impl Ui {
 
         canvas.save();
         canvas.clip_rect(viewport, None, Some(true));
-        for ((_, card), at) in cards.iter().zip(placed) {
+        let first_target = self.targets.len();
+        for (at, block) in placed {
             let rect = at.with_offset((0.0, shift));
             if rect.bottom < viewport.top || rect.top > viewport.bottom {
                 continue;
             }
-            self.draw_device_card(canvas, rect, card, viewport, theme);
-        }
-        if let Some(at) = empty_at.filter(|_| self.graph.is_synced()) {
-            caption(canvas, t!("audio-devices-empty"), left, at + shift, theme);
-        }
-        let rect = airplay_at.with_offset((0.0, shift));
-        if rect.bottom >= viewport.top && rect.top <= viewport.bottom {
-            self.draw_airplay_card(canvas, rect, &airplay, viewport, theme);
+            match block {
+                Block::AirPlay(card) => {
+                    self.draw_airplay_card(canvas, rect, &card, viewport, theme)
+                }
+                Block::Sound(card) => self.draw_sound_card(canvas, rect, &card, theme),
+                Block::Bluetooth(card) => self.draw_bluetooth_card(canvas, rect, &card, theme),
+                Block::Disclosure => {
+                    let cy = rect.center_y();
+                    draw_disclosure(
+                        canvas,
+                        Point::new(rect.left + 6.0, cy),
+                        self.devices.details,
+                        theme,
+                    );
+                    let font = styles::BODY_EMPHASIZED.font();
+                    let label = t!("audio-devices-details");
+                    let w = font.measure_str(label, None).0;
+                    Label::new(label)
+                        .with_style(styles::BODY_EMPHASIZED)
+                        .with_color(theme.text_secondary)
+                        .centered_on(rect.left + 18.0, cy)
+                        .render(canvas);
+                    self.targets.push((
+                        Rect::from_xywh(rect.left - 4.0, rect.top, w + 30.0, rect.height()),
+                        Action::Device(DeviceAction::Details),
+                    ));
+                }
+                Block::Details(card) => self.draw_device_card(canvas, rect, &card, viewport, theme),
+            }
         }
         canvas.restore();
+        // The detail scrolls: only what of its controls is in view presses.
+        let drawn: Vec<(Rect, Action)> = self.targets.drain(first_target..).collect();
+        for (rect, action) in drawn {
+            self.push_visible_target(rect, action, viewport);
+        }
         self.devices_scroll.render(canvas, theme, |_, _| {});
+    }
+
+    /// The list of devices beside the detail, AirPlay speakers last.
+    fn draw_device_list(&mut self, canvas: &Canvas, list: Rect, shown: Shown, theme: &Theme) {
+        canvas.draw_rect(list, &fill(panel_ground(theme)));
+        canvas.draw_line(
+            Point::new(list.right, list.top),
+            Point::new(list.right, list.bottom),
+            &stroke(theme.hairline, 1.0),
+        );
+        let left = list.left + 12.0;
+        let width = list.width() - 24.0;
+        let mut y = list.top + 16.0;
+        card_heading(
+            canvas,
+            t!("audio-devices-title"),
+            left + 12.0,
+            y + 8.0,
+            theme,
+        );
+        y += 22.0;
+        let mut items: Vec<(String, String, Shown)> = self
+            .sound_devices()
+            .into_iter()
+            .map(|d| {
+                (
+                    d.title().to_string(),
+                    device_kind(d).to_string(),
+                    Shown::Device(d.id),
+                )
+            })
+            .collect();
+        if items.is_empty() && self.graph.is_synced() {
+            Label::new(t!("audio-devices-empty"))
+                .with_style(styles::SUBHEADLINE)
+                .with_color(theme.text_tertiary)
+                .centered_on(left + 12.0, y + 10.0)
+                .render(canvas);
+            y += 30.0;
+        }
+        items.push((
+            t!("audio-airplay-title").to_string(),
+            t!("audio-airplay-tag").to_string(),
+            Shown::AirPlay,
+        ));
+        for (title, kind, item_of) in items {
+            if y + LIST_ITEM_H > list.bottom {
+                break;
+            }
+            let item = Rect::from_xywh(left, y, width, LIST_ITEM_H);
+            if item_of == shown {
+                let rr = RRect::new_rect_xy(item, 10.0, 10.0);
+                let a = theme.accent;
+                canvas.draw_rrect(rr, &fill(Color::from_argb(0x22, a.r(), a.g(), a.b())));
+                canvas.draw_rrect(
+                    rr,
+                    &stroke(Color::from_argb(0x66, a.r(), a.g(), a.b()), 1.0),
+                );
+            }
+            let font = styles::SUBHEADLINE_EMPHASIZED.font();
+            Label::new(ellipsize(&font, &title, width - 24.0))
+                .with_style(styles::SUBHEADLINE_EMPHASIZED)
+                .with_color(theme.text_primary)
+                .centered_on(item.left + 12.0, item.top + 17.0)
+                .render(canvas);
+            let font = styles::SUBHEADLINE.font();
+            Label::new(ellipsize(&font, &kind, width - 24.0))
+                .with_style(styles::SUBHEADLINE)
+                .with_color(theme.text_secondary)
+                .centered_on(item.left + 12.0, item.top + 35.0)
+                .render(canvas);
+            let action = match item_of {
+                Shown::Device(id) => DeviceAction::Select(id),
+                Shown::AirPlay => DeviceAction::SelectAirPlay,
+            };
+            self.targets.push((item, Action::Device(action)));
+            y += LIST_ITEM_H + 4.0;
+        }
     }
 
     fn draw_device_card(
@@ -684,7 +852,7 @@ impl Ui {
 
 /// The AirPlay card under the device cards.
 #[derive(Debug, Clone, PartialEq)]
-struct AirPlayCard {
+pub(super) struct AirPlayCard {
     /// Whether the routing file has AirPlay discovery on.
     on: bool,
     /// What discovery lacks here, if anything.
@@ -702,7 +870,7 @@ impl AirPlayCard {
         (self.on && self.missing.is_none()) || !self.speakers.is_empty()
     }
 
-    fn height(&self) -> f32 {
+    pub(super) fn height(&self) -> f32 {
         let mut h = DEVICE_HEAD_H;
         if self.service_down {
             h += NOTICE_H + 12.0;

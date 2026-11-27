@@ -119,7 +119,7 @@ build() {
     for _pkg in otto-bar otto-islands otto-lock otto-authorize otto-greeter \
             xdg-desktop-portal-otto otto-rdp otto-settings otto-files otto-launcher \
             otto-emoji otto-stash otto-canvas otto-peek otto-preview otto-media-kit \
-            otto-msg otto-setup otto-search otto-agents otto-audio; do
+            otto-msg otto-setup otto-search otto-agents otto-mixer; do
         cargo build --frozen --release -p "$_pkg"
     done
 }
@@ -151,8 +151,8 @@ package() {
     install -Dm755 target/release/otto-setup "$pkgdir/usr/bin/otto-setup"
     install -Dm755 target/release/otto-search "$pkgdir/usr/bin/otto-search"
     install -Dm755 target/release/otto-agents "$pkgdir/usr/bin/otto-agents"
-    install -Dm755 target/release/otto-audio "$pkgdir/usr/bin/otto-audio"
-    install -Dm755 target/release/otto-audio-service "$pkgdir/usr/bin/otto-audio-service"
+    install -Dm755 target/release/otto-mixer "$pkgdir/usr/bin/otto-mixer"
+    install -Dm755 target/release/otto-mixer-service "$pkgdir/usr/bin/otto-mixer-service"
     # Aliases: the launcher opens in ask or agents mode under these names.
     ln -s otto-launcher "$pkgdir/usr/bin/otto-ask"
     # Peek's playback worker: otto-files looks for it beside itself.
@@ -190,8 +190,8 @@ package() {
     install -Dm644 resources/otto-trash.desktop "$pkgdir/usr/share/applications/otto-trash.desktop"
     install -Dm644 resources/otto-settings.desktop \
         "$pkgdir/usr/share/applications/otto-settings.desktop"
-    install -Dm644 resources/otto-audio.desktop \
-        "$pkgdir/usr/share/applications/otto-audio.desktop"
+    install -Dm644 resources/otto-mixer.desktop \
+        "$pkgdir/usr/share/applications/otto-mixer.desktop"
     install -Dm644 resources/otto-preview.desktop \
         "$pkgdir/usr/share/applications/otto-preview.desktop"
 
@@ -250,9 +250,9 @@ package() {
     install -Dm644 components/otto-agents/otto-agents-bridge.service \
         "$pkgdir/usr/lib/systemd/user/otto-agents-bridge.service"
     # The audio routing service, off until the user enables it:
-    # systemctl --user enable --now otto-audio-service
-    install -Dm644 components/otto-audio/otto-audio-service.service \
-        "$pkgdir/usr/lib/systemd/user/otto-audio-service.service"
+    # systemctl --user enable --now otto-mixer-service
+    install -Dm644 components/otto-mixer/otto-mixer-service.service \
+        "$pkgdir/usr/lib/systemd/user/otto-mixer-service.service"
 
     # Agent skills. One plugin directory — `.claude-plugin/plugin.json`, a
     # `skills/` tree and an `agents/` file — that an agent running on this

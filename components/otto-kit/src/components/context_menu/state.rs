@@ -130,7 +130,7 @@ impl ContextMenuState {
             let found = self
                 .items_at_depth(depth)
                 .iter()
-                .position(|item| item.has_submenu() && item.label() == Some(label));
+                .position(|item| item.opens_submenu() && item.label() == Some(label));
             match found {
                 Some(index) => self.open_submenu_by_depth[depth] = Some(index),
                 None => {

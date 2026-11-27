@@ -773,7 +773,7 @@ impl TopBarApp {
     }
 
     /// Show the sound menu: output, input, the apps playing, and the way to
-    /// the Audio app.
+    /// the Mixer app.
     fn show_sound_menu(&mut self) {
         let Some(ref surface) = self.right_surface else {
             return;
@@ -785,7 +785,8 @@ impl TopBarApp {
         let menu = ContextMenu::new(items)
             .on_item_click(|action_id| {
                 if crate::sound::activate(action_id) {
-                    spawn_detached(crate::sound::audio_app(), &[]);
+                    let (program, args) = crate::sound::audio_app();
+                    spawn_detached(program, args);
                 }
             })
             .on_slider(crate::sound::slider_changed);

@@ -5256,20 +5256,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "otto-audio"
-version = "1.10.0"
-dependencies = [
- "libc",
- "otto-audio-graph",
- "otto-kit",
- "serde",
- "tempfile",
- "tokio",
- "toml 1.1.2+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
 name = "otto-audio-graph"
 version = "1.10.0"
 dependencies = [
@@ -5530,6 +5516,20 @@ dependencies = [
  "gstreamer-app",
  "libc",
  "otto-kit",
+ "tracing",
+]
+
+[[package]]
+name = "otto-mixer"
+version = "1.10.0"
+dependencies = [
+ "libc",
+ "otto-audio-graph",
+ "otto-kit",
+ "serde",
+ "tempfile",
+ "tokio",
+ "toml 1.1.2+spec-1.1.0",
  "tracing",
 ]
 

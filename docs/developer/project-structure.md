@@ -84,7 +84,7 @@ applications share:
 | `otto-peek` | Press space on a file and see it: the Peek previewer |
 | `otto-emoji` | Emoji picker that types the pick into the focused window |
 | `otto-settings` | Settings application |
-| `otto-audio` | Audio: the PipeWire graph as a patchbay, the engine's rate and buffer size, and `otto-audio-service`, which keeps saved links |
+| `otto-mixer` | Mixer: the PipeWire graph as a patchbay, the engine's rate and buffer size, and `otto-mixer-service`, which keeps saved links |
 | `otto-lock` | Lock screen, backed by PAM |
 | `otto-greeter` | Login screen, backed by greetd |
 | `otto-auth-ui` | The password panel shared by the greeter and the lock screen |

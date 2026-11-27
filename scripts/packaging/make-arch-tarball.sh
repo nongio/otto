@@ -32,7 +32,7 @@ outdir=$(cd "$outdir" && pwd)
 
 BINARIES=(otto otto-bar otto-islands otto-lock otto-authorize otto-greeter otto-rdp
           otto-settings otto-files otto-launcher otto-emoji otto-stash otto-canvas otto-peek otto-preview
-          otto-media-worker otto-msg otto-setup otto-search otto-agents otto-audio otto-audio-service
+          otto-media-worker otto-msg otto-setup otto-search otto-agents otto-mixer otto-mixer-service
           xdg-desktop-portal-otto)
 
 # The workspace version names the tarball and its top directory; the
@@ -74,7 +74,7 @@ done
 # list. All three PKGBUILDs install it; leaving it out of the tarball fails
 # package() with "cannot stat".
 for d in otto.desktop otto-files.desktop otto-settings.desktop otto-trash.desktop \
-         otto-preview.desktop otto-audio.desktop; do
+         otto-preview.desktop otto-mixer.desktop; do
     install -Dm644 "resources/$d" "$tmpdir/$PKGDIR/resources/$d"
 done
 
@@ -94,7 +94,7 @@ for f in otto.portal \
 done
 install -Dm644 components/otto-agents/otto-agents.service "$tmpdir/$PKGDIR/components/otto-agents/otto-agents.service"
 install -Dm644 components/otto-agents/otto-agents-bridge.service "$tmpdir/$PKGDIR/components/otto-agents/otto-agents-bridge.service"
-install -Dm644 components/otto-audio/otto-audio-service.service "$tmpdir/$PKGDIR/components/otto-audio/otto-audio-service.service"
+install -Dm644 components/otto-mixer/otto-mixer-service.service "$tmpdir/$PKGDIR/components/otto-mixer/otto-mixer-service.service"
 install -Dm644 components/otto-lock/otto-lock.pam \
     "$tmpdir/$PKGDIR/components/otto-lock/otto-lock.pam"
 install -Dm644 resources/polkit/org.otto.settings.policy \

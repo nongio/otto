@@ -355,6 +355,7 @@ impl Ui {
     fn effect_caption(&self, effect: &Effect) -> String {
         let place = match self.effect_named(&effect.device) {
             Some(under) => t_owned!("audio-effects-after", name = under.name.clone()),
+            None if !effect.is_placed() => t!("audio-effects-not-in-use").to_string(),
             None => self.node_title(&effect.device),
         };
         let caption = t_owned!(
@@ -1692,7 +1693,7 @@ impl Ui {
     /// Change the effect `id`. Its controls are set on its node at once; the
     /// routing file is written now, or with `live` when the drag or scroll
     /// ends.
-    fn change_effect(&mut self, id: &str, live: bool, change: impl FnOnce(&mut Effect)) {
+    pub(super) fn change_effect(&mut self, id: &str, live: bool, change: impl FnOnce(&mut Effect)) {
         if !self.routing.update_effect(id, change) {
             return;
         }
@@ -1817,6 +1818,14 @@ impl Ui {
             | EffectAction::Scrub(..)
             | EffectAction::Param(_) => {}
         }
+    }
+
+    /// Show the effect `id` in the editor.
+    pub(super) fn select_effect(&mut self, id: &str) {
+        self.effects.selected = Some(id.to_string());
+        self.effects.creating = false;
+        self.effects.band = None;
+        self.effects.note = None;
     }
 
     fn create_effect(&mut self) {
@@ -2415,7 +2424,7 @@ pub(super) fn draw_missing(canvas: &Canvas, band: Rect, text: &str, theme: &Them
 }
 
 /// The arrow between two steps of the chain line, from `from` to `to_x`.
-fn draw_arrow(canvas: &Canvas, from: Point, to_x: f32, theme: &Theme) {
+pub(super) fn draw_arrow(canvas: &Canvas, from: Point, to_x: f32, theme: &Theme) {
     let mut paint = stroke(theme.text_tertiary, 1.4);
     paint.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
     paint.set_stroke_join(otto_kit::skia::paint::Join::Round);

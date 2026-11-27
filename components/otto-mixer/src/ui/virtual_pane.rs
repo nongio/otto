@@ -3,8 +3,16 @@
 //!
 //! The section only edits the routing file; the service makes and removes
 //! the devices when it reads the file again.
+//!
+//! A virtual output's card lists the apps it hears. Ticking an app saves a
+//! link from each of its streams to the output, channel by channel, which
+//! the service keeps; the app still plays on its own output too. The *Mix
+//! for recording* template makes a stereo output for exactly that: tick the
+//! apps a recording or a stream should hear, and record its monitor.
 
-use otto_audio_graph::{VirtualDevice, VirtualKind};
+use otto_audio_graph::{
+    identity, pair_channels, Direction, Link, NodeIdentity, SavedLink, VirtualDevice, VirtualKind,
+};
 use otto_kit::components::text_input::{
     key_for, KeyMods, TextInput, TextInputResponse, TextInputStyle,
 };
@@ -24,6 +32,9 @@ const FORM_H: f32 = 168.0;
 /// One device card.
 const DEVICE_CARD_MIN_W: f32 = 260.0;
 const DEVICE_CARD_H: f32 = 132.0;
+/// The apps a virtual output hears, under its state: a row of ticks.
+const HEARS_H: f32 = 40.0;
+const CHIP_H: f32 = 24.0;
 /// A text field's height.
 const FIELD_H: f32 = 28.0;
 /// The width of a form row's label column.
@@ -44,6 +55,14 @@ pub(super) enum VirtualAction {
     FocusRename,
     CommitRename,
     CancelRename,
+    /// Make a stereo output to mix apps into for a recording.
+    RecordingMix,
+    /// Tick or untick app `app` (an index into the apps the output at
+    /// `device` lists) as one it hears.
+    Hear {
+        device: usize,
+        app: usize,
+    },
 }
 
 /// The section's own state: the form, and the rename in progress.
@@ -126,18 +145,166 @@ impl Ui {
             .floor()
             .clamp(1.0, 4.0) as usize;
         let card_w = (width - (columns - 1) as f32 * ENGINE_GAP) / columns as f32;
-        for (index, device) in devices.iter().enumerate() {
-            let (col, row) = (index % columns, index / columns);
-            let card = Rect::from_xywh(
-                left + col as f32 * (card_w + ENGINE_GAP),
-                y + row as f32 * (DEVICE_CARD_H + ENGINE_GAP),
-                card_w,
-                DEVICE_CARD_H,
-            );
-            if card.top > content.bottom {
-                break;
+        // An output's card is taller, for the apps it hears; a row of cards
+        // is as tall as its tallest.
+        let card_h = |device: &VirtualDevice| {
+            if device.kind == VirtualKind::Output {
+                DEVICE_CARD_H + HEARS_H
+            } else {
+                DEVICE_CARD_H
             }
-            self.draw_virtual_card(canvas, card, index, device, theme);
+        };
+        for (row, chunk) in devices.chunks(columns).enumerate() {
+            let row_h = chunk.iter().map(card_h).fold(0.0, f32::max);
+            for (col, device) in chunk.iter().enumerate() {
+                let index = row * columns + col;
+                let card = Rect::from_xywh(
+                    left + col as f32 * (card_w + ENGINE_GAP),
+                    y,
+                    card_w,
+                    card_h(device),
+                );
+                if card.top > content.bottom {
+                    break;
+                }
+                self.draw_virtual_card(canvas, card, index, device, theme);
+            }
+            y += row_h + ENGINE_GAP;
+        }
+    }
+
+    /// The apps the virtual output `device` lists: every app playing now and
+    /// every app it hears, by name.
+    fn hear_choices(&self, device: &VirtualDevice) -> Vec<(String, bool)> {
+        let sink = device.node_names().into_iter().next().unwrap_or_default();
+        let heard = |app: &str| {
+            self.routing.links().iter().any(|l| {
+                matches!(&l.output.node, NodeIdentity::Stream { app: a, .. } if a == app)
+                    && matches!(&l.input.node, NodeIdentity::Node { name } if *name == sink)
+            })
+        };
+        let mut apps: Vec<String> = self
+            .graph
+            .streams(otto_audio_graph::Endpoint::Output)
+            .iter()
+            .filter_map(|s| match identity(self.graph.node(s.id)?)? {
+                NodeIdentity::Stream { app, .. } => Some(app),
+                NodeIdentity::Node { .. } => None,
+            })
+            .collect();
+        for link in self.routing.links() {
+            if let (NodeIdentity::Stream { app, .. }, NodeIdentity::Node { name }) =
+                (&link.output.node, &link.input.node)
+            {
+                if *name == sink {
+                    apps.push(app.clone());
+                }
+            }
+        }
+        apps.sort_by_key(|a| a.to_lowercase());
+        apps.dedup();
+        apps.into_iter()
+            .map(|app| {
+                let on = heard(&app);
+                (app, on)
+            })
+            .collect()
+    }
+
+    /// Tick or untick `app` as one the virtual output `device` hears.
+    fn toggle_hear(&mut self, device: &VirtualDevice, app: &str, on: bool) {
+        let Some(sink_name) = device.node_names().into_iter().next() else {
+            return;
+        };
+        if !on {
+            // Forget first, so the service has stopped keeping the links by
+            // the time it sees them go.
+            let forget: Vec<SavedLink> = self
+                .routing
+                .links()
+                .iter()
+                .filter(|l| {
+                    matches!(&l.output.node, NodeIdentity::Stream { app: a, .. } if a == app)
+                        && matches!(&l.input.node, NodeIdentity::Node { name } if *name == sink_name)
+                })
+                .cloned()
+                .collect();
+            for link in &forget {
+                self.routing.remove(link);
+            }
+            self.save_routing_file();
+            let sink = self
+                .graph
+                .nodes()
+                .find(|n| n.name() == sink_name)
+                .map(|n| n.id);
+            let live: Vec<u32> = self
+                .graph
+                .links()
+                .filter(|l| Some(l.input_node) == sink)
+                .filter(|l| {
+                    self.graph
+                        .node(l.output_node)
+                        .and_then(identity)
+                        .is_some_and(
+                            |id| matches!(id, NodeIdentity::Stream { app: a, .. } if a == app),
+                        )
+                })
+                .map(|l| l.id)
+                .collect();
+            for link in live {
+                self.connection.unlink(link);
+            }
+            return;
+        }
+        let Some(sink) = self
+            .graph
+            .nodes()
+            .find(|n| n.name() == sink_name)
+            .map(|n| n.id)
+        else {
+            return;
+        };
+        let inputs: Vec<(u32, Option<String>)> = self
+            .graph
+            .ports_of(sink, Direction::Input)
+            .map(|p| (p.id, p.channel.clone()))
+            .collect();
+        let inputs: Vec<(u32, Option<&str>)> =
+            inputs.iter().map(|(id, c)| (*id, c.as_deref())).collect();
+        let mut changed = false;
+        for stream in self.graph.streams(otto_audio_graph::Endpoint::Output) {
+            let named =
+                self.graph.node(stream.id).and_then(identity).is_some_and(
+                    |id| matches!(id, NodeIdentity::Stream { app: a, .. } if a == app),
+                );
+            if !named {
+                continue;
+            }
+            let outputs: Vec<(u32, Option<String>)> = self
+                .graph
+                .ports_of(stream.id, Direction::Output)
+                .filter(|p| !p.monitor)
+                .map(|p| (p.id, p.channel.clone()))
+                .collect();
+            let outputs: Vec<(u32, Option<&str>)> =
+                outputs.iter().map(|(id, c)| (*id, c.as_deref())).collect();
+            for (output_port, input_port) in pair_channels(&outputs, &inputs) {
+                let link = Link {
+                    id: 0,
+                    output_node: stream.id,
+                    output_port,
+                    input_node: sink,
+                    input_port,
+                    client: None,
+                };
+                if let Some(saved) = SavedLink::of(&self.graph, &link) {
+                    changed |= self.routing.add(saved);
+                }
+            }
+        }
+        if changed {
+            self.save_routing_file();
         }
     }
 
@@ -185,6 +352,22 @@ impl Ui {
             t!("audio-virtual-new-heading"),
             left,
             card.top + 22.0,
+            theme,
+        );
+        let template = t!("audio-virtual-recording-mix-add");
+        let w = push_button::width(template);
+        let button = Rect::from_xywh(
+            inner_right - w,
+            card.top + 22.0 - push_button::HEIGHT / 2.0 + 4.0,
+            w,
+            push_button::HEIGHT,
+        );
+        self.button(
+            canvas,
+            button,
+            template,
+            Action::Virtual(VirtualAction::RecordingMix),
+            true,
             theme,
         );
 
@@ -362,6 +545,56 @@ impl Ui {
             .centered_on(left + 14.0, cy)
             .render(canvas);
 
+        // The apps an output hears, as ticks.
+        if device.kind == VirtualKind::Output {
+            let cy = card.top + 76.0 + HEARS_H - 4.0;
+            let apps = self.hear_choices(device);
+            if apps.is_empty() {
+                Label::new(ellipsize(&font, t!("audio-virtual-hears-none"), width))
+                    .with_style(styles::SUBHEADLINE)
+                    .with_color(theme.text_tertiary)
+                    .centered_on(left, cy)
+                    .render(canvas);
+            }
+            let mut x = left;
+            for (app_index, (app, on)) in apps.iter().enumerate() {
+                let text = if *on {
+                    format!("✓ {app}")
+                } else {
+                    app.clone()
+                };
+                let text = ellipsize(&font, &text, 160.0);
+                let w = font.measure_str(&text, None).0 + 18.0;
+                if x + w > left + width {
+                    break;
+                }
+                let chip = Rect::from_xywh(x, cy - CHIP_H / 2.0, w, CHIP_H);
+                let rr = RRect::new_rect_xy(chip, CHIP_H / 2.0, CHIP_H / 2.0);
+                if *on {
+                    canvas.draw_rrect(rr, &fill(theme.accent));
+                } else {
+                    canvas.draw_rrect(rr, &stroke(theme.hairline, 1.0));
+                }
+                Label::new(text)
+                    .with_style(styles::SUBHEADLINE)
+                    .with_color(if *on {
+                        Color::WHITE
+                    } else {
+                        theme.text_primary
+                    })
+                    .centered_at(chip.center_x(), chip.center_y())
+                    .render(canvas);
+                self.targets.push((
+                    chip,
+                    Action::Virtual(VirtualAction::Hear {
+                        device: index,
+                        app: app_index,
+                    }),
+                ));
+                x += w + 6.0;
+            }
+        }
+
         // Rename and Remove, or Save and Cancel while renaming.
         let y = card.bottom - 16.0 - push_button::HEIGHT;
         let (first, first_action, second, second_action) = if renaming {
@@ -433,6 +666,20 @@ impl Ui {
             }
             VirtualAction::CommitRename => self.commit_rename(),
             VirtualAction::CancelRename => form.renaming = None,
+            VirtualAction::RecordingMix => {
+                self.routing
+                    .add_virtual(t!("audio-virtual-recording-mix"), VirtualKind::Output, 2);
+                self.save_routing_file();
+            }
+            VirtualAction::Hear { device, app } => {
+                let Some(device) = self.routing.virtual_devices().get(device).cloned() else {
+                    return;
+                };
+                let Some((name, on)) = self.hear_choices(&device).into_iter().nth(app) else {
+                    return;
+                };
+                self.toggle_hear(&device, &name, !on);
+            }
             VirtualAction::Remove(index) => {
                 let Some(id) = self
                     .routing

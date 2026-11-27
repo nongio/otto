@@ -367,6 +367,44 @@ impl Effect {
     pub fn impulse_path(&self) -> Option<std::path::PathBuf> {
         impulse::resolve(self.impulse.as_deref()?)
     }
+
+    /// Whether it sits on a device. One on none (an empty `device`) is a
+    /// tuning kept for later: it stays in the file but is not made.
+    #[must_use]
+    pub fn is_placed(&self) -> bool {
+        !self.device.is_empty()
+    }
+
+    /// Whether it is a device's tuning: an output equaliser or speaker
+    /// correction, which shape how the device sounds.
+    #[must_use]
+    pub fn is_tuning(&self) -> bool {
+        self.side == EffectSide::Output
+            && matches!(
+                self.kind,
+                EffectKind::Equaliser | EffectKind::SpeakerCorrection
+            )
+    }
+
+    /// The most an equaliser boosts any frequency, preamp included, in dB:
+    /// above 0 dB a loud song clips. `None` for other kinds.
+    #[must_use]
+    pub fn peak_gain_db(&self) -> Option<f32> {
+        if self.kind != EffectKind::Equaliser {
+            return None;
+        }
+        // 20 Hz to 20 kHz, evenly on a log scale: fine enough to find the
+        // top of a narrow peak within a fraction of a dB.
+        const STEPS: u16 = 240;
+        let peak = (0..=STEPS)
+            .map(|step| {
+                let freq =
+                    MIN_FREQ * (MAX_FREQ / MIN_FREQ).powf(f32::from(step) / f32::from(STEPS));
+                response_db(self.preamp, &self.bands, freq)
+            })
+            .fold(f32::MIN, f32::max);
+        Some(peak)
+    }
 }
 
 impl Routing {
@@ -443,6 +481,67 @@ impl Routing {
         let node = self.effect(&added)?.node_name();
         self.update_effect(id, |e| e.device = node);
         Some(added)
+    }
+
+    /// The node an app plays to for its sound to reach `device` through the
+    /// output effects on it: the effect at the top of its chain, or the
+    /// device itself when none sits on it.
+    #[must_use]
+    pub fn output_entry(&self, device: &str) -> String {
+        let chain = self.output_chain(device);
+        chain
+            .first()
+            .map_or_else(|| device.to_string(), |e| e.node_name())
+    }
+
+    /// The output effects sound passes on its way to `device`, from the
+    /// apps' end to the device's.
+    #[must_use]
+    pub fn output_chain(&self, device: &str) -> Vec<&Effect> {
+        let mut chain: Vec<&Effect> = Vec::new();
+        let mut at = device.to_string();
+        // Bounded, so a hand-edited file that loops cannot hang anyone.
+        for _ in 0..8 {
+            let Some(effect) = self
+                .effects
+                .iter()
+                .find(|e| e.side == EffectSide::Output && e.device == at && !chain.contains(e))
+            else {
+                break;
+            };
+            at = effect.node_name();
+            chain.push(effect);
+        }
+        chain.reverse();
+        chain
+    }
+
+    /// Move the effect `id` onto `device`, right before it: what sat on the
+    /// effect moves onto where the effect was, and what sat on `device`
+    /// moves onto the effect. An empty `device` takes the effect out of its
+    /// chain and keeps it unmade. `false` when there is no effect `id` or it
+    /// is there already.
+    pub fn move_effect(&mut self, id: &str, device: &str) -> bool {
+        let Some(moved) = self.effect(id).cloned() else {
+            return false;
+        };
+        if moved.device == device {
+            return false;
+        }
+        let node = moved.node_name();
+        for effect in &mut self.effects {
+            if effect.id != id && effect.device == node {
+                effect.device.clone_from(&moved.device);
+            }
+        }
+        if !device.is_empty() {
+            for effect in &mut self.effects {
+                if effect.id != id && effect.side == moved.side && effect.device == device {
+                    effect.device.clone_from(&node);
+                }
+            }
+        }
+        self.update_effect(id, |e| e.device = device.to_string())
     }
 
     /// Remove the effect `id`. An effect that sat on it moves onto the
@@ -622,6 +721,47 @@ mod tests {
             routing.effect(&id).unwrap().impulse_path(),
             Some(std::path::PathBuf::from("/srv/ir/room.wav"))
         );
+    }
+
+    #[test]
+    fn a_tuning_moves_between_devices_and_its_chains_stay_whole() {
+        let mut routing = Routing::default();
+        let eq = routing.add_effect("EQ", EffectKind::Equaliser, EffectSide::Output, "hp");
+        let lim = routing
+            .add_effect_after(&eq, "Limiter", EffectKind::Limiter)
+            .unwrap();
+        // apps -> EQ -> Limiter -> hp
+        let names = |r: &Routing, d: &str| -> Vec<String> {
+            r.output_chain(d).iter().map(|e| e.id.clone()).collect()
+        };
+        assert_eq!(names(&routing, "hp"), vec![eq.clone(), lim.clone()]);
+        assert_eq!(routing.output_entry("hp"), "otto-effect.eq");
+        assert_eq!(routing.output_entry("spk"), "spk");
+
+        // To the speakers: the limiter stays on the headphones.
+        assert!(routing.move_effect(&eq, "spk"));
+        assert_eq!(names(&routing, "hp"), vec![lim.clone()]);
+        assert_eq!(names(&routing, "spk"), vec![eq.clone()]);
+        assert!(!routing.move_effect(&eq, "spk"));
+
+        // Taken off: kept, but on no device.
+        assert!(routing.move_effect(&eq, ""));
+        assert!(!routing.effect(&eq).unwrap().is_placed());
+        assert!(names(&routing, "spk").is_empty());
+    }
+
+    #[test]
+    fn an_equaliser_s_peak_counts_its_preamp() {
+        let mut routing = Routing::default();
+        let eq = routing.add_effect("EQ", EffectKind::Equaliser, EffectSide::Output, "hp");
+        let peak = |r: &Routing| r.effect(&eq).unwrap().peak_gain_db().unwrap();
+        assert!(peak(&routing).abs() < 0.1);
+        routing.update_effect(&eq, |e| e.bands[2].gain = 6.0);
+        assert!((peak(&routing) - 6.0).abs() < 0.3, "{}", peak(&routing));
+        routing.update_effect(&eq, |e| e.preamp = -6.0);
+        assert!(peak(&routing).abs() < 0.3);
+        let lim = routing.add_effect("L", EffectKind::Limiter, EffectSide::Output, "hp");
+        assert_eq!(routing.effect(&lim).unwrap().peak_gain_db(), None);
     }
 
     #[test]

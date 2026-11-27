@@ -8,7 +8,7 @@
 //! Nodes come back with new ids every time they appear, so anything saved
 //! names them by [`NodeIdentity`] instead. [`Routing`] is the saved routing:
 //! the links to keep, in `$XDG_CONFIG_HOME/otto/audio/routing.toml`, which the
-//! otto-audio window writes and its service keeps in force. [`LoopGuard`] is
+//! otto-mixer window writes and its service keeps in force. [`LoopGuard`] is
 //! how the service stops fighting another program over a link, and
 //! [`pair_channels`] how two folded ports are linked channel by channel.
 //!
@@ -17,6 +17,11 @@
 //! The mixer is part of the graph too: the default output and input
 //! ([`Graph::default_node`]), each node's [`Volume`], the [`AppStreams`]
 //! playing, and the commands that change them on [`Connection`].
+//!
+//! [`Graph::streams`] lists every app stream on its own, with where it plays
+//! or records and where it was asked to go; [`AppRule`]s in the routing file
+//! say where an app's sound should play, and [`Calls`] what happens to other
+//! apps while one records from a microphone.
 //!
 //! [`Effect`]s are filter chains a program keeps made with
 //! [`Connection::keep_effects`]; their values change live through
@@ -40,7 +45,10 @@ mod mixer;
 mod model;
 mod module;
 mod pairing;
+mod profiler;
 mod routing;
+mod rules;
+mod streams;
 mod virtual_devices;
 
 pub use airplay::{airplay_missing, AirPlay, AirPlayMissing, AIRPLAY_PACKAGE, AIRPLAY_SINK_PREFIX};
@@ -62,4 +70,6 @@ pub use model::{
 };
 pub use pairing::pair_channels;
 pub use routing::{EngineSettings, Routing, RoutingError, SavedLink};
+pub use rules::{AppRule, Calls, DEFAULT_DUCK_LEVEL};
+pub use streams::{DeviceKind, Stream};
 pub use virtual_devices::{positions, VirtualDevice, VirtualKind, MAX_CHANNELS};

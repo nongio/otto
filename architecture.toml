@@ -111,7 +111,7 @@ crates = [
     "otto-setup",
     "otto-agents",
     "otto-rdp",
-    "otto-audio",
+    "otto-mixer",
     "xdg-desktop-portal-otto",
 ]
 may_use = ["foundation", "service", "toolkit", "kit"]

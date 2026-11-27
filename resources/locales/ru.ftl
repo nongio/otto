@@ -2419,6 +2419,9 @@ bar-sound-app-volume = { $app }: громкость
 bar-sound-mute-output = Выключить звук выхода
 bar-sound-mute-input = Выключить звук входа
 bar-sound-mute-app = Выключить звук: { $app }
+bar-sound-app-output-default = По умолчанию
+bar-sound-app-follow-default = Как по умолчанию
+bar-sound-app-output = { $app }: выход
 # Beside each output and input, in the shortcut column: what kind of device
 # it is. Virtual is one made in software, such as a mix or an effect.
 bar-sound-kind-bluetooth = Bluetooth
@@ -2427,8 +2430,8 @@ bar-sound-kind-hdmi = HDMI
 bar-sound-kind-virtual = Виртуальное
 bar-sound-kind-built-in = Встроенное
 bar-sound-kind-airplay = AirPlay
-# The menu's last row, which opens the Audio app.
-bar-sound-open-audio = Аудио…
+# The menu's last row, which opens the Mixer app.
+bar-sound-open-mixer = Открыть микшер…
 # What a screen reader calls the indicator. $percent is a whole number and
 # $device the output's name.
 bar-sound-label = Звук, { $percent } %, { $device }
@@ -2462,16 +2465,16 @@ schema-topbar-show-network-description = Индикатор Wi-Fi и прово�
 schema-topbar-show-sound-label = Показывать звук
 schema-topbar-show-sound-description = Значок динамика на верхней панели, с меню громкости, выхода и входа и приложений, которые воспроизводят звук. Показывается там, где работает PipeWire.
 
-## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
+## otto-mixer: the PipeWire graph as a patchbay (Graph), and the sound
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = Настройки звука
-audio-window-title = Настройки звука Otto — { $pane }
+audio-title = Микшер
+audio-window-title = Микшер Otto — { $pane }
 audio-pane-graph = Граф
 audio-pane-engine = Движок
 audio-no-server-title = Звуковой сервер не запущен
-audio-no-server-body = Аудио подключится, как только запустится PipeWire.
+audio-no-server-body = Микшер подключится, как только запустится PipeWire.
 audio-no-server-start = Запустить PipeWire
 audio-graph-empty = С этими фильтрами нечего показать
 audio-filter-audio = Аудио
@@ -2634,7 +2637,7 @@ audio-airplay-delay = Колонки AirPlay отстают примерно н�
 # The value of the Delay fact in the Graph's details panel.
 audio-airplay-delay-short = Около 2 с, через сеть
 
-## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
+## otto-mixer — Virtual devices: outputs, inputs and loopbacks the audio
 ## service makes. The cards are about 260 px wide; the form's labels sit in a
 ## column of about 78 px.
 
@@ -2689,7 +2692,7 @@ audio-matrix-corner = Откуда ↓ · Куда →
 # Over the Lanes view, which shows links but does not make them.
 audio-lanes-note = Каждая дорожка прослеживает звук от начала пути до конца. Связи создаются на вкладках «Патчбей» и «Матрица».
 audio-lanes-empty = С этими фильтрами ничего не связано
-## otto-audio — Effects: equalisers, limiters, compressors and noise
+## otto-mixer — Effects: equalisers, limiters, compressors and noise
 ## suppression the audio service hosts, each sitting on a device. The list
 ## beside the editor is about 230 px wide; band cards are about 130 px wide.
 
@@ -2842,3 +2845,95 @@ audio-effects-ee-multiband-compressor = многополосный компре�
 audio-effects-ee-stereo-tools = стереоинструменты
 audio-effects-ee-limiter = лимитер
 audio-effects-ee-filter = фильтр
+
+audio-pane-mixer = Микшер
+audio-pane-status = Состояние
+audio-sidebar-advanced = Дополнительно
+audio-status-line-on = Аудиослужба включена
+audio-status-line-off = Аудиослужба выключена
+audio-status-short-device-missing = { $device } не подключено
+audio-status-short-no-output = У { $app } нет выхода
+audio-status-short-dropouts = Пропуски на { $device }
+audio-status-short-clipping = { $name } перегружает
+audio-status-line-more = { $first } +{ $count }
+audio-kind-hdmi = HDMI
+audio-kind-virtual = Виртуальное
+audio-mixer-title = Микшер
+audio-mixer-intro = Где играет звук, насколько громко и какие приложения его используют.
+audio-mixer-service-down = Правила приложений и приглушение во время звонков работают, только пока запущена аудиослужба.
+audio-mixer-outputs = Выходы
+audio-mixer-apps = Играющие приложения
+audio-mixer-inputs = Входы
+audio-mixer-calls-heading = Во время звонков
+audio-mixer-default = По умолчанию
+audio-mixer-no-tuning = Без настройки
+audio-mixer-tuning-off = { $name } (выкл.)
+audio-mixer-used-by = Используют: { $apps }
+audio-mixer-not-used = Никакое приложение не записывает отсюда
+audio-mixer-no-outputs = Выходы не найдены
+audio-mixer-no-inputs = Входы не найдены
+audio-mixer-nothing-playing = Сейчас ничего не играет.
+audio-mixer-follow-default = Как по умолчанию
+audio-mixer-default-output = По умолчанию ({ $name })
+audio-mixer-always-here = Всегда играть { $app } здесь
+audio-mixer-calls-lower = Когда приложение использует микрофон, приглушать остальные до
+audio-status-title = Состояние
+audio-effects-not-in-use = Не используется
+audio-devices-details = Профиль, кодек и порты
+audio-devices-sound = Звук
+audio-devices-sound-intro = Как звучит этот выход для всех приложений, которые на нём играют.
+audio-devices-tuning = Настройка
+audio-devices-compare = Сравнить
+audio-devices-loudness = Громкость
+audio-devices-protect = Защита от перегрузки
+audio-devices-tuning-none = Нет
+audio-devices-tuning-edit = Изменить…
+audio-devices-tuning-new = Новый эквалайзер
+audio-devices-tuning-new-name = EQ { $device }
+audio-devices-compare-off = Выкл.
+audio-devices-compare-on = Настроено
+audio-devices-bt-title = Лучший звук или микрофон
+audio-devices-bt-about = По Bluetooth наушники дают лучший звук, только пока микрофон выключен. Профиль гарнитуры включает микрофон, но звук падает до качества звонка.
+audio-devices-bt-best = Лучший звук
+audio-devices-bt-headset = Гарнитура с микрофоном
+audio-devices-bt-switch = Переключаться на гарнитуру, когда звонку нужен микрофон, и обратно после
+audio-status-intro = Что требует внимания и куда сейчас идёт звук.
+audio-status-worth-a-look = Стоит проверить
+audio-status-nothing = Ничего не требует внимания.
+audio-status-playing = Сейчас играет
+audio-status-facts = Сведения
+audio-status-service-off = Аудиослужба выключена, поэтому правила, эффекты и сохранённые соединения не поддерживаются.
+audio-status-rule-missing = { $app } должно играть на { $device }, но это устройство не подключено.
+audio-status-stream-missing = { $app } отправлено на устройство, которое не подключено.
+audio-status-dropouts =
+    { $count ->
+        [one] { $count } сбой на { $device } за последние 10 минут.
+        [few] { $count } сбоя на { $device } за последние 10 минут.
+       *[other] { $count } сбоев на { $device } за последние 10 минут.
+    }
+audio-status-raise-buffer = { $frames } кадров
+audio-status-boost = { $name } усиливает до { $db } дБ, громкие места могут искажаться.
+audio-status-lower-preamp = Снизить предусиление на { $db } дБ
+audio-status-not-playing-anywhere = Пока не подключено
+audio-status-fact-dropouts = Сбои за 10 минут
+audio-status-dropouts-count = { $count }
+audio-status-fact-delay = Задержка
+audio-status-delay = { $ms } мс ({ $frames } кадров при { $rate })
+audio-status-fact-service = Аудиослужба
+audio-status-service-is-on = Работает
+audio-status-service-is-off = Выключена
+audio-status-fact-airplay = AirPlay
+audio-status-airplay-off = Выключено
+audio-status-airplay-no-module = Включено, но модуль AirPlay для PipeWire не установлен
+audio-status-airplay-no-avahi = Включено, но Avahi не запущен
+audio-status-airplay-found =
+    { $count ->
+        [0] Включено, идёт поиск колонок
+        [one] Включено, найдена { $count } колонка
+        [few] Включено, найдено { $count } колонки
+       *[other] Включено, найдено { $count } колонок
+    }
+audio-virtual-recording-mix = Микс для записи
+audio-virtual-recording-mix-add = Микс для записи
+audio-virtual-hears-none = Пока ничего не слышит. Приложения появляются здесь, пока играют.
+audio-engine-low-latency = Низкая задержка

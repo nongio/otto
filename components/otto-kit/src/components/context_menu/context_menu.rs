@@ -607,8 +607,7 @@ impl ContextMenu {
         let items_at_depth = state.borrow().items_at_depth(depth).to_vec();
         if !items_at_depth
             .get(item_idx)
-            .map(|item| item.has_submenu())
-            .unwrap_or(false)
+            .is_some_and(MenuItem::opens_submenu)
         {
             return;
         }
@@ -688,20 +687,41 @@ impl ContextMenu {
                 // Set submenu size
                 positioner.set_size(width as i32, height as i32);
 
-                // Define anchor rectangle as a 1px vertical line at parent's right edge
-                // positioned at the selected item
-                positioner.set_anchor_rect(
-                    parent_width as i32 - 5, // x: at right edge of parent
-                    anchor_y as i32,         // y: top of selected item
-                    1,                       // width: thin vertical line
-                    1_i32,                   // height: selected item height
-                );
+                let picker = Self::picker_rect(state, &style, depth, item_idx);
+                if let Some(button) = picker {
+                    // A slider row's picker drops its list under the button,
+                    // lined up with its left edge, like a pop-up button.
+                    let s = style.draw_scale;
+                    positioner.set_anchor_rect(
+                        (button.left * s) as i32,
+                        (button.top * s) as i32,
+                        ((button.width() * s) as i32).max(1),
+                        ((button.height() * s) as i32).max(1),
+                    );
+                    positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
+                    positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+                    positioner.set_offset(0, 2);
+                    positioner.set_constraint_adjustment(
+                        xdg_positioner::ConstraintAdjustment::SlideX
+                            | xdg_positioner::ConstraintAdjustment::FlipY
+                            | xdg_positioner::ConstraintAdjustment::SlideY,
+                    );
+                } else {
+                    // Define anchor rectangle as a 1px vertical line at parent's right edge
+                    // positioned at the selected item
+                    positioner.set_anchor_rect(
+                        parent_width as i32 - 5, // x: at right edge of parent
+                        anchor_y as i32,         // y: top of selected item
+                        1,                       // width: thin vertical line
+                        1_i32,                   // height: selected item height
+                    );
 
-                // Anchor to top-left of this line (which is at parent's right edge)
-                positioner.set_anchor(xdg_positioner::Anchor::TopLeft);
+                    // Anchor to top-left of this line (which is at parent's right edge)
+                    positioner.set_anchor(xdg_positioner::Anchor::TopLeft);
 
-                // Place submenu to the right of the anchor point
-                positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+                    // Place submenu to the right of the anchor point
+                    positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+                }
 
                 // Ensure popups vec is large enough for submenu
                 while popups.borrow().len() <= depth + 1 {
@@ -779,6 +799,66 @@ impl ContextMenu {
                 }
             }
         }
+    }
+
+    /// Where the picker of the slider row `item_idx` at `depth` is drawn, in
+    /// that popup's logical coordinates; `None` for any other row.
+    fn picker_rect(
+        state: &Rc<RefCell<ContextMenuState>>,
+        style: &ContextMenuStyle,
+        depth: usize,
+        item_idx: usize,
+    ) -> Option<skia_safe::Rect> {
+        let state = state.borrow();
+        let items = state.items_at_depth(depth);
+        let slider = items.get(item_idx)?.slider_data()?;
+        slider.picker.as_ref()?;
+        let width = style.width.unwrap_or_else(|| {
+            ContextMenuRenderer::compute_optimal_width(items, style).max(style.min_width)
+        });
+        let top = style.vertical_padding
+            + items
+                .iter()
+                .take(item_idx)
+                .map(|item| style.item_height_of(item))
+                .sum::<f32>()
+            - scroll_at_depth(&state, depth);
+        let layout = slider_layout(
+            slider,
+            &style.item_style(),
+            style.horizontal_padding,
+            top,
+            width - style.horizontal_padding * 2.0,
+            style.item_height_of(&items[item_idx]),
+        );
+        layout.picker
+    }
+
+    /// Open the picker of the slider row at `index` of the root list, or
+    /// close it when it is the one open.
+    fn toggle_picker(&self, index: usize) {
+        let open = self.state.borrow().is_submenu_open(0, index);
+        if open {
+            Self::hide_submenus_from_static(&self.state, &self.popups, 1);
+            self.state.borrow_mut().close_submenus_from(0);
+            return;
+        }
+        self.state.borrow_mut().open_submenu(0, index);
+        let popup = self.popups.borrow().first().cloned();
+        if let Some(popup) = popup {
+            let style = self.style.borrow();
+            Self::render_menu_at_depth(&self.state, &style, &popup, 0);
+        }
+        Self::show_submenu_static(
+            &self.state,
+            &self.popups,
+            &self.style,
+            &self.registered_surfaces,
+            &self.parent_xdg,
+            0,
+            index,
+            None,
+        );
     }
 
     /// Hide submenus from depth onwards (static helper)
@@ -1765,6 +1845,10 @@ impl ContextMenu {
         };
         if layout.toggle.is_some_and(|toggle| rect_holds(toggle, x, y)) {
             self.toggle_slider(index);
+            return true;
+        }
+        if layout.picker.is_some_and(|picker| rect_holds(picker, x, y)) {
+            self.toggle_picker(index);
             return true;
         }
         let reach = layout.track.with_outset((KNOB_RADIUS, 0.0));

@@ -118,6 +118,44 @@ impl Profile {
     pub fn family(&self) -> &str {
         self.codec().map_or(&self.name, |(family, _)| family)
     }
+
+    /// Whether this is a Bluetooth headset profile (HSP/HFP): the
+    /// microphone works, the sound is call quality.
+    #[must_use]
+    pub fn is_headset(&self) -> bool {
+        let family = self.family();
+        family.starts_with("headset-head-unit")
+            || family.starts_with("hfp")
+            || family.starts_with("hsp")
+    }
+
+    /// Whether this is a Bluetooth playback profile (A2DP or LE audio
+    /// playback): the best sound, with no microphone.
+    #[must_use]
+    pub fn is_hifi(&self) -> bool {
+        let family = self.family();
+        family.starts_with("a2dp") || family.starts_with("bap-sink")
+    }
+}
+
+impl Device {
+    /// The usable profile of the kind `pick` accepts that the device
+    /// prefers: the one running when it is of that kind, else the one with
+    /// the highest priority.
+    #[must_use]
+    pub fn preferred_profile(&self, pick: impl Fn(&Profile) -> bool) -> Option<&Profile> {
+        let running = self
+            .profile
+            .as_ref()
+            .filter(|p| pick(p))
+            .and_then(|a| self.profiles.iter().find(|p| p.index == a.index));
+        running.or_else(|| {
+            self.profiles
+                .iter()
+                .filter(|p| pick(p) && p.available != Availability::No)
+                .max_by_key(|p| p.priority)
+        })
+    }
 }
 
 /// One port of a device: speakers, a headphone jack, a microphone.

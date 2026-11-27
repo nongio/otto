@@ -18,7 +18,7 @@ pub enum MenuItemIcon {
 }
 
 /// Type of menu item
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum MenuItemKind {
     Action {
         label: String,
@@ -56,6 +56,25 @@ pub struct MenuSlider {
     pub label: Option<String>,
     /// The round button before the track.
     pub toggle: Option<SliderToggle>,
+    /// A compact button after the percentage that opens a submenu, such as
+    /// the output an app plays to.
+    pub picker: Option<SliderPicker>,
+}
+
+/// The pop-up button at the end of a slider row: it shows the current
+/// choice and opens the choices as a submenu under it.
+///
+/// The choices are ordinary menu rows. Picking one reports its action id
+/// through [`ContextMenu::on_item_click`](crate::components::context_menu::ContextMenu::on_item_click)
+/// and closes the menu, as any submenu row does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SliderPicker {
+    /// The current choice, drawn on the button and cut short to fit it.
+    pub label: String,
+    /// What the button does, for a screen reader: "Output for Firefox".
+    pub accessible_label: String,
+    /// The rows of the submenu it opens.
+    pub items: Vec<MenuItem>,
 }
 
 /// The round button of a slider row, a toggle such as mute.
@@ -116,7 +135,7 @@ pub enum VisualState {
 /// Pure state/data for a MenuItem
 ///
 /// No rendering, no I/O, just data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MenuItem {
     /// The kind of menu item
     pub kind: MenuItemKind,
@@ -172,6 +191,11 @@ impl Hash for MenuItem {
                 if let Some(toggle) = &slider.toggle {
                     toggle.on.hash(state);
                     toggle.label.hash(state);
+                }
+                if let Some(picker) = &slider.picker {
+                    picker.label.hash(state);
+                    picker.accessible_label.hash(state);
+                    picker.items.hash(state);
                 }
             }
             MenuItemKind::Header { label } => {
@@ -234,6 +258,7 @@ impl MenuItem {
             value: value.clamp(0.0, 1.0),
             label: None,
             toggle: None,
+            picker: None,
         }))
     }
 
@@ -299,6 +324,12 @@ impl MenuItem {
         matches!(self.kind, MenuItemKind::Submenu { .. })
     }
 
+    /// Whether this row can open a submenu: a submenu row, which opens on
+    /// hover, or a slider row with a picker, which opens on a press.
+    pub fn opens_submenu(&self) -> bool {
+        self.submenu_items().is_some()
+    }
+
     pub fn label(&self) -> Option<&str> {
         match &self.kind {
             MenuItemKind::Action { label, .. } => Some(label),
@@ -328,6 +359,10 @@ impl MenuItem {
     pub fn submenu_items(&self) -> Option<&[MenuItem]> {
         match &self.kind {
             MenuItemKind::Submenu { items, .. } => Some(items),
+            MenuItemKind::Slider(MenuSlider {
+                picker: Some(picker),
+                ..
+            }) => Some(&picker.items),
             _ => None,
         }
     }
@@ -383,6 +418,25 @@ impl MenuItem {
                 icon,
                 on,
                 label: label.into(),
+            });
+        }
+        self
+    }
+
+    /// A pop-up button after a slider's percentage, showing `label` and
+    /// opening `items` as a submenu under it; called `accessible_label` for
+    /// a screen reader.
+    pub fn with_slider_picker(
+        mut self,
+        label: impl Into<String>,
+        accessible_label: impl Into<String>,
+        items: Vec<MenuItem>,
+    ) -> Self {
+        if let Some(slider) = self.slider_data_mut() {
+            slider.picker = Some(SliderPicker {
+                label: label.into(),
+                accessible_label: accessible_label.into(),
+                items,
             });
         }
         self
@@ -498,6 +552,25 @@ mod tests {
         let header = MenuItem::header("Output");
         assert!(!header.is_selectable());
         assert_eq!(header.label(), Some("Output"));
+    }
+
+    #[test]
+    fn a_slider_picker_opens_its_choices_as_a_submenu() {
+        let plain = MenuItem::slider("app:Firefox", "Firefox volume", 0.5);
+        assert!(!plain.opens_submenu());
+
+        let picked = plain.with_slider_picker(
+            "Speakers",
+            "Output for Firefox",
+            vec![
+                MenuItem::action("Follow the default").with_checked(false),
+                MenuItem::action("Speakers").with_checked(true),
+            ],
+        );
+        assert!(picked.opens_submenu());
+        // Not a hover submenu: it opens from its button.
+        assert!(!picked.has_submenu());
+        assert_eq!(picked.submenu_items().map(<[MenuItem]>::len), Some(2));
     }
 
     #[test]

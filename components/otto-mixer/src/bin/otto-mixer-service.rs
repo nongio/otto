@@ -1,13 +1,16 @@
-//! `otto-audio-service`: keeps the saved routing in force.
+//! `otto-mixer-service`: keeps the saved routing in force.
 //!
 //! It follows the PipeWire graph and links both ends of every saved link
 //! whenever they exist and are not linked. The links it makes are its own, so
 //! they last while it runs. It reads the routing file again whenever the file
-//! changes, which is how the otto-audio window tells it about a new save.
+//! changes, which is how the otto-mixer window tells it about a new save.
 //! It also makes the virtual devices and effects the file lists, which last
 //! while it runs, and moves the streams on an effect's device onto the
 //! effect. When the file turns AirPlay on it keeps PipeWire's AirPlay
 //! discovery loaded, which makes a sink for every receiver on the network.
+//! It moves app streams to the output their rule names, lowers other apps
+//! while one records from a microphone and switches the Bluetooth headsets
+//! `[calls]` lists to their headset profile for it.
 //!
 //! `--routing PATH` keeps another routing file instead of the person's, for
 //! trying the service out on throwaway nodes.
@@ -16,10 +19,12 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use otto_audio::effect_streams::{Move, StreamMover};
-use otto_audio::keeper::Keeper;
-use otto_audio::SERVICE_APP;
 use otto_audio_graph::{AirPlay, AirPlayMissing, Connection, Event, Graph, LinkLifetime, Routing};
+use otto_mixer::app_rules::RuleMover;
+use otto_mixer::calls::{Ducker, HeadsetSwitcher};
+use otto_mixer::effect_streams::{Move, StreamMover};
+use otto_mixer::keeper::Keeper;
+use otto_mixer::SERVICE_APP;
 
 /// How long a burst of graph changes is gathered before the service acts on
 /// it. A node arrives as a node, then its ports one by one; acting on the
@@ -38,12 +43,12 @@ fn main() {
     let given = match (args.next().as_deref(), args.next()) {
         (Some("--routing"), Some(path)) => Some(PathBuf::from(path)),
         (Some("--version"), None) => {
-            println!("otto-audio-service {}", env!("CARGO_PKG_VERSION"));
+            println!("otto-mixer-service {}", env!("CARGO_PKG_VERSION"));
             return;
         }
         (None, _) => None,
         _ => {
-            eprintln!("usage: otto-audio-service [--routing PATH]");
+            eprintln!("usage: otto-mixer-service [--routing PATH]");
             std::process::exit(2);
         }
     };
@@ -68,6 +73,10 @@ fn main() {
     let mut graph = Graph::new();
     let mut mover = StreamMover::default();
     mover.set_effects(routing.effects().to_vec(), &graph);
+    let mut rules = RuleMover::default();
+    let mut ducker = Ducker::default();
+    let mut headsets = HeadsetSwitcher::default();
+    let mut current = routing.clone();
     let mut keeper = Keeper::new(routing);
     let mut due: Option<Instant> = None;
     loop {
@@ -89,6 +98,9 @@ fn main() {
                         tracing::info!("PipeWire went away, waiting for it");
                         keeper.disconnected();
                         mover.disconnected();
+                        rules.disconnected();
+                        ducker.disconnected();
+                        headsets.disconnected();
                     }
                     Event::Connected => tracing::info!("connected to PipeWire"),
                     Event::AirPlay(airplay) => log_airplay(airplay),
@@ -110,6 +122,7 @@ fn main() {
                 );
                 connection.keep_effects(routing.effects().to_vec());
                 connection.keep_airplay(routing.airplay);
+                current = routing.clone();
                 keeper.set_routing(routing);
                 due = Some(Instant::now());
             }
@@ -124,7 +137,32 @@ fn main() {
                     tracing::info!(key, value, "putting an engine setting back");
                     connection.set_setting(key, Some(&value));
                 }
+                for rule_move in rules.step(&current, &graph) {
+                    tracing::info!(
+                        stream = rule_move.stream,
+                        target = rule_move.target.as_deref().unwrap_or("the default"),
+                        "moving a stream as its app's rule says"
+                    );
+                    connection.set_target(rule_move.stream, rule_move.target.as_deref());
+                }
                 move_streams(&connection, mover.step(&graph));
+                let was_lowering = ducker.is_lowering();
+                for change in ducker.step(&current.calls, &graph) {
+                    connection.set_volume(change.node, change.linear);
+                }
+                match (was_lowering, ducker.is_lowering()) {
+                    (false, true) => tracing::info!("an app is recording, lowering the others"),
+                    (true, false) => tracing::info!("recording stopped, other apps back up"),
+                    _ => {}
+                }
+                for switch in headsets.step(&current.calls, &graph) {
+                    tracing::info!(
+                        device = switch.device,
+                        profile = switch.profile,
+                        "switching a headset's profile for a call"
+                    );
+                    connection.set_profile(switch.device, switch.profile);
+                }
                 for (output, input) in plan.given_up {
                     tracing::warn!(
                         output,

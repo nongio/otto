@@ -5,7 +5,7 @@
 // Rust guideline compliant 2026-02-21
 
 use super::*;
-use otto_audio::graph_view::Filter;
+use otto_mixer::graph_view::Filter;
 
 impl Ui {
     pub(super) fn draw_toolbar(&mut self, canvas: &Canvas, scene: &Scene, theme: &Theme) {

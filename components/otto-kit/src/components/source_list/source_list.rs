@@ -9,6 +9,10 @@ use crate::typography::{ellipsize, styles, TextStyle};
 /// small trailing glyphs sit at the row's right end.
 ///
 /// The glyphs themselves are not here: the caller paints them, see [`draw`].
+///
+/// A row can instead be a [heading](Self::heading) over the rows after it,
+/// which is never selected, or be [pinned](Self::pinned_to_bottom) to the
+/// list's foot, such as a status line under every destination.
 #[derive(Debug, Clone, Default)]
 pub struct SourceListItem {
     pub label: String,
@@ -18,6 +22,12 @@ pub struct SourceListItem {
     /// How many trailing glyphs the row carries, right-aligned and drawn
     /// right to left from [`GlyphSlot::Trailing`]`(0)`.
     pub trailing: usize,
+    /// A group's heading: small text over the rows that follow, with no
+    /// glyphs, never selected and never hit.
+    pub heading: bool,
+    /// Laid out at the foot of the list rather than after the row before it,
+    /// when the layout is given a foot (see [`SourceListLayout::for_items_in`]).
+    pub pinned: bool,
 }
 
 impl SourceListItem {
@@ -43,9 +53,30 @@ impl SourceListItem {
         self
     }
 
+    /// A group heading titled `label`, over the rows after it.
+    pub fn heading(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            heading: true,
+            ..Self::default()
+        }
+    }
+
+    /// Pins the row to the list's foot, under a hairline.
+    #[must_use]
+    pub fn pinned_to_bottom(mut self) -> Self {
+        self.pinned = true;
+        self
+    }
+
     /// Whether the row shows a subtitle under its label.
     pub fn is_two_line(&self) -> bool {
-        self.subtitle.is_some()
+        self.subtitle.is_some() && !self.heading
+    }
+
+    /// Whether the row can be selected and pressed: every row but a heading.
+    pub fn is_selectable(&self) -> bool {
+        !self.heading
     }
 }
 
@@ -102,6 +133,11 @@ pub struct SourceListMetrics {
     pub title_selected: TextStyle,
     /// The subtitle of a two-line row.
     pub subtitle: TextStyle,
+    /// A heading's height, including the room above it that sets its group
+    /// apart from the rows before.
+    pub heading_height: f32,
+    /// A heading's label, set in upper case.
+    pub heading_style: TextStyle,
 }
 
 const REGULAR: SourceListMetrics = SourceListMetrics {
@@ -120,6 +156,8 @@ const REGULAR: SourceListMetrics = SourceListMetrics {
     title: styles::SUBHEADLINE,
     title_selected: styles::SUBHEADLINE_EMPHASIZED,
     subtitle: styles::FOOTNOTE,
+    heading_height: 28.0,
+    heading_style: styles::CAPTION_2_EMPHASIZED,
 };
 
 const LARGE: SourceListMetrics = SourceListMetrics {
@@ -146,6 +184,8 @@ const LARGE: SourceListMetrics = SourceListMetrics {
         size: 14.0,
     },
     subtitle: styles::SUBHEADLINE,
+    heading_height: 34.0,
+    heading_style: styles::CAPTION_1_EMPHASIZED,
 };
 
 impl SourceListSize {
@@ -159,6 +199,15 @@ impl SourceListSize {
 }
 
 impl SourceListMetrics {
+    /// The height of `item`'s row: a heading's, or a row's.
+    pub fn item_height(&self, item: &SourceListItem) -> f32 {
+        if item.heading {
+            self.heading_height
+        } else {
+            self.row_height(item.is_two_line())
+        }
+    }
+
     /// A row's height.
     pub fn row_height(&self, two_line: bool) -> f32 {
         if two_line {
@@ -215,6 +264,8 @@ pub struct SourceListLayout {
     pub item_rects: Vec<Rect>,
     /// Which rows are two-line, by index.
     pub two_line: Vec<bool>,
+    /// Which rows are headings, by index; they are never hit.
+    pub headings: Vec<bool>,
     pub size: SourceListSize,
 }
 
@@ -222,7 +273,8 @@ impl SourceListLayout {
     /// Lay out `count` one-line items of the regular size in a list of
     /// `width`, top-left at `(x, y)`.
     pub fn compute(count: usize, x: f32, y: f32, width: f32) -> Self {
-        Self::build(SourceListSize::Regular, vec![false; count], x, y, width)
+        let items = vec![SourceListItem::default(); count];
+        Self::build(SourceListSize::Regular, &items, x, y, None, width)
     }
 
     /// Lay out `items` at `size` in a list of `width`, top-left at `(x, y)`.
@@ -234,25 +286,56 @@ impl SourceListLayout {
         y: f32,
         width: f32,
     ) -> Self {
-        let two_line = items.iter().map(SourceListItem::is_two_line).collect();
-        Self::build(size, two_line, x, y, width)
+        Self::build(size, items, x, y, None, width)
     }
 
-    fn build(size: SourceListSize, two_line: Vec<bool>, x: f32, y: f32, width: f32) -> Self {
+    /// Lay out `items` at `size` between `top` and `bottom`, the rows
+    /// [pinned](SourceListItem::pinned_to_bottom) to the foot stacked up from
+    /// `bottom` and the others down from `top`.
+    pub fn for_items_in(
+        size: SourceListSize,
+        items: &[SourceListItem],
+        x: f32,
+        top: f32,
+        bottom: f32,
+        width: f32,
+    ) -> Self {
+        Self::build(size, items, x, top, Some(bottom), width)
+    }
+
+    fn build(
+        size: SourceListSize,
+        items: &[SourceListItem],
+        x: f32,
+        y: f32,
+        bottom: Option<f32>,
+        width: f32,
+    ) -> Self {
         let m = size.metrics();
-        let mut top = y;
-        let item_rects = two_line
+        let pinned_h: f32 = items
             .iter()
-            .map(|&two| {
-                let h = m.row_height(two);
-                let rect = Rect::from_xywh(x + m.item_inset, top, width - m.item_inset * 2.0, h);
-                top += h + m.item_gap;
+            .filter(|i| i.pinned)
+            .map(|i| m.item_height(i) + m.item_gap)
+            .sum();
+        let mut top = y;
+        let mut foot = bottom.map(|b| b - pinned_h);
+        let item_rects = items
+            .iter()
+            .map(|item| {
+                let h = m.item_height(item);
+                let at = match (&mut foot, item.pinned) {
+                    (Some(foot), true) => foot,
+                    _ => &mut top,
+                };
+                let rect = Rect::from_xywh(x + m.item_inset, *at, width - m.item_inset * 2.0, h);
+                *at += h + m.item_gap;
                 rect
             })
             .collect();
         Self {
             item_rects,
-            two_line,
+            two_line: items.iter().map(SourceListItem::is_two_line).collect(),
+            headings: items.iter().map(|i| i.heading).collect(),
             size,
         }
     }
@@ -267,11 +350,17 @@ impl SourceListLayout {
         self.item_rects.last().map_or(0.0, |r| r.bottom)
     }
 
-    /// Item index under `(px, py)`, if any.
+    /// Item index under `(px, py)`, if any; a heading is never hit.
     pub fn item_at(&self, px: f32, py: f32) -> Option<usize> {
         self.item_rects
             .iter()
-            .position(|r| r.contains(Point::new(px, py)))
+            .enumerate()
+            .position(|(i, r)| !self.is_heading(i) && r.contains(Point::new(px, py)))
+    }
+
+    /// Whether row `index` is a heading.
+    pub fn is_heading(&self, index: usize) -> bool {
+        self.headings.get(index).copied().unwrap_or(false)
     }
 
     /// The leading icon's square for row `index`.
@@ -370,7 +459,32 @@ pub fn draw(
     mut glyph: impl FnMut(&Canvas, usize, GlyphSlot, Rect, Color),
 ) {
     let m = layout.metrics();
+    let mut ruled = false;
     for (i, (item, rect)) in items.iter().zip(&layout.item_rects).enumerate() {
+        if item.heading {
+            // Low in its band, so the room above parts the group from the
+            // rows before; inset to line up with the rows' icons.
+            let x = rect.left + m.leading_pad;
+            let style = m.heading_style;
+            text_centered_y(
+                canvas,
+                &item.label.to_uppercase(),
+                x,
+                rect.bottom - style.size,
+                rect.right - x,
+                style,
+                theme.text_tertiary,
+            );
+            continue;
+        }
+        if item.pinned && !ruled {
+            // A hairline over the foot, parting it from the destinations.
+            ruled = true;
+            let y = rect.top - m.item_gap - 4.0;
+            let mut paint = fill(theme.hairline);
+            paint.set_stroke_width(1.0);
+            canvas.draw_line(Point::new(rect.left, y), Point::new(rect.right, y), &paint);
+        }
         let is_selected = selected == Some(i);
         if is_selected {
             canvas.draw_rrect(
@@ -517,6 +631,34 @@ mod tests {
     }
 
     #[test]
+    fn headings_are_never_hit_and_pinned_rows_sit_at_the_foot() {
+        let items = vec![
+            SourceListItem::new("Mixer"),
+            SourceListItem::heading("Advanced"),
+            SourceListItem::new("Graph"),
+            SourceListItem::new("Status").pinned_to_bottom(),
+        ];
+        let m = SourceListSize::Large.metrics();
+        let layout =
+            SourceListLayout::for_items_in(SourceListSize::Large, &items, 0.0, 0.0, 500.0, 200.0);
+        let heading = layout.item_rects[1];
+        assert_eq!(heading.height(), m.heading_height);
+        assert_eq!(layout.item_at(heading.center_x(), heading.center_y()), None);
+        assert_eq!(layout.item_rects[2].top, heading.bottom + m.item_gap);
+        let foot = layout.item_rects[3];
+        assert_eq!(foot.bottom + m.item_gap, 500.0);
+        assert_eq!(layout.item_at(foot.center_x(), foot.center_y()), Some(3));
+        assert!(!items[1].is_selectable());
+
+        // Without a foot, a pinned row flows after the others.
+        let flowing = SourceListLayout::for_items(SourceListSize::Large, &items, 0.0, 0.0, 200.0);
+        assert_eq!(
+            flowing.item_rects[3].top,
+            flowing.item_rects[2].bottom + m.item_gap
+        );
+    }
+
+    #[test]
     fn selected_tint_is_white() {
         let theme = Theme::light();
         assert_eq!(item_tint(&theme, true), Color::WHITE);
@@ -534,6 +676,8 @@ mod tests {
                 .with_subtitle("1 in")
                 .with_trailing(2),
         );
+        items.push(SourceListItem::heading("Advanced"));
+        items.push(SourceListItem::new("Status").pinned_to_bottom());
         for size in [SourceListSize::Regular, SourceListSize::Large] {
             let layout = SourceListLayout::for_items(size, &items, 0.0, 0.0, 200.0);
             draw(

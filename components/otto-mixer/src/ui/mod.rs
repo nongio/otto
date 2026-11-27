@@ -7,15 +7,16 @@
 
 // Rust guideline compliant 2026-02-21
 
+mod device_sound;
 mod devices_pane;
 mod effects_pane;
 mod engine_pane;
 mod graph_pane;
+mod mixer_pane;
+mod status_pane;
 mod views_pane;
 mod virtual_pane;
 
-use otto_audio::layout::Layout;
-use otto_audio::SERVICE_APP;
 use otto_audio_graph::{
     airplay_missing, identity, AirPlayMissing, Connection, Event, Graph, LinkLifetime, MediaType,
     NodeState, Routing, SavedLink, SETTING_FORCE_QUANTUM, SETTING_FORCE_RATE, SETTING_MAX_QUANTUM,
@@ -36,8 +37,10 @@ use otto_kit::prelude::*;
 use otto_kit::skia::{Contains, PaintStyle, PathBuilder, Point, RRect};
 use otto_kit::typography::ellipsize;
 use otto_kit::{t, t_owned, CursorShape};
+use otto_mixer::layout::Layout;
+use otto_mixer::SERVICE_APP;
 
-use otto_audio::graph_view::{
+use otto_mixer::graph_view::{
     self, media_color, GraphMode, GraphView, Hit, LinkDrag, RowKey, Scene,
 };
 
@@ -101,20 +104,30 @@ const SCROLL_ZOOM: f32 = 0.006;
 /// The sidebar's sections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
+    Mixer,
     Graph,
     Engine,
     Devices,
     VirtualDevices,
     Effects,
+    Status,
 }
 
-const PANES: [Pane; 5] = [
-    Pane::Graph,
-    Pane::Devices,
-    Pane::Engine,
-    Pane::Effects,
-    Pane::VirtualDevices,
+/// The sidebar, top to bottom: the everyday sections, the Advanced heading
+/// (`None`) over the ones that show the sound server's own objects, and the
+/// status line pinned to the foot.
+const SIDEBAR: [Option<Pane>; 8] = [
+    Some(Pane::Mixer),
+    Some(Pane::Devices),
+    None,
+    Some(Pane::Graph),
+    Some(Pane::Effects),
+    Some(Pane::Engine),
+    Some(Pane::VirtualDevices),
+    Some(Pane::Status),
 ];
+/// The room left under the status line, at the sidebar's foot.
+const SIDEBAR_FOOT: f32 = 10.0;
 
 /// What a control does when pressed.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -132,6 +145,8 @@ enum Action {
     Rate(u32),
     Quantum(u32),
     ResetEngine,
+    /// Force a small buffer and a fixed rate, for low latency.
+    LowLatency,
     Fit,
     ToggleProperties,
     /// Save the wire between two rows, from the details panel.
@@ -140,6 +155,12 @@ enum Action {
     Virtual(virtual_pane::VirtualAction),
     /// A control of the Effects section.
     Effect(effects_pane::EffectAction),
+    /// A control of the Mixer section.
+    Mixer(mixer_pane::MixerAction),
+    /// A control of the Devices section's detail.
+    Device(device_sound::DeviceAction),
+    /// A fix in the Status section.
+    Status(status_pane::StatusAction),
     /// Switch a device to a profile, by its index.
     Profile {
         device: u32,
@@ -232,10 +253,21 @@ pub struct Ui {
     /// What AirPlay discovery lacks here, read when the Devices section
     /// opens and when the switch is pressed.
     airplay_missing: Option<AirPlayMissing>,
+    /// The Mixer section's scroll and drag.
+    mixer: mixer_pane::MixerState,
+    /// The Devices section's selection, details and loudness drag.
+    devices: device_sound::DevicesState,
+    /// The dropout counts seen, for the Status section's last ten minutes.
+    dropout_log: status_pane::DropoutLog,
+    /// The Status section's cards, which scroll under its title.
+    status_scroll: ScrollView,
 }
 
 impl Ui {
     pub fn new(connection: Connection) -> Self {
+        // The Status section counts dropouts; the profiler is followed for
+        // as long as the window is open.
+        connection.watch_dropouts(true);
         let routing = Routing::load().unwrap_or_else(|error| {
             tracing::warn!(%error, "the saved routing could not be read");
             Routing::default()
@@ -250,7 +282,7 @@ impl Ui {
             frosted: false,
             controls: WindowControlsState::new(),
             modifiers: Modifiers::default(),
-            pane: Pane::Graph,
+            pane: Pane::Mixer,
             graph: Graph::new(),
             routing,
             connection,
@@ -272,6 +304,10 @@ impl Ui {
             views: views_pane::ViewScrolls::default(),
             effects: effects_pane::EffectsState::default(),
             airplay_missing: airplay_missing(),
+            mixer: mixer_pane::MixerState::default(),
+            devices: device_sound::DevicesState::default(),
+            dropout_log: status_pane::DropoutLog::default(),
+            status_scroll: ScrollView::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0)),
         }
     }
 
@@ -287,6 +323,13 @@ impl Ui {
             if self.view.selected_node == Some(id) {
                 self.view.selected_node = None;
             }
+        }
+        if let Event::Volume { node, .. } = event {
+            self.settle_mixer(node);
+        }
+        if let Event::Dropouts { driver, count, .. } = event {
+            self.dropout_log
+                .record(driver, count, std::time::Instant::now());
         }
         self.graph.apply(event);
     }
@@ -380,11 +423,12 @@ impl Ui {
     }
 
     fn sidebar_layout(&self, items: &[SourceListItem]) -> SourceListLayout {
-        SourceListLayout::for_items(
+        SourceListLayout::for_items_in(
             SIDEBAR_SIZE,
             items,
             0.0,
             self.titlebar_h() + 12.0,
+            self.size.1 - SIDEBAR_FOOT,
             SIDEBAR_W,
         )
     }
@@ -428,6 +472,8 @@ impl Ui {
                 Pane::VirtualDevices => self.draw_virtual(canvas, theme),
                 Pane::Devices => self.draw_devices(canvas, theme),
                 Pane::Effects => self.draw_effects(canvas, theme),
+                Pane::Mixer => self.draw_mixer(canvas, theme),
+                Pane::Status => self.draw_status(canvas, theme),
             }
         }
         let decoration = self.decoration();
@@ -549,40 +595,64 @@ impl Ui {
             Point::new(SIDEBAR_W - 0.5, self.size.1),
             &stroke(theme.hairline, 1.0),
         );
-        let items = sidebar_items();
+        // The status line: whether the audio service runs, or the first
+        // thing worth a look, named, once the graph is in.
+        let known = self.graph.is_connected() && self.graph.is_synced();
+        let issues = if known {
+            self.status_issues()
+        } else {
+            Vec::new()
+        };
+        let status = match issues.as_slice() {
+            _ if !known => t!("audio-pane-status").to_string(),
+            [] => t!("audio-status-line-on").to_string(),
+            [only] => only.short.clone(),
+            [first, rest @ ..] => t_owned!(
+                "audio-status-line-more",
+                first = first.short.clone(),
+                count = rest.len()
+            ),
+        };
+        let dot = if !known {
+            theme.fill_secondary
+        } else if issues.is_empty() {
+            theme.accent_green
+        } else {
+            theme.accent_orange
+        };
+        let items = sidebar_items(status);
         let layout = self.sidebar_layout(&items);
-        let selected = PANES.iter().position(|p| *p == self.pane);
+        let selected = SIDEBAR.iter().position(|p| *p == Some(self.pane));
         source_list::draw(
             canvas,
             &layout,
             &items,
             selected,
             theme,
-            |canvas, index, slot, rect, tint| {
-                if slot == GlyphSlot::Leading {
-                    draw_pane_glyph(canvas, PANES[index], rect, tint);
+            |canvas, index, slot, rect, tint| match (slot, SIDEBAR[index]) {
+                (GlyphSlot::Leading, Some(Pane::Status)) => {
+                    let ring = selected == Some(index);
+                    canvas.draw_circle(
+                        Point::new(rect.center_x(), rect.center_y()),
+                        5.0,
+                        &fill(dot),
+                    );
+                    if ring {
+                        canvas.draw_circle(
+                            Point::new(rect.center_x(), rect.center_y()),
+                            5.5,
+                            &stroke(Color::WHITE, 1.5),
+                        );
+                    }
                 }
+                (GlyphSlot::Leading, Some(pane)) => draw_pane_glyph(canvas, pane, rect, tint),
+                _ => {}
             },
         );
-        for (pane, rect) in PANES.iter().zip(&layout.item_rects) {
-            self.targets.push((*rect, Action::Pane(*pane)));
-        }
-
-        // Whether saved routing is being kept, at the foot.
-        if self.graph.is_connected() && self.graph.is_synced() {
-            let (dot, text) = if self.service_down() {
-                (theme.fill_secondary, t!("audio-service-off"))
-            } else {
-                (theme.accent_green, t!("audio-service-on"))
-            };
-            let cy = self.size.1 - 22.0;
-            canvas.draw_circle(Point::new(20.0, cy), 4.0, &fill(dot));
-            let font = styles::SUBHEADLINE.font();
-            Label::new(ellipsize(&font, text, SIDEBAR_W - 44.0))
-                .with_style(styles::SUBHEADLINE)
-                .with_color(theme.text_secondary)
-                .centered_on(32.0, cy)
-                .render(canvas);
+        for (entry, rect) in SIDEBAR.iter().zip(&layout.item_rects) {
+            if let Some(pane) = entry {
+                self.targets.push((*rect, Action::Pane(*pane)));
+            }
         }
     }
 
@@ -700,6 +770,8 @@ impl Ui {
         (self.view.selected_node.is_some() && self.props_open && self.props_scroll.is_animating())
             || (self.pane == Pane::Devices && self.devices_scroll.is_animating())
             || (self.pane == Pane::Graph && self.views.is_animating(self.view.mode))
+            || (self.pane == Pane::Mixer && self.mixer.is_animating())
+            || (self.pane == Pane::Status && self.status_scroll.is_animating())
     }
 
     /// The pop-up a press asked for, to open against the window's surface.
@@ -803,7 +875,7 @@ impl Ui {
     }
 
     fn motion(&mut self, p: Point) -> bool {
-        if self.drag_effect(p) {
+        if self.drag_effect(p) || self.drag_mixer(p) || self.drag_device(p) {
             return true;
         }
         let viewport = self.viewport();
@@ -870,7 +942,11 @@ impl Ui {
         if let Some((rect, action)) = self.target_hit(p) {
             if self.open_device_menu(action, rect, serial)
                 || self.open_effect_menu(action, rect, serial)
+                || self.open_mixer_menu(action, rect, serial)
+                || self.open_tuning_menu(action, rect, serial)
                 || self.press_effect(action, rect, p)
+                || self.press_mixer(action, rect, p)
+                || self.press_device(action, rect, p)
             {
                 return true;
             }
@@ -943,7 +1019,7 @@ impl Ui {
     }
 
     fn release(&mut self, p: Point, button: u32, window: &Window) -> bool {
-        let mut redraw = self.release_effect();
+        let mut redraw = self.release_effect() | self.release_mixer() | self.release_device();
         if button == BTN_LEFT {
             let control = self.decoration().control_at(p.x, p.y);
             let armed = self.controls.pressed().is_some();
@@ -1016,6 +1092,12 @@ impl Ui {
         }
         if self.pane == Pane::Effects {
             return self.scroll_effects(p, dy, discrete, stop);
+        }
+        if self.pane == Pane::Mixer {
+            return self.scroll_mixer(p, dy, discrete, stop);
+        }
+        if self.pane == Pane::Status {
+            return self.scroll_status(p, dy, discrete, stop);
         }
         if self.pane != Pane::Graph || !self.viewport().contains(p) {
             return false;
@@ -1203,7 +1285,7 @@ impl Ui {
                 self.view.selected_wire = None;
             }
             Action::StartService => {
-                spawn(&["systemctl", "--user", "start", "otto-audio-service.service"])
+                spawn(&["systemctl", "--user", "start", "otto-mixer-service.service"])
             }
             Action::StartPipeWire => spawn(&[
                 "systemctl",
@@ -1230,6 +1312,19 @@ impl Ui {
                     .set_setting(SETTING_FORCE_QUANTUM, Some(&quantum.to_string()));
                 self.save_routing_file();
             }
+            Action::LowLatency => {
+                let (rate, quantum) = (
+                    engine_pane::LOW_LATENCY_RATE,
+                    engine_pane::LOW_LATENCY_QUANTUM,
+                );
+                self.routing.engine.force_rate = Some(rate);
+                self.routing.engine.force_quantum = Some(quantum);
+                self.connection
+                    .set_setting(SETTING_FORCE_RATE, Some(&rate.to_string()));
+                self.connection
+                    .set_setting(SETTING_FORCE_QUANTUM, Some(&quantum.to_string()));
+                self.save_routing_file();
+            }
             Action::ResetEngine => {
                 self.routing.engine = Default::default();
                 self.connection.set_setting(SETTING_FORCE_RATE, Some("0"));
@@ -1239,6 +1334,9 @@ impl Ui {
             }
             Action::Virtual(action) => self.run_virtual(action),
             Action::Effect(action) => self.run_effect(action),
+            Action::Mixer(action) => self.run_mixer(action),
+            Action::Device(action) => self.run_device(action),
+            Action::Status(action) => self.run_status(action),
             Action::Profile { device, index } => self.connection.set_profile(device, index),
             Action::Port {
                 device,
@@ -1267,16 +1365,22 @@ fn spawn(argv: &[&str]) {
     }
 }
 
-/// The sidebar's rows, one per section.
-fn sidebar_items() -> Vec<SourceListItem> {
-    PANES
+/// The sidebar's rows, one per section, the status line saying `status`.
+fn sidebar_items(status: String) -> Vec<SourceListItem> {
+    SIDEBAR
         .iter()
-        .map(|pane| SourceListItem::new(pane_label(*pane)))
+        .map(|entry| match entry {
+            None => SourceListItem::heading(t!("audio-sidebar-advanced")),
+            Some(Pane::Status) => SourceListItem::new(status.clone()).pinned_to_bottom(),
+            Some(pane) => SourceListItem::new(pane_label(*pane)),
+        })
         .collect()
 }
 
 fn pane_label(pane: Pane) -> &'static str {
     match pane {
+        Pane::Mixer => t!("audio-pane-mixer"),
+        Pane::Status => t!("audio-pane-status"),
         Pane::Graph => t!("audio-pane-graph"),
         Pane::Engine => t!("audio-pane-engine"),
         Pane::VirtualDevices => t!("audio-pane-virtual"),
@@ -1443,6 +1547,9 @@ fn draw_pane_glyph(canvas: &Canvas, pane: Pane, rect: Rect, tint: Color) {
         Pane::Engine => "otto-pane-engine-symbolic",
         Pane::Effects => "otto-pane-effects-symbolic",
         Pane::VirtualDevices => "otto-pane-virtual-devices-symbolic",
+        Pane::Mixer => "otto-pane-sound-symbolic",
+        // The status line draws a dot of its own.
+        Pane::Status => return,
     };
     // Rasterised in device pixels, so it stays sharp on a scaled output.
     let size = rect.width() * SIDEBAR_GLYPH_SHARE;
@@ -1511,6 +1618,25 @@ fn draw_pane_glyph_fallback(canvas: &Canvas, pane: Pane, rect: Rect, tint: Color
                 );
                 canvas.draw_circle(Point::new(c.x + dx, c.y + knob), 2.0, &fill(tint));
             }
+        }
+        Pane::Mixer => {
+            // A speaker and two waves.
+            let mut path = PathBuilder::new();
+            path.move_to((c.x - 7.0, c.y - 2.5));
+            path.line_to((c.x - 4.0, c.y - 2.5));
+            path.line_to((c.x, c.y - 6.0));
+            path.line_to((c.x, c.y + 6.0));
+            path.line_to((c.x - 4.0, c.y + 2.5));
+            path.line_to((c.x - 7.0, c.y + 2.5));
+            path.close();
+            canvas.draw_path(&path.detach(), &paint);
+            for r in [3.5, 6.5] {
+                let oval = Rect::from_xywh(c.x + 1.0 - r, c.y - r, 2.0 * r, 2.0 * r);
+                canvas.draw_arc(oval, -45.0, 90.0, false, &paint);
+            }
+        }
+        Pane::Status => {
+            canvas.draw_circle(c, 4.0, &fill(tint));
         }
         Pane::Devices => {
             let rr =

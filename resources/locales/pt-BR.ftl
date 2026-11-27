@@ -2354,6 +2354,9 @@ bar-sound-app-volume = Volume de { $app }
 bar-sound-mute-output = Silenciar a saída
 bar-sound-mute-input = Silenciar a entrada
 bar-sound-mute-app = Silenciar { $app }
+bar-sound-app-output-default = Padrão
+bar-sound-app-follow-default = Seguir o padrão
+bar-sound-app-output = Saída de { $app }
 # Beside each output and input, in the shortcut column: what kind of device
 # it is. Virtual is one made in software, such as a mix or an effect.
 bar-sound-kind-bluetooth = Bluetooth
@@ -2362,8 +2365,8 @@ bar-sound-kind-hdmi = HDMI
 bar-sound-kind-virtual = Virtual
 bar-sound-kind-built-in = Integrado
 bar-sound-kind-airplay = AirPlay
-# The menu's last row, which opens the Audio app.
-bar-sound-open-audio = Áudio…
+# The menu's last row, which opens the Mixer app.
+bar-sound-open-mixer = Abrir o mixer…
 # What a screen reader calls the indicator. $percent is a whole number and
 # $device the output's name.
 bar-sound-label = Som, { $percent }%, { $device }
@@ -2397,16 +2400,16 @@ schema-topbar-show-network-description = O indicador de Wi-Fi e rede cabeada na 
 schema-topbar-show-sound-label = Mostrar o som
 schema-topbar-show-sound-description = O alto-falante na barra superior, com um menu para o volume, a saída e a entrada, e os apps que estão tocando. Aparece onde o PipeWire está em execução.
 
-## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
+## otto-mixer: the PipeWire graph as a patchbay (Graph), and the sound
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = Configurações de áudio
-audio-window-title = Configurações de áudio do Otto — { $pane }
+audio-title = Mixer
+audio-window-title = Mixer do Otto — { $pane }
 audio-pane-graph = Grafo
 audio-pane-engine = Motor
 audio-no-server-title = O servidor de som não está em execução
-audio-no-server-body = O áudio vai se conectar assim que o PipeWire iniciar.
+audio-no-server-body = O mixer vai se conectar assim que o PipeWire iniciar.
 audio-no-server-start = Iniciar PipeWire
 audio-graph-empty = Nada para mostrar com esses filtros
 audio-filter-audio = Áudio
@@ -2566,7 +2569,7 @@ audio-airplay-delay = Os alto-falantes AirPlay tocam com cerca de 2 segundos de 
 # The value of the Delay fact in the Graph's details panel.
 audio-airplay-delay-short = Cerca de 2 s, pela rede
 
-## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
+## otto-mixer — Virtual devices: outputs, inputs and loopbacks the audio
 ## service makes. The cards are about 260 px wide; the form's labels sit in a
 ## column of about 78 px.
 
@@ -2621,7 +2624,7 @@ audio-matrix-corner = De ↓ · Para →
 # Over the Lanes view, which shows links but does not make them.
 audio-lanes-note = Cada faixa segue o som de onde ele começa até onde termina. Os links são feitos no Patchbay ou na Matriz.
 audio-lanes-empty = Nada está conectado com esses filtros
-## otto-audio — Effects: equalisers, limiters, compressors and noise
+## otto-mixer — Effects: equalisers, limiters, compressors and noise
 ## suppression the audio service hosts, each sitting on a device. The list
 ## beside the editor is about 230 px wide; band cards are about 130 px wide.
 
@@ -2771,3 +2774,93 @@ audio-effects-ee-multiband-compressor = compressor multibanda
 audio-effects-ee-stereo-tools = ferramentas estéreo
 audio-effects-ee-limiter = limitador
 audio-effects-ee-filter = filtro
+
+audio-pane-mixer = Mixer
+audio-pane-status = Status
+audio-sidebar-advanced = Avançado
+audio-status-line-on = Serviço de áudio ativo
+audio-status-line-off = Serviço de áudio desligado
+audio-status-short-device-missing = { $device } não está conectado
+audio-status-short-no-output = { $app } está sem saída
+audio-status-short-dropouts = Falhas em { $device }
+audio-status-short-clipping = { $name } está saturando
+audio-status-line-more = { $first } +{ $count }
+audio-kind-hdmi = HDMI
+audio-kind-virtual = Virtual
+audio-mixer-title = Mixer
+audio-mixer-intro = Onde o som toca, em que volume, e quais apps o usam.
+audio-mixer-service-down = Regras de apps e abaixar o som em chamadas só funcionam enquanto o serviço de áudio está rodando.
+audio-mixer-outputs = Saídas
+audio-mixer-apps = Apps tocando
+audio-mixer-inputs = Entradas
+audio-mixer-calls-heading = Durante chamadas
+audio-mixer-default = Padrão
+audio-mixer-no-tuning = Sem ajuste
+audio-mixer-tuning-off = { $name } (desligado)
+audio-mixer-used-by = Usado por { $apps }
+audio-mixer-not-used = Nenhum app grava daqui
+audio-mixer-no-outputs = Nenhuma saída encontrada
+audio-mixer-no-inputs = Nenhuma entrada encontrada
+audio-mixer-nothing-playing = Nada tocando agora.
+audio-mixer-follow-default = Seguir o padrão
+audio-mixer-default-output = Padrão ({ $name })
+audio-mixer-always-here = Sempre tocar { $app } aqui
+audio-mixer-calls-lower = Quando um app usa o microfone, abaixar os outros apps para
+audio-status-title = Status
+audio-effects-not-in-use = Sem uso
+audio-devices-details = Perfil, codec e portas
+audio-devices-sound = Som
+audio-devices-sound-intro = Como esta saída soa, para cada app que toca nela.
+audio-devices-tuning = Ajuste
+audio-devices-compare = Comparar
+audio-devices-loudness = Intensidade
+audio-devices-protect = Evitar distorção
+audio-devices-tuning-none = Nenhum
+audio-devices-tuning-edit = Editar…
+audio-devices-tuning-new = Novo equalizador
+audio-devices-tuning-new-name = EQ de { $device }
+audio-devices-compare-off = Sem ajuste
+audio-devices-compare-on = Ajustado
+audio-devices-bt-title = Melhor som ou microfone
+audio-devices-bt-about = Pelo Bluetooth, fones tocam com o melhor som só com o microfone desligado. O perfil de headset liga o microfone, mas o som cai para qualidade de ligação.
+audio-devices-bt-best = Melhor som
+audio-devices-bt-headset = Headset com microfone
+audio-devices-bt-switch = Mudar para headset quando uma chamada precisar do microfone, e voltar depois
+audio-status-intro = O que precisa da sua atenção, e para onde o som está indo agora.
+audio-status-worth-a-look = Vale uma olhada
+audio-status-nothing = Nada precisa da sua atenção.
+audio-status-playing = Tocando agora
+audio-status-facts = Dados
+audio-status-service-off = O serviço de áudio está desligado, então regras, efeitos e conexões salvas não são mantidos.
+audio-status-rule-missing = { $app } deve tocar em { $device }, que não está conectado.
+audio-status-stream-missing = { $app } foi enviado para um dispositivo que não está conectado.
+audio-status-dropouts =
+    { $count ->
+        [one] 1 falha em { $device } nos últimos 10 minutos.
+       *[other] { $count } falhas em { $device } nos últimos 10 minutos.
+    }
+audio-status-raise-buffer = Usar { $frames } quadros
+audio-status-boost = { $name } aumenta até { $db } dB, então partes altas podem distorcer.
+audio-status-lower-preamp = Baixar o pré-amp em { $db } dB
+audio-status-not-playing-anywhere = Ainda não conectado
+audio-status-fact-dropouts = Falhas, últimos 10 minutos
+audio-status-dropouts-count = { $count }
+audio-status-fact-delay = Atraso
+audio-status-delay = { $ms } ms ({ $frames } quadros a { $rate })
+audio-status-fact-service = Serviço de áudio
+audio-status-service-is-on = Rodando
+audio-status-service-is-off = Desligado
+audio-status-fact-airplay = AirPlay
+audio-status-airplay-off = Desligado
+audio-status-airplay-no-module = Ligado, mas o módulo AirPlay do PipeWire não está instalado
+audio-status-airplay-no-avahi = Ligado, mas o Avahi não está rodando
+audio-status-airplay-found =
+    { $count ->
+        [0] Ligado, procurando alto-falantes
+        [one] Ligado, 1 alto-falante encontrado
+       *[other] Ligado, { $count } alto-falantes encontrados
+    }
+audio-virtual-recording-mix = Mix de gravação
+audio-virtual-recording-mix-add = Mix para gravação
+audio-virtual-hears-none = Ainda não ouve nada. Os apps aparecem aqui enquanto tocam.
+audio-engine-low-latency = Baixa latência

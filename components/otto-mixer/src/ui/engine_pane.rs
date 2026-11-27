@@ -1,6 +1,15 @@
-//! The Engine section: latency now, the sample rate and the buffer size.
+//! The Engine section: latency now, the sample rate and the buffer size,
+//! with a Low latency preset.
 
 use super::*;
+
+/// The low latency preset's buffer, in frames: about 2.7 ms at 48 kHz,
+/// small enough to play along to, large enough for most machines to keep
+/// up without dropouts.
+pub(super) const LOW_LATENCY_QUANTUM: u32 = 128;
+/// The low latency preset's rate, fixed so the buffer's length never
+/// changes under it.
+pub(super) const LOW_LATENCY_RATE: u32 = 48_000;
 
 impl Ui {
     pub(super) fn draw_engine(&mut self, canvas: &Canvas, theme: &Theme) {
@@ -29,11 +38,30 @@ impl Ui {
             .with_color(theme.text_primary)
             .centered_on(left, top + 12.0)
             .render(canvas);
+        // The low latency preset, beside Reset: a small buffer at a fixed
+        // rate, for playing an instrument or monitoring a microphone.
+        let preset = t!("audio-engine-low-latency");
+        let preset_w = push_button::width(preset);
+        let low = now.force_rate == Some(LOW_LATENCY_RATE)
+            && now.force_quantum == Some(LOW_LATENCY_QUANTUM);
+        self.button(
+            canvas,
+            Rect::from_xywh(
+                right - reset_w - 8.0 - preset_w,
+                top + 4.0,
+                preset_w,
+                push_button::HEIGHT,
+            ),
+            preset,
+            Action::LowLatency,
+            !low,
+            theme,
+        );
         let intro_font = styles::SUBHEADLINE.font();
         Label::new(ellipsize(
             &intro_font,
             t!("audio-engine-intro"),
-            width - reset_w - 16.0,
+            width - reset_w - preset_w - 24.0,
         ))
         .with_style(styles::SUBHEADLINE)
         .with_color(theme.text_secondary)

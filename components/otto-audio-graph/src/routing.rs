@@ -1,7 +1,7 @@
 //! The saved routing: the links to keep, by identity.
 //!
-//! Kept in `$XDG_CONFIG_HOME/otto/audio/routing.toml`. The otto-audio window
-//! writes it and `otto-audio-service` reads it again whenever it changes.
+//! Kept in `$XDG_CONFIG_HOME/otto/audio/routing.toml`. The otto-mixer window
+//! writes it and `otto-mixer-service` reads it again whenever it changes.
 //!
 //! ```toml
 //! version = 1
@@ -13,7 +13,18 @@
 //!
 //! [engine]
 //! force_quantum = 256
+//!
+//! [[rule]]
+//! app = "Spotify"
+//! output = "alsa_output.usb-headset"
+//!
+//! [calls]
+//! lower_others = true
+//! level = 30
 //! ```
+//!
+//! Every section is optional and left out while empty or at its default,
+//! so a file from an older version reads unchanged.
 
 // Rust guideline compliant 2026-02-21
 
@@ -74,6 +85,12 @@ pub struct Routing {
     /// The effects the service hosts; see `effects/mod.rs`.
     #[serde(default, rename = "effect", skip_serializing_if = "Vec::is_empty")]
     pub(crate) effects: Vec<crate::effects::Effect>,
+    /// Where apps' sound plays; see `rules.rs`.
+    #[serde(default, rename = "rule", skip_serializing_if = "Vec::is_empty")]
+    pub(crate) rules: Vec<crate::rules::AppRule>,
+    /// What happens to other apps while one records; see `rules.rs`.
+    #[serde(default, skip_serializing_if = "crate::rules::Calls::is_default")]
+    pub calls: crate::rules::Calls,
 }
 
 /// Why the routing could not be read or written.

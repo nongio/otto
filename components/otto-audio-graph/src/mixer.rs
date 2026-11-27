@@ -148,6 +148,8 @@ pub(crate) struct Mixer {
     default_output: Option<String>,
     default_input: Option<String>,
     volumes: HashMap<u32, Volume>,
+    /// Each moved stream's `target.object`, by stream id.
+    targets: HashMap<u32, String>,
 }
 
 impl Mixer {
@@ -162,8 +164,24 @@ impl Mixer {
         self.volumes.insert(node, volume);
     }
 
+    pub(crate) fn set_target(&mut self, stream: u32, target: Option<String>) {
+        match target {
+            Some(target) => {
+                self.targets.insert(stream, target);
+            }
+            None => {
+                self.targets.remove(&stream);
+            }
+        }
+    }
+
+    pub(crate) fn target(&self, stream: u32) -> Option<&str> {
+        self.targets.get(&stream).map(String::as_str)
+    }
+
     pub(crate) fn remove(&mut self, id: u32) {
         self.volumes.remove(&id);
+        self.targets.remove(&id);
     }
 }
 
@@ -500,6 +518,19 @@ pub(crate) fn bind_default(
                     return 0;
                 };
                 if subject != 0 {
+                    // A stream's target: set when it is moved, cleared when
+                    // it follows the default again.
+                    match key {
+                        Some(TARGET_OBJECT) => emit(Event::Target {
+                            stream: subject,
+                            target: value.map(str::to_string),
+                        }),
+                        None => emit(Event::Target {
+                            stream: subject,
+                            target: None,
+                        }),
+                        _ => {}
+                    }
                     return 0;
                 }
                 let name = || value.and_then(name_in_json);

@@ -1,10 +1,10 @@
 [Unit]
-Description=Otto audio routing: keeps the links saved in Audio
+Description=Otto audio routing: keeps the links saved in Mixer
 PartOf=graphical-session.target
 After=graphical-session.target pipewire.service
 
 [Service]
-ExecStart=/usr/bin/otto-audio-service
+ExecStart=/usr/bin/otto-mixer-service
 Restart=on-failure
 RestartSec=2
 

@@ -17,6 +17,14 @@ const SLIDER_LABEL_WIDTH: f32 = 76.0;
 const READOUT_WIDTH: f32 = 36.0;
 /// The space between the parts of a slider row.
 const SLIDER_GAP: f32 = 10.0;
+/// How wide a slider row's picker is; a longer choice is cut short.
+pub const PICKER_WIDTH: f32 = 88.0;
+/// How tall a slider row's picker is.
+const PICKER_HEIGHT: f32 = 20.0;
+/// The room the picker's chevron takes at its right end.
+const PICKER_CHEVRON: f32 = 14.0;
+/// How far the picker's label sits in from its left edge.
+const PICKER_INSET: f32 = 8.0;
 
 /// Where the parts of a slider row sit, in the row's coordinates. Drawing
 /// and hit-testing both come through [`slider_layout`], so a press lands on
@@ -31,6 +39,8 @@ pub struct SliderLayout {
     pub track: Rect,
     /// The percentage's column.
     pub readout: Rect,
+    /// The pop-up button after the percentage, when the row has one.
+    pub picker: Option<Rect>,
 }
 
 /// Lay out the slider row at `(x, y)`, `width` by `height`.
@@ -59,7 +69,17 @@ pub fn slider_layout(
         left += SLIDER_LABEL_WIDTH + SLIDER_GAP;
         rect
     });
-    let right = x + width - style.horizontal_padding;
+    let mut right = x + width - style.horizontal_padding;
+    let picker = slider.picker.as_ref().map(|_| {
+        let rect = Rect::from_xywh(
+            right - PICKER_WIDTH,
+            cy - PICKER_HEIGHT / 2.0,
+            PICKER_WIDTH,
+            PICKER_HEIGHT,
+        );
+        right -= PICKER_WIDTH + SLIDER_GAP;
+        rect
+    });
     let readout = Rect::from_xywh(right - READOUT_WIDTH, y, READOUT_WIDTH, height);
     let track_left = left + KNOB_RADIUS;
     let track_right = (readout.left - SLIDER_GAP - KNOB_RADIUS).max(track_left);
@@ -69,6 +89,7 @@ pub fn slider_layout(
         label,
         track,
         readout,
+        picker,
     }
 }
 
@@ -255,6 +276,61 @@ impl MenuItemRenderer {
             &font,
             &paint,
         );
+
+        if let (Some(rect), Some(picker)) = (layout.picker, slider.picker.as_ref()) {
+            Self::draw_picker(canvas, rect, &picker.label, text_color, style);
+        }
+    }
+
+    /// A slider row's pop-up button: a quiet pill with the current choice,
+    /// cut short to fit, and a chevron saying it opens a list.
+    fn draw_picker(
+        canvas: &Canvas,
+        rect: Rect,
+        label: &str,
+        text_color: skia_safe::Color,
+        style: &MenuItemStyle,
+    ) {
+        let mut fill = Paint::default();
+        fill.set_anti_alias(true);
+        fill.set_color(style.theme.fill_secondary);
+        let radius = rect.height() / 2.0;
+        canvas.draw_rrect(RRect::new_rect_xy(rect, radius, radius), &fill);
+
+        let font = style.shortcut_font();
+        let room = rect.width() - PICKER_INSET - PICKER_CHEVRON;
+        let fitted = crate::typography::ellipsize_by(label, room, |piece| {
+            crate::typography::measure_runs(&font, piece)
+        });
+        let (_, metrics) = font.metrics();
+        let baseline =
+            rect.top + (rect.height() - (metrics.descent - metrics.ascent)) / 2.0 - metrics.ascent;
+        let mut paint = Paint::default();
+        paint.set_color(text_color);
+        paint.set_anti_alias(true);
+        crate::typography::draw_runs(
+            canvas,
+            &fitted,
+            Point::new(rect.left + PICKER_INSET, baseline),
+            &font,
+            &paint,
+        );
+
+        // A small chevron pointing down.
+        let mut stroke = Paint::default();
+        stroke.set_color(style.shortcut_color_normal);
+        stroke.set_anti_alias(true);
+        stroke.set_style(skia_safe::PaintStyle::Stroke);
+        stroke.set_stroke_width(1.4);
+        stroke.set_stroke_cap(skia_safe::paint::Cap::Round);
+        stroke.set_stroke_join(skia_safe::paint::Join::Round);
+        let cx = rect.right - PICKER_CHEVRON / 2.0 - 2.0;
+        let cy = rect.center_y();
+        let mut path = skia_safe::PathBuilder::new();
+        path.move_to((cx - 3.0, cy - 1.5));
+        path.line_to((cx, cy + 1.5));
+        path.line_to((cx + 3.0, cy - 1.5));
+        canvas.draw_path(&path.detach(), &stroke);
     }
 
     /// Draw an action or submenu item

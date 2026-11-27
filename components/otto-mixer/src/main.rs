@@ -1,11 +1,12 @@
-//! `otto-audio`: the PipeWire graph as a patchbay, and the engine's settings.
+//! `otto-mixer`: the PipeWire graph as a patchbay, and the engine's settings.
 //!
 //! One window. PipeWire is followed on its own thread (otto-audio-graph);
 //! its events land in an inbox the run loop drains in `on_update`, so the
 //! window repaints when the graph changes and never polls.
 //!
-//! `otto-audio --png OUT [--engine | --devices | --effects [--effect N] |
-//! --virtual | --matrix | --lanes]` draws the window offscreen instead.
+//! `otto-mixer --png OUT [--mixer | --status | --engine | --devices |
+//! --effects [--effect N] | --virtual | --matrix | --lanes]` draws the window
+//! offscreen instead.
 
 mod preview;
 mod ui;
@@ -13,19 +14,19 @@ mod ui;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use otto_audio::graph_view::GraphMode;
-use otto_audio::WINDOW_APP;
 use otto_audio_graph::{Connection, Event};
 use otto_kit::components::dropdown::DropdownMenu;
 use otto_kit::events::{KeyEvent, KeyState, WindowConfigure};
 use otto_kit::prelude::*;
 use otto_kit::protocols::otto_surface_style_v1;
 use otto_kit::t;
+use otto_mixer::graph_view::GraphMode;
+use otto_mixer::WINDOW_APP;
 
 use crate::ui::Ui;
 
 /// The app id, which names the desktop entry.
-const APP_ID: &str = "otto-audio";
+const APP_ID: &str = "otto-mixer";
 /// The window's opening size.
 const WINDOW_W: i32 = 1100;
 const WINDOW_H: i32 = 700;
@@ -269,7 +270,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     otto_kit::logging::init("info");
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version") {
-        println!("otto-audio {}", env!("CARGO_PKG_VERSION"));
+        println!("otto-mixer {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     if let Some(at) = args.iter().position(|a| a == "--png") {
@@ -282,6 +283,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui::Pane::Devices
         } else if args.iter().any(|a| a == "--effects") {
             ui::Pane::Effects
+        } else if args.iter().any(|a| a == "--mixer") {
+            ui::Pane::Mixer
+        } else if args.iter().any(|a| a == "--status") {
+            ui::Pane::Status
         } else {
             ui::Pane::Graph
         };

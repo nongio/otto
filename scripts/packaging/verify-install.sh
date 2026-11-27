@@ -34,7 +34,7 @@ check() {
 echo "== binaries =="
 for b in otto otto-bar otto-islands otto-lock otto-authorize otto-settings otto-files \
          otto-launcher otto-emoji otto-stash otto-canvas otto-peek otto-preview otto-media-worker otto-msg otto-setup otto-search otto-greeter otto-rdp otto-agents \
-         otto-audio otto-audio-service; do
+         otto-mixer otto-mixer-service; do
     check "/usr/bin/$b" exec
 done
 # Arch keeps helper binaries out of /usr/libexec, in the package's own
@@ -56,7 +56,7 @@ check /usr/share/wayland-sessions/otto.desktop
 check /usr/share/applications/otto-files.desktop
 check /usr/share/applications/otto-settings.desktop
 check /usr/share/applications/otto-preview.desktop
-check /usr/share/applications/otto-audio.desktop
+check /usr/share/applications/otto-mixer.desktop
 # The Trash window is otto-files behind its own entry, so it gets its own
 # icon in the dock and the applications list. Every package must ship it.
 check /usr/share/applications/otto-trash.desktop
@@ -81,7 +81,7 @@ check /usr/lib/systemd/user/otto-agents.service
 check /usr/lib/systemd/user/otto-agents-bridge.service
 
 echo "== audio routing service =="
-check /usr/lib/systemd/user/otto-audio-service.service
+check /usr/lib/systemd/user/otto-mixer-service.service
 for a in otto-ask; do
     if [[ "$(readlink "/usr/bin/$a")" == otto-launcher ]]; then
         echo "  ok  /usr/bin/$a -> otto-launcher"
@@ -197,7 +197,7 @@ if command -v desktop-file-validate >/dev/null; then
              /usr/share/applications/otto-trash.desktop \
              /usr/share/applications/otto-settings.desktop \
              /usr/share/applications/otto-preview.desktop \
-             /usr/share/applications/otto-audio.desktop; do
+             /usr/share/applications/otto-mixer.desktop; do
         [[ -f "$d" ]] || continue   # already reported missing above
         desktop-file-validate "$d" && echo "  ok  $d" || fail=1
     done
@@ -228,7 +228,7 @@ for d in /usr/share/wayland-sessions/otto.desktop \
          /usr/share/applications/otto-trash.desktop \
          /usr/share/applications/otto-settings.desktop \
          /usr/share/applications/otto-preview.desktop \
-         /usr/share/applications/otto-audio.desktop; do
+         /usr/share/applications/otto-mixer.desktop; do
     [[ -f "$d" ]] || continue   # already reported missing above
     exe=$(sed -n 's/^Exec=\([^ ]*\).*/\1/p' "$d" | head -1)
     [[ -n "$exe" ]] || { echo "no Exec= in $d"; fail=1; continue; }
@@ -271,7 +271,7 @@ for b in /usr/bin/otto /usr/bin/otto-bar /usr/bin/otto-islands /usr/bin/otto-loc
          /usr/bin/otto-settings /usr/bin/otto-files /usr/bin/otto-launcher /usr/bin/otto-emoji /usr/bin/otto-stash /usr/bin/otto-canvas /usr/bin/otto-msg /usr/bin/otto-setup /usr/bin/otto-search \
          /usr/bin/otto-peek /usr/bin/otto-preview /usr/bin/otto-media-worker \
          /usr/bin/otto-greeter /usr/bin/otto-rdp /usr/bin/otto-agents \
-         /usr/bin/otto-audio /usr/bin/otto-audio-service \
+         /usr/bin/otto-mixer /usr/bin/otto-mixer-service \
          "$portal"; do
     [[ -x "$b" ]] || continue   # already reported missing above
     # `version \`GLIBC_2.44' not found` is the foreign-glibc case above, not a
@@ -304,7 +304,7 @@ else
 "/usr/bin/otto" --version || { echo "otto --version failed"; fail=1; }
 for b in otto-bar otto-islands otto-lock otto-authorize otto-settings otto-files \
          otto-launcher otto-emoji otto-stash otto-canvas otto-peek otto-preview otto-media-worker otto-msg otto-setup otto-search otto-greeter otto-rdp otto-agents \
-         otto-audio otto-audio-service; do
+         otto-mixer otto-mixer-service; do
     [[ -x "/usr/bin/$b" ]] || continue
     # Not every component parses --version; a component that instead prints
     # usage and exits non-zero has still loaded successfully. Only a loader

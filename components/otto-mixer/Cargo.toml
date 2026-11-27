@@ -1,5 +1,5 @@
 [package]
-name = "otto-audio"
+name = "otto-mixer"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -8,12 +8,12 @@ repository.workspace = true
 description = "Otto's audio patchbay, and the service that keeps its saved links"
 
 [[bin]]
-name = "otto-audio"
+name = "otto-mixer"
 path = "src/main.rs"
 
 [[bin]]
-name = "otto-audio-service"
-path = "src/bin/otto-audio-service.rs"
+name = "otto-mixer-service"
+path = "src/bin/otto-mixer-service.rs"
 
 # The window draws with otto-kit; the graph, its PipeWire connection and the
 # routing file are otto-audio-graph's, which the service uses on its own.

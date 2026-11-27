@@ -5,7 +5,7 @@
 //! `otto-audio-graph` on a thread of its own, which never polls. Each change
 //! is boiled down to a [`Snapshot`] of what the indicator and the menu show,
 //! and the bar wakes only when that changes. Volumes and defaults are the
-//! session manager's, so a change here shows in the Audio app, in Settings
+//! session manager's, so a change here shows in the Mixer app, in Settings
 //! and in any other mixer. Whether the indicator is there at all is the
 //! compositor's `topbar.show_sound` setting. See
 //! `specs/audio-routing.md`, "The top bar sound menu".
@@ -30,8 +30,15 @@ use crate::settings::get_bool;
 /// The setting that shows or hides the indicator.
 const SHOW_ID: &str = "topbar.show_sound";
 
-/// The program "Audio…" opens.
-const AUDIO_APP: &str = "otto-audio";
+/// The program "Open Mixer…" opens.
+const AUDIO_APP: &str = "otto-mixer";
+
+/// What an output picker's rows are reported with: this, the app's name,
+/// [`FIELD`], then the output's `node.name`, empty for "Follow the default".
+const APP_OUTPUT: &str = "app-output\u{1f}";
+/// Between the fields of an output picker's action id. A control character,
+/// so no app or node name holds it.
+const FIELD: char = '\u{1f}';
 
 /// How far a scroll step or a menu wheel moves the volume: 5 %.
 const STEP: f32 = 0.05;
@@ -54,18 +61,7 @@ pub struct Device {
 }
 
 /// What kind of device an output or input is, shown beside its name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    Bluetooth,
-    Usb,
-    Hdmi,
-    /// An AirPlay receiver on the network, which plays about 2 s late.
-    AirPlay,
-    /// Made in software: a null sink, a loopback, an effect.
-    Virtual,
-    /// A card's own speakers, jack or microphone.
-    BuiltIn,
-}
+pub use otto_audio_graph::DeviceKind as Kind;
 
 /// One output or input to pick.
 #[derive(Debug, Clone, PartialEq)]
@@ -84,6 +80,9 @@ pub struct App {
     pub nodes: Vec<u32>,
     pub volume: f32,
     pub muted: bool,
+    /// The `node.name` of the output it is held on, or `None` while it
+    /// follows the default output.
+    pub target: Option<String>,
 }
 
 /// Everything the indicator and the menu show.
@@ -120,7 +119,7 @@ impl Snapshot {
                 .map(|node| Choice {
                     name: node.name().to_string(),
                     title: node.title().to_string(),
-                    kind: kind_of(node),
+                    kind: node.device_kind(),
                     default: Some(node.name()) == default,
                 })
                 .collect()
@@ -137,6 +136,7 @@ impl Snapshot {
                 .map(|app| App {
                     volume: app.volume.linear(),
                     muted: app.volume.mute,
+                    target: target_of(graph, &app.nodes),
                     name: app.app,
                     nodes: app.nodes,
                 })
@@ -145,26 +145,17 @@ impl Snapshot {
     }
 }
 
-/// What kind of device `node` is, from what the session manager says of it.
-fn kind_of(node: &Node) -> Kind {
-    if node.is_airplay() {
-        return Kind::AirPlay;
-    }
-    if !node.is_device() {
-        return Kind::Virtual;
-    }
-    let api = node.prop("device.api").unwrap_or_default();
-    let bus = node.prop("device.bus").unwrap_or_default();
-    let name = node.name();
-    if api == "bluez5" || bus == "bluetooth" {
-        Kind::Bluetooth
-    } else if bus == "usb" {
-        Kind::Usb
-    } else if name.contains("hdmi") || name.contains("iec958") {
-        Kind::Hdmi
-    } else {
-        Kind::BuiltIn
-    }
+/// The `node.name` of the output an app made of `nodes` was moved to, or
+/// `None` while it follows the default: the first stream's `target.object`,
+/// which may name the output by serial or id as well.
+fn target_of(graph: &Graph, nodes: &[u32]) -> Option<String> {
+    let target = nodes.iter().find_map(|&id| graph.stream_target(id))?;
+    Some(
+        graph
+            .node_targeted(target)
+            .map_or(target, Node::name)
+            .to_string(),
+    )
 }
 
 /// The graph as last reported, applied on the PipeWire thread.
@@ -351,11 +342,18 @@ pub fn slider_changed(action_id: &str, change: SliderChange) {
     }
 }
 
-/// A row of the menu was chosen. Returns whether it was "Audio…", which the
-/// caller launches.
+/// A row of the menu was chosen. Returns whether it was "Open Mixer…",
+/// which the caller launches.
 pub fn activate(action_id: &str) -> bool {
-    if action_id == "audio" {
+    if action_id == "mixer" {
         return true;
+    }
+    if let Some(rest) = action_id.strip_prefix(APP_OUTPUT) {
+        if let Some((app, output)) = rest.split_once(FIELD) {
+            let target = (!output.is_empty()).then_some(output);
+            move_app(app, target);
+        }
+        return false;
     }
     let (endpoint, name) = if let Some(name) = action_id.strip_prefix("output:") {
         (Endpoint::Output, name)
@@ -370,9 +368,30 @@ pub fn activate(action_id: &str) -> bool {
     false
 }
 
-/// The program "Audio…" runs.
-pub fn audio_app() -> &'static str {
-    AUDIO_APP
+/// Move every stream of `app` to the output called `target`, or back to
+/// following the default with `None`.
+fn move_app(app: &str, target: Option<&str>) {
+    let Some(nodes) = snapshot()
+        .apps
+        .into_iter()
+        .find(|a| a.name == app)
+        .map(|a| a.nodes)
+    else {
+        return;
+    };
+    // The session manager links each stream anew; the `target.object` it
+    // is set by comes back as an event and moves the check.
+    if let Some(connection) = connection() {
+        for id in nodes {
+            connection.set_target(id, target);
+        }
+    }
+}
+
+/// The program "Open Mixer…" runs, and the arguments that open it on its
+/// Mixer section.
+pub fn audio_app() -> (&'static str, &'static [&'static str]) {
+    (AUDIO_APP, &[])
 }
 
 // ---------------------------------------------------------------------------
@@ -512,6 +531,30 @@ fn section(
     }
 }
 
+/// The output picker of `app`'s row: the button's label and its list.
+fn output_picker(app: &App, outputs: &[Choice]) -> (String, Vec<KitMenuItem>) {
+    let label = match &app.target {
+        None => otto_kit::t!("bar-sound-app-output-default").to_string(),
+        Some(name) => outputs
+            .iter()
+            .find(|c| &c.name == name)
+            .map_or_else(|| name.clone(), |c| c.title.clone()),
+    };
+    let id = |output: &str| format!("{APP_OUTPUT}{}{FIELD}{output}", app.name);
+    let mut items = vec![
+        KitMenuItem::action(otto_kit::t!("bar-sound-app-follow-default"))
+            .with_action_id(id(""))
+            .with_checked(app.target.is_none()),
+        KitMenuItem::separator(),
+    ];
+    items.extend(outputs.iter().map(|output| {
+        KitMenuItem::action(output.title.clone())
+            .with_action_id(id(&output.name))
+            .with_checked(app.target.as_deref() == Some(output.name.as_str()))
+    }));
+    (label, items)
+}
+
 /// The menu's items for `snapshot`.
 pub fn menu_items(snapshot: &Snapshot) -> Vec<KitMenuItem> {
     let mut items = Vec::new();
@@ -535,6 +578,7 @@ pub fn menu_items(snapshot: &Snapshot) -> Vec<KitMenuItem> {
         }
         items.push(KitMenuItem::header(otto_kit::t!("bar-sound-apps")));
         for app in &snapshot.apps {
+            let (output, outputs) = output_picker(app, &snapshot.outputs);
             items.push(
                 KitMenuItem::slider(
                     format!("app:{}", app.name),
@@ -546,6 +590,11 @@ pub fn menu_items(snapshot: &Snapshot) -> Vec<KitMenuItem> {
                     speaker_icon(app.muted),
                     !app.muted,
                     otto_kit::t_owned!("bar-sound-mute-app", app = app.name.clone()),
+                )
+                .with_slider_picker(
+                    output,
+                    otto_kit::t_owned!("bar-sound-app-output", app = app.name.clone()),
+                    outputs,
                 ),
             );
         }
@@ -553,7 +602,7 @@ pub fn menu_items(snapshot: &Snapshot) -> Vec<KitMenuItem> {
     if !items.is_empty() {
         items.push(KitMenuItem::separator());
     }
-    items.push(KitMenuItem::action(otto_kit::t!("bar-sound-open-audio")).with_action_id("audio"));
+    items.push(KitMenuItem::action(otto_kit::t!("bar-sound-open-mixer")).with_action_id("mixer"));
     items
 }
 
@@ -809,7 +858,7 @@ mod tests {
                 otto_kit::t_owned!("bar-sound-app-volume", app = "Spotify")
             ),
             "—".to_string(),
-            otto_kit::t!("bar-sound-open-audio").to_string(),
+            otto_kit::t!("bar-sound-open-mixer").to_string(),
         ];
         assert_eq!(labels(&items), expected);
     }
@@ -841,21 +890,6 @@ mod tests {
     }
 
     #[test]
-    fn an_airplay_speaker_says_so() {
-        let Event::Node(speaker) = node(
-            7,
-            &[
-                ("media.class", "Audio/Sink"),
-                ("node.name", "raop_sink.Kitchen.local.192.168.1.30.7000"),
-                ("node.description", "Kitchen"),
-            ],
-        ) else {
-            unreachable!()
-        };
-        assert_eq!(kind_of(&speaker), Kind::AirPlay);
-    }
-
-    #[test]
     fn sliders_carry_the_volume_and_a_lit_toggle_while_sound_passes() {
         let items = menu_items(&Snapshot::of(&graph()));
         let slider = |id: &str| {
@@ -874,10 +908,97 @@ mod tests {
         assert_eq!(firefox.label.as_deref(), Some("Firefox"));
     }
 
+    /// The picker of `app`'s slider row in `items`.
+    fn picker<'a>(
+        items: &'a [KitMenuItem],
+        app: &str,
+    ) -> &'a otto_kit::components::menu_item::SliderPicker {
+        items
+            .iter()
+            .find_map(|i| {
+                i.slider_data()
+                    .filter(|s| s.action_id == format!("app:{app}"))
+                    .and_then(|s| s.picker.as_ref())
+            })
+            .expect("a picker")
+    }
+
+    /// The label of the checked row of `picker`'s list.
+    fn checked(picker: &otto_kit::components::menu_item::SliderPicker) -> Vec<&str> {
+        picker
+            .items
+            .iter()
+            .filter(|i| i.checked == Some(true))
+            .filter_map(KitMenuItem::label)
+            .collect()
+    }
+
+    #[test]
+    fn an_app_following_the_default_says_default_and_lists_every_output() {
+        let items = menu_items(&Snapshot::of(&graph()));
+        let firefox = picker(&items, "Firefox");
+        assert_eq!(firefox.label, otto_kit::t!("bar-sound-app-output-default"));
+        let rows: Vec<&str> = firefox
+            .items
+            .iter()
+            .map(|i| i.label().unwrap_or("—"))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                otto_kit::t!("bar-sound-app-follow-default"),
+                "—",
+                "Built-in Speakers",
+                "Stream mix",
+            ]
+        );
+        assert_eq!(
+            checked(firefox),
+            vec![otto_kit::t!("bar-sound-app-follow-default")]
+        );
+        assert_eq!(
+            firefox.items[2].action_id(),
+            Some("app-output\u{1f}Firefox\u{1f}speakers")
+        );
+    }
+
+    #[test]
+    fn an_app_moved_elsewhere_shows_that_output_and_ticks_it() {
+        let mut graph = graph();
+        // Moved elsewhere, by the Mixer app or another mixer.
+        graph.apply(Event::Target {
+            stream: 10,
+            target: Some("mix".into()),
+        });
+        graph.apply(Event::Target {
+            stream: 12,
+            target: Some("speakers".into()),
+        });
+        let items = menu_items(&Snapshot::of(&graph));
+        let firefox = picker(&items, "Firefox");
+        assert_eq!(firefox.label, "Stream mix");
+        assert_eq!(checked(firefox), vec!["Stream mix"]);
+        // Held on the default output is not the same as following it.
+        let spotify = picker(&items, "Spotify");
+        assert_eq!(spotify.label, "Built-in Speakers");
+        assert_eq!(checked(spotify), vec!["Built-in Speakers"]);
+
+        // Following the default again.
+        graph.apply(Event::Target {
+            stream: 10,
+            target: None,
+        });
+        let items = menu_items(&Snapshot::of(&graph));
+        assert_eq!(
+            picker(&items, "Firefox").label,
+            otto_kit::t!("bar-sound-app-output-default")
+        );
+    }
+
     #[test]
     fn with_nothing_to_show_the_menu_still_opens_the_app() {
         let items = menu_items(&Snapshot::default());
-        assert_eq!(labels(&items), vec![otto_kit::t!("bar-sound-open-audio")]);
+        assert_eq!(labels(&items), vec![otto_kit::t!("bar-sound-open-mixer")]);
     }
 
     #[test]
@@ -890,9 +1011,11 @@ mod tests {
     }
 
     #[test]
-    fn choosing_a_device_names_it_and_audio_launches() {
-        assert!(activate("audio"));
+    fn choosing_a_device_names_it_and_the_mixer_launches() {
+        assert!(activate("mixer"));
         assert!(!activate("output:speakers"));
         assert!(!activate("nonsense"));
+        // With no connection and no such app, a picker row does nothing.
+        assert!(!activate("app-output\u{1f}Nobody\u{1f}speakers"));
     }
 }

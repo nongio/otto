@@ -2325,6 +2325,9 @@ bar-sound-app-volume = { $app } 音量
 bar-sound-mute-output = 将输出静音
 bar-sound-mute-input = 将输入静音
 bar-sound-mute-app = 将 { $app } 静音
+bar-sound-app-output-default = 默认
+bar-sound-app-follow-default = 跟随默认设备
+bar-sound-app-output = { $app } 的输出
 # Beside each output and input, in the shortcut column: what kind of device
 # it is. Virtual is one made in software, such as a mix or an effect.
 bar-sound-kind-bluetooth = 蓝牙
@@ -2333,8 +2336,8 @@ bar-sound-kind-hdmi = HDMI
 bar-sound-kind-virtual = 虚拟
 bar-sound-kind-built-in = 内置
 bar-sound-kind-airplay = AirPlay
-# The menu's last row, which opens the Audio app.
-bar-sound-open-audio = 音频…
+# The menu's last row, which opens the Mixer app.
+bar-sound-open-mixer = 打开混音器…
 # What a screen reader calls the indicator. $percent is a whole number and
 # $device the output's name.
 bar-sound-label = 声音，{ $percent }%，{ $device }
@@ -2368,16 +2371,16 @@ schema-topbar-show-network-description = 顶部栏中的 Wi-Fi 和有线网络�
 schema-topbar-show-sound-label = 显示声音
 schema-topbar-show-sound-description = 顶部栏中的扬声器，附带用于调节音量、输出和输入以及正在播放的应用的菜单。在运行 PipeWire 的系统上显示。
 
-## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
+## otto-mixer: the PipeWire graph as a patchbay (Graph), and the sound
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = 音频设置
-audio-window-title = Otto 音频设置 —— { $pane }
+audio-title = 混音器
+audio-window-title = Otto 混音器 —— { $pane }
 audio-pane-graph = 连接图
 audio-pane-engine = 引擎
 audio-no-server-title = 声音服务器未运行
-audio-no-server-body = PipeWire 启动后，音频会立即连接。
+audio-no-server-body = PipeWire 启动后，混音器会立即连接。
 audio-no-server-start = 启动 PipeWire
 audio-graph-empty = 在这些过滤条件下没有可显示的内容
 audio-filter-audio = 音频
@@ -2525,7 +2528,7 @@ audio-airplay-delay = AirPlay 扬声器的声音会滞后约 2 秒，因此无�
 # The value of the Delay fact in the Graph's details panel.
 audio-airplay-delay-short = 约 2 秒，经由网络
 
-## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
+## otto-mixer — Virtual devices: outputs, inputs and loopbacks the audio
 ## service makes. The cards are about 260 px wide; the form's labels sit in a
 ## column of about 78 px.
 
@@ -2580,7 +2583,7 @@ audio-matrix-corner = 从 ↓ · 到 →
 # Over the Lanes view, which shows links but does not make them.
 audio-lanes-note = 每条泳道跟随声音从起点走到终点。连接请在跳线盘或矩阵中进行。
 audio-lanes-empty = 在这些过滤条件下没有连接
-## otto-audio — Effects: equalisers, limiters, compressors and noise
+## otto-mixer — Effects: equalisers, limiters, compressors and noise
 ## suppression the audio service hosts, each sitting on a device. The list
 ## beside the editor is about 230 px wide; band cards are about 130 px wide.
 
@@ -2716,3 +2719,88 @@ audio-effects-ee-multiband-compressor = 多段压缩器
 audio-effects-ee-stereo-tools = 立体声工具
 audio-effects-ee-limiter = 限制器
 audio-effects-ee-filter = 滤波器
+
+audio-pane-mixer = 混音器
+audio-pane-status = 状态
+audio-sidebar-advanced = 高级
+audio-status-line-on = 音频服务已开启
+audio-status-line-off = 音频服务已关闭
+audio-status-short-device-missing = { $device } 未连接
+audio-status-short-no-output = { $app } 没有输出设备
+audio-status-short-dropouts = { $device } 出现断音
+audio-status-short-clipping = { $name } 出现削波
+audio-status-line-more = { $first } +{ $count }
+audio-kind-hdmi = HDMI
+audio-kind-virtual = 虚拟
+audio-mixer-title = 混音器
+audio-mixer-intro = 声音在哪里播放、音量多大，以及哪些应用在使用。
+audio-mixer-service-down = 应用规则和通话时调低其他应用，只在音频服务运行时有效。
+audio-mixer-outputs = 输出
+audio-mixer-apps = 正在播放的应用
+audio-mixer-inputs = 输入
+audio-mixer-calls-heading = 通话时
+audio-mixer-default = 默认
+audio-mixer-no-tuning = 无调音
+audio-mixer-tuning-off = { $name }（关）
+audio-mixer-used-by = 使用中：{ $apps }
+audio-mixer-not-used = 没有应用从这里录音
+audio-mixer-no-outputs = 没有找到输出
+audio-mixer-no-inputs = 没有找到输入
+audio-mixer-nothing-playing = 现在没有播放任何内容。
+audio-mixer-follow-default = 跟随默认
+audio-mixer-default-output = 默认（{ $name }）
+audio-mixer-always-here = 总是在这里播放 { $app }
+audio-mixer-calls-lower = 有应用使用麦克风时，把其他应用调低到
+audio-status-title = 状态
+audio-effects-not-in-use = 未使用
+audio-devices-details = 配置、编解码器和端口
+audio-devices-sound = 声音
+audio-devices-sound-intro = 这个输出的声音，对在上面播放的每个应用都有效。
+audio-devices-tuning = 调音
+audio-devices-compare = 对比
+audio-devices-loudness = 响度
+audio-devices-protect = 防止削波
+audio-devices-tuning-none = 无
+audio-devices-tuning-edit = 编辑…
+audio-devices-tuning-new = 新建均衡器
+audio-devices-tuning-new-name = { $device } EQ
+audio-devices-compare-off = 关
+audio-devices-compare-on = 已调音
+audio-devices-bt-title = 最佳音质还是麦克风
+audio-devices-bt-about = 通过蓝牙，耳机只有在麦克风关闭时才有最佳音质。耳麦配置会打开麦克风，但音质会降到通话水平。
+audio-devices-bt-best = 最佳音质
+audio-devices-bt-headset = 带麦克风的耳麦
+audio-devices-bt-switch = 通话需要麦克风时切换到耳麦，结束后切回
+audio-status-intro = 需要你留意的事情，以及现在声音的去向。
+audio-status-worth-a-look = 值得一看
+audio-status-nothing = 没有需要留意的事情。
+audio-status-playing = 正在播放
+audio-status-facts = 概况
+audio-status-service-off = 音频服务已关闭，规则、效果和已保存的连接都不会保持。
+audio-status-rule-missing = { $app } 设置为在 { $device } 上播放，但它没有连接。
+audio-status-stream-missing = { $app } 被发送到一个没有连接的设备。
+audio-status-dropouts = 过去 10 分钟内 { $device } 中断了 { $count } 次。
+audio-status-raise-buffer = 使用 { $frames } 帧
+audio-status-boost = { $name } 最多提升 { $db } dB，响亮的部分可能会削波。
+audio-status-lower-preamp = 前级降低 { $db } dB
+audio-status-not-playing-anywhere = 尚未连接
+audio-status-fact-dropouts = 中断（过去 10 分钟）
+audio-status-dropouts-count = { $count }
+audio-status-fact-delay = 延迟
+audio-status-delay = { $ms } ms（{ $rate } 下 { $frames } 帧）
+audio-status-fact-service = 音频服务
+audio-status-service-is-on = 运行中
+audio-status-service-is-off = 已关闭
+audio-status-fact-airplay = AirPlay
+audio-status-airplay-off = 关
+audio-status-airplay-no-module = 已开启，但未安装 PipeWire 的 AirPlay 模块
+audio-status-airplay-no-avahi = 已开启，但 Avahi 没有运行
+audio-status-airplay-found =
+    { $count ->
+        [0] 已开启，正在寻找扬声器
+       *[other] 已开启，找到 { $count } 个扬声器
+    }
+audio-virtual-recording-mix = 录音混音
+audio-virtual-recording-mix-add = 录音混音
+audio-virtual-hears-none = 还没有听到任何内容。应用播放时会显示在这里。
+audio-engine-low-latency = 低延迟

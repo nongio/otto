@@ -54,7 +54,7 @@ deny = [
 
     # Screen capture: the compositor produces streams, otto-kit and the
     # islands consume them, otto-rdp forwards them. otto-audio-graph follows
-    # the whole graph for the otto-audio patchbay and its service.
+    # the whole graph for the otto-mixer patchbay and its service.
     { crate = "pipewire", wrappers = [
         "otto",
         "otto-kit",

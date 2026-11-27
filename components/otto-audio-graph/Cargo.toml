@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Otto's live model of the PipeWire graph, node identity and the saved routing"
 
 # No toolkit, no Wayland: the graph model, the PipeWire connection behind it
-# and the routing file, shared by the otto-audio window and its service.
+# and the routing file, shared by the otto-mixer window and its service.
 [dependencies]
 otto-foundations = { path = "../otto-foundations" }
 pipewire.workspace = true

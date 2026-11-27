@@ -231,10 +231,14 @@ Click it for the sound menu:
   output to choose from, the one in use ticked. Choosing one moves what is
   playing to it.
 - **Input**: the same for the microphone in use.
-- **Apps**: a volume and a mute button for each app playing sound.
-- **Audio…** opens the Audio app, for routing and everything else.
+- **Apps**: a volume and a mute button for each app playing sound, and a
+  button with the output it plays to (**Default** while it follows the output
+  in use). Click it to send that app somewhere else, or pick **Follow the
+  default** to bring it back.
+- **Open Mixer…** opens the Mixer app, for routing and everything
+  else.
 
-Changes are the sound server's own, so they show in the Audio app and in
+Changes are the sound server's own, so they show in the Mixer app and in
 **Settings ▸ Sound** too, and are remembered. To hide the speaker, turn off
 **Settings ▸ Top bar ▸ Show sound in the top bar**, or set `show_sound = false`
 under `[topbar]`.

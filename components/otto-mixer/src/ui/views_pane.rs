@@ -8,7 +8,7 @@
 // Rust guideline compliant 2026-02-21
 
 use super::*;
-use otto_audio::graph_view::{canvas_ground, card_ground, Cell, GraphMode, MatrixLine};
+use otto_mixer::graph_view::{canvas_ground, card_ground, Cell, GraphMode, MatrixLine};
 
 /// The matrix's row headers: a node's name and what it is.
 const ROW_HEADER_W: f32 = 210.0;

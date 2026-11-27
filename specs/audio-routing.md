@@ -7,10 +7,12 @@
 
 ## Summary
 
-`otto-audio` is a standalone app for everything the sound server can do
-beyond picking a device and a volume: the live PipeWire graph as a patchbay,
-the engine's rate and latency, device profiles and codecs, effects, virtual
-devices and per-app routing rules. A companion service, `otto-audio-service`,
+`otto-mixer` is a standalone app for the sound on the computer, organised
+around what people come to do: see and set where each app plays and how
+loud (Mixer), make a device sound right (Devices), and find out what is
+wrong (Status). Under an Advanced heading it keeps the sound server's own
+objects: the live PipeWire graph as a patchbay, effects, the engine's rate
+and latency, and virtual devices. A companion service, `otto-mixer-service`,
 keeps what the app sets up in force across app launches, device plugs and
 restarts of the sound server, so a route made once stays made.
 
@@ -30,8 +32,13 @@ restarts of the sound server, so a route made once stays made.
 - Effects (equaliser, dynamics, noise suppression, convolution) and virtual
   devices (combined outputs, null sinks, loopbacks) can be created, edited
   live and removed, and exist in every later session.
-- Per-app rules route an app to a device or effect whenever it plays or
-  records, without the user moving it by hand each time.
+- Every app playing has its own volume and output, and a choice of output
+  can be kept as a rule that routes the app there whenever it plays,
+  without the user moving it by hand each time.
+- While an app uses the microphone, other apps can be lowered, and a
+  Bluetooth headset can switch to its microphone profile and back.
+- Problems (dropouts, a device that is gone, an equaliser that clips) are
+  listed with a fix each.
 - Named setups capture the whole routing and switch it in one action.
 - Nothing the app does needs a terminal, a hand-edited configuration file or
   a restart of the sound server, except where Behaviour says so.
@@ -54,15 +61,50 @@ restarts of the sound server, so a route made once stays made.
 
 ### The app
 
-`otto-audio` opens one window. Running it again raises that window. It has
-a desktop entry so it appears in the launcher and can be kept in the dock.
-The Settings Sound pane ends with a row that opens it; nothing else in
-Settings depends on it.
+`otto-mixer` opens one window, called Mixer. Running it again raises that
+window. It has a desktop entry so it appears in the launcher and can be
+kept in the dock. The Settings Sound pane ends with a row that opens it;
+nothing else in Settings depends on it.
 
-The window has a sidebar with six sections: **Graph**, **Devices**,
-**Engine**, **Effects**, **Virtual devices** and **Rules**, and a setup
-switcher in the title bar (see Setups). It opens on Graph, or on the section
-that was open when it was last closed.
+The window has a sidebar: **Mixer** and **Devices** first, then an
+**Advanced** heading over **Graph**, **Effects**, **Engine** and **Virtual
+devices**, and a status line pinned to the sidebar's foot that opens
+**Status**: a green dot and *Audio service on* when nothing needs a look;
+otherwise an orange dot and the first problem named in a few words
+(*Audio service off*, *Speakers isn't connected*, *Dropouts on Speakers*,
+*Headphone EQ is clipping*, *Firefox has no output*), with *+N* when there
+are more. The heading and the pinned foot are otto-kit
+source list features (`SourceListItem::heading`, `pinned_to_bottom`), not
+drawn by the app. A setup switcher sits in the title bar (see Setups). It
+opens on Mixer, or on the section that was open when it was last closed.
+
+### Mixer
+
+Where sound plays and how loud, by device and by app.
+
+- **Outputs**, as cards: the device's name, its kind (Built-in, USB,
+  Bluetooth, HDMI, AirPlay, Virtual), a *Default* badge on the default
+  one, mute, a volume slider and its percentage, and a line with the
+  device's tuning, the effects on it in the order sound meets them
+  (*Framework 13 (AutoEQ) · Limiter*), or *No tuning*. Pressing a card's
+  name makes it the default. Otto's own effects are not outputs here; they
+  show as an output's tuning.
+- **Apps playing**: one row per playback stream, not per app: its icon
+  (from the person's theme, else its initial), the app's name and what it
+  plays (`media.name`), mute, volume and an output picker. The picker
+  offers *Follow the default* and every output; picking one moves the
+  stream at once (through the output's tuning, if it has one). Its last
+  item, *Always play <app> here*, keeps the choice as a rule (see Rules);
+  it is ticked while the app has a rule, and picking it again forgets the
+  rule. Moving a ruled app's stream updates its rule.
+- **Inputs**: input devices with mute and volume, and the apps recording
+  from each (directly, or through the input effects on it).
+- **During calls**: *When an app uses the microphone, lower other apps to
+  [slider] %*, with an on/off switch, kept in the routing file (see Calls).
+
+The per-app streams are `otto-audio-graph`'s `Graph::streams`, the same
+model the top bar's sound menu reads, and the device kinds are
+`Node::device_kind`, which the menu uses too.
 
 Everything shown follows the sound server live: a node appearing,
 disappearing, changing state or being linked by any program (the app, the
@@ -156,7 +198,7 @@ temporary wire and can be saved like one.
 
 ### Saved links and the service
 
-`otto-audio-service` runs once per session, started with it, independent of
+`otto-mixer-service` runs once per session, started with it, independent of
 the window. It holds the saved routing of the current setup and keeps it in
 force:
 
@@ -196,7 +238,30 @@ starts with…) or more tightly (only the stream titled…).
 
 ### Devices
 
-One group per card, then one per Bluetooth device:
+A list of the sound devices beside the selected one's detail, with
+AirPlay speakers as the list's last entry. The detail has:
+
+- **Sound**, for a device with an output: *Tuning*, a pop-up of None, every
+  output equaliser and speaker correction in the routing file, and *New
+  equaliser*; choosing one moves that effect onto this device, at the top of
+  its chain (so a limiter already there stays after it), and None takes it
+  off the device without deleting it (it stays in the file on no device,
+  shown as *Not in use* in Effects, and is not made). *Edit…* opens it in
+  Effects. *Compare* (Off, Tuned) is the tuning's On switch, so the device
+  can be heard with and without it. *Loudness* is the tuning's preamp (a
+  speaker correction's output gain), −12 to +12 dB. *Protect from clipping*
+  is a limiter in the device's chain, after the tuning; turning it off
+  removes the chain's limiters. It is offered only when the limiter plugin
+  is installed.
+- **Best sound or microphone**, for a Bluetooth device: a line on the
+  trade-off (the best sound needs the microphone off; the headset profile
+  turns it on at call quality), the two profiles as a choice (*Best sound*,
+  the playback profile the device prefers; *Headset with microphone*), and
+  *Switch to headset when a call needs the microphone, and back after*,
+  kept in the routing file (see Calls).
+- **Profile, codec and ports**, folded away: the rows below.
+
+The rows, per device:
 
 - **Profile**, among the profiles that can run now, including Pro Audio.
 - **Port** for each of its sinks and sources, with unplugged jacks marked.
@@ -283,6 +348,49 @@ When AirPlay cannot work here the card says what is missing, and the switch
 cannot be turned on: PipeWire's RAOP modules not installed (it names the
 package), or Avahi not running (it gives the command that starts it).
 
+### Status
+
+*Worth a look*: each item with a fix button.
+
+- The audio service is off (fix: start it).
+- A rule plays an app on a device that is not there, or a stream was sent
+  to one (fix: follow the default).
+- Dropouts on a driver in the last 10 minutes, with the count (fix: run
+  the engine at the next larger buffer).
+- An equaliser boosting past 0 dB, bands and preamp together, which clips
+  loud passages (fix: lower its preamp by the boost, rounded up to a half
+  dB).
+
+Then *Playing now*, one line per playback stream: the app, the effects it
+passes and the device, as chips. And *Facts*: dropouts in the last 10
+minutes, the delay (the engine's buffer as milliseconds), whether the
+audio service runs, and where AirPlay stands (off, missing a part, or how
+many speakers it found).
+
+Dropouts are counted by PipeWire's profiler: the window binds it while it
+is open (`Connection::watch_dropouts`), and each driver's count since it
+started arrives when it changes. The window keeps the counts it sees, so
+"the last 10 minutes" counts from when the window opened.
+
+### Calls
+
+`[calls]` in the routing file says what the service does while any app
+records from a microphone (a running recording stream linked from a
+source: a device's, a virtual one or an input effect; recording an
+output's monitor does not count):
+
+- **Lower other apps**, `lower_others` and `level` (percent, default 30):
+  every other app's playback stream is set to `level` % of its volume; the
+  apps recording keep theirs, and so do streams that start during the call.
+  When the last recording stops, each lowered stream gets its volume back,
+  unless someone changed it meanwhile; the service only touches volumes it
+  lowered.
+- **Switch headsets**, `headset`, a list of Bluetooth devices by
+  `device.name`: when an app starts recording while one of them plays the
+  default output in a playback profile, it switches to its headset profile;
+  when recording stops it switches back, unless it was switched by hand
+  meanwhile.
+
 ### Rules
 
 A rule matches app streams by identity and, while it is enabled:
@@ -327,10 +435,17 @@ app does in depth. It follows the graph live, like the app, and never polls.
   inputs to pick from. A level meter under the slider moves while the menu
   is open, so a person can see the microphone hears them.
 - **Apps.** Every stream playing sound, by app, each with its own slider
-  and mute. An app with several streams shows once.
+  and mute. An app with several streams shows once. After the slider, a
+  compact button names the output the app plays to, or *Default* while it
+  follows the default output. It opens a list under it: *Follow the
+  default*, then every output by its name, the current one checked.
+  Picking one moves the app's streams there at once, by setting each
+  stream's `target.object`, as the Mixer does; *Follow the default*
+  clears it. A move made in the Mixer app or another mixer shows here
+  live, so the menu and the Mixer always agree.
 - **Setup.** When more than one setup exists, the active setup and the
   others to switch to.
-- **Audio…** The last row opens the app.
+- **Open Mixer…** The last row opens the app on its Mixer section.
 
 Volumes are the session manager's: a change here shows in the app, in
 Settings and in any other mixer, and the server remembers it. The menu
@@ -374,9 +489,10 @@ reads and changes the same graph as the app through `otto-audio-graph`.
 
 ## First version
 
-The first version builds Graph, Devices, Engine, Effects, Virtual devices
-and the service; Rules, Setups and meters come later, and the sidebar shows
-only the sections that exist. Where it consciously differs from the above:
+The first version builds Mixer, Devices, Status, Graph, Effects, Engine,
+Virtual devices and the service, with app rules made from the Mixer;
+Setups, a rules list and meters come later, and the sidebar shows only the
+sections that exist. Where it consciously differs from the above:
 
 - **Saved routing file.** The saved links live in
   `$XDG_CONFIG_HOME/otto/audio/routing.toml`, written by the app and
@@ -399,8 +515,8 @@ only the sections that exist. Where it consciously differs from the above:
   shows the name, state, app, format, latency, media class and identity,
   every connection with whether it is saved (an unsaved one can be saved
   there), and every property, folded away until opened. The title bar
-  shows the engine's rate, buffer and latency; the sidebar's foot says
-  whether the service is keeping saved links. The view (Patchbay, Matrix,
+  shows the engine's rate, buffer and latency; whether the service is
+  keeping saved links is a Status item and fact. The view (Patchbay, Matrix,
   Lanes) is kept beside the card positions in `layout.toml`. The matrix
   has no channel-by-channel expansion of a row, no Shift-click per channel
   and no reordering of rows and columns; a cell is unlinked by selecting it
@@ -431,6 +547,26 @@ only the sections that exist. Where it consciously differs from the above:
   microphone is open, and warnings for profile clashes such as HDMI on the
   built-in card. The default output and input are not marked either; that
   waits for the `default` metadata (Plan, step 3).
+- **Rules.** Kept in the routing file as `[[rule]]`: `app` (an
+  `application.name` or `application.process.binary`, compared in any
+  case) and `output` (a `node.name`; left out, the app follows the
+  default). They are made from the Mixer's output picker, one per app, and
+  the first that matches wins. The service applies a rule when a matching
+  stream appears and again when the rule's output comes back after being
+  unplugged, by setting the stream's `target.object`; to an output with a
+  tuning it targets the top of the effect chain. A *Follow the default*
+  rule clears a remembered target when the stream appears. There is no
+  rules list yet, no starting volume or mute, no matching by media role and
+  no keeping a stream from being moved when the default changes.
+- **Calls.** As above. A service stopped during a call leaves the lowered
+  volumes as they are, and the session manager remembers them for those
+  apps.
+- **Status.** As above. A dropout fix forces the buffer through the
+  Engine's own setting.
+- **Mixer.** No level meters on the app rows yet (they wait for step 2);
+  the inputs have no picker of their own.
+- **Engine.** A *Low latency* button beside Reset forces 128 frames at 48
+  kHz (about 2.7 ms).
 - **Top bar.** The sound indicator and menu are in `otto-bar`, as above,
   with three differences. The input has no level meter yet: it waits for
   the meters (step 2). There is no setup row, since there is one implicit
@@ -460,7 +596,13 @@ only the sections that exist. Where it consciously differs from the above:
   it. A loopback starts unlinked rather than from the default input to the
   default output, which could howl; it is linked on Graph like any node.
   There is no combined output yet, no per-device volume or latency, and the
-  list does not scroll. The section lists each device's state from its node;
+  list does not scroll. *Mix for Recording*, beside the form's heading,
+  adds a stereo output called *Recording mix*. Every virtual output's card
+  lists the apps playing now and the apps it hears, as ticks: ticking one
+  saves a link from each of the app's playback streams to the output,
+  channel by channel, which the service keeps; the app still plays on its
+  own output too, so the output's monitor carries a mix of just the ticked
+  apps for a recorder. Unticking forgets those links and removes them. The section lists each device's state from its node;
   with the service off it says the devices need it, and they are still
   added, renamed and removed in the file.
 - **Effects.** Five kinds: a parametric *equaliser* of up to 10 bands (low
@@ -613,7 +755,9 @@ updates this spec's First version notes.
    come (saved presets, a spectrum under the curve, rename, up to 16
    bands).
 8. **Rules.** Which device an app goes to, as session manager targets,
-   with the app picked from what has played.
+   with the app picked from what has played. Built from the Mixer's output
+   picker; see First version for what is still to come (a rules list,
+   starting volume, media roles).
 9. **AirPlay speakers.** Discovery through PipeWire's RAOP module, switched
    from the Devices section and kept by the service; the speakers marked
    on Graph and in the sound menu. Built; see First version for what is
@@ -647,7 +791,6 @@ updates this spec's First version notes.
 
 ## Open Questions
 
-- The app's name in the launcher: *Audio*, *Sound Studio*, *Patchbay*?
 - Should arbitrary LV2/LADSPA plugins be insertable as effects in a later
   version, and with which plugin UI?
 - Should a setup switch automatically when a device appears (a headset, a

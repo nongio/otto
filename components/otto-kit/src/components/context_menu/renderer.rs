@@ -134,8 +134,15 @@ impl ContextMenuRenderer {
                     max_width = max_width.max(row_w);
                     continue;
                 }
-                MenuItemKind::Slider(_) => {
-                    max_width = max_width.max(SLIDER_MIN_WIDTH);
+                MenuItemKind::Slider(slider) => {
+                    // A picker adds its button and a gap, so the track keeps
+                    // the room it has in a row without one.
+                    let picker = if slider.picker.is_some() {
+                        crate::components::menu_item::PICKER_WIDTH + 10.0
+                    } else {
+                        0.0
+                    };
+                    max_width = max_width.max(SLIDER_MIN_WIDTH + picker);
                     continue;
                 }
             };
@@ -651,6 +658,38 @@ mod tests {
         assert!(toggle.right < layout.track.left);
         assert!(layout.track.right < layout.readout.left);
         assert!(layout.track.width() > 120.0);
+    }
+
+    #[test]
+    fn a_picker_sits_after_the_percentage_and_the_track_keeps_its_room() {
+        use crate::components::menu_item::slider_layout;
+
+        let plain =
+            MenuItem::slider("app:Firefox", "Firefox volume", 0.5).with_slider_label("Firefox");
+        let picked = plain.clone().with_slider_picker(
+            "Speakers",
+            "Output for Firefox",
+            vec![MenuItem::action("Speakers").with_checked(true)],
+        );
+        let style = ContextMenuStyle::default();
+        let track_width = |item: &MenuItem| {
+            let (width, _) = ContextMenuRenderer::measure_items(std::slice::from_ref(item), &style);
+            let layout = slider_layout(
+                item.slider_data().expect("a slider"),
+                &style.item_style(),
+                style.horizontal_padding,
+                style.vertical_padding,
+                width - style.horizontal_padding * 2.0,
+                item.height,
+            );
+            (layout.track.width(), layout)
+        };
+        let (plain_track, plain_layout) = track_width(&plain);
+        let (picked_track, layout) = track_width(&picked);
+        assert!(plain_layout.picker.is_none());
+        let picker = layout.picker.expect("a picker");
+        assert!(layout.readout.right < picker.left);
+        assert!((plain_track - picked_track).abs() < 1.0);
     }
 
     #[test]

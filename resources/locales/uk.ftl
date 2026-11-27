@@ -2414,6 +2414,9 @@ bar-sound-app-volume = { $app }: гучність
 bar-sound-mute-output = Вимкнути звук виходу
 bar-sound-mute-input = Вимкнути звук входу
 bar-sound-mute-app = Вимкнути звук: { $app }
+bar-sound-app-output-default = Типовий
+bar-sound-app-follow-default = Як типовий
+bar-sound-app-output = { $app }: вихід
 # Beside each output and input, in the shortcut column: what kind of device
 # it is. Virtual is one made in software, such as a mix or an effect.
 bar-sound-kind-bluetooth = Bluetooth
@@ -2422,8 +2425,8 @@ bar-sound-kind-hdmi = HDMI
 bar-sound-kind-virtual = Віртуальне
 bar-sound-kind-built-in = Вбудоване
 bar-sound-kind-airplay = AirPlay
-# The menu's last row, which opens the Audio app.
-bar-sound-open-audio = Аудіо…
+# The menu's last row, which opens the Mixer app.
+bar-sound-open-mixer = Відкрити мікшер…
 # What a screen reader calls the indicator. $percent is a whole number and
 # $device the output's name.
 bar-sound-label = Звук, { $percent } %, { $device }
@@ -2457,16 +2460,16 @@ schema-topbar-show-network-description = Індикатор Wi-Fi і дрото�
 schema-topbar-show-sound-label = Показувати звук
 schema-topbar-show-sound-description = Значок динаміка на верхній панелі, з меню гучності, виходу та входу й застосунків, що відтворюють звук. З’являється там, де працює PipeWire.
 
-## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
+## otto-mixer: the PipeWire graph as a patchbay (Graph), and the sound
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = Налаштування звуку
-audio-window-title = Налаштування звуку Otto — { $pane }
+audio-title = Мікшер
+audio-window-title = Мікшер Otto — { $pane }
 audio-pane-graph = Граф
 audio-pane-engine = Рушій
 audio-no-server-title = Звуковий сервер не запущено
-audio-no-server-body = Аудіо під’єднається, щойно запуститься PipeWire.
+audio-no-server-body = Мікшер під’єднається, щойно запуститься PipeWire.
 audio-no-server-start = Запустити PipeWire
 audio-graph-empty = Із цими фільтрами немає що показати
 audio-filter-audio = Аудіо
@@ -2629,7 +2632,7 @@ audio-airplay-delay = Колонки AirPlay відстають приблизн
 # The value of the Delay fact in the Graph's details panel.
 audio-airplay-delay-short = Близько 2 с, через мережу
 
-## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
+## otto-mixer — Virtual devices: outputs, inputs and loopbacks the audio
 ## service makes. The cards are about 260 px wide; the form's labels sit in a
 ## column of about 78 px.
 
@@ -2684,7 +2687,7 @@ audio-matrix-corner = Звідки ↓ · Куди →
 # Over the Lanes view, which shows links but does not make them.
 audio-lanes-note = Кожна доріжка простежує звук від початку шляху до кінця. Зв’язки створюються на вкладках «Патчбей» і «Матриця».
 audio-lanes-empty = Із цими фільтрами нічого не зв’язано
-## otto-audio — Effects: equalisers, limiters, compressors and noise
+## otto-mixer — Effects: equalisers, limiters, compressors and noise
 ## suppression the audio service hosts, each sitting on a device. The list
 ## beside the editor is about 230 px wide; band cards are about 130 px wide.
 
@@ -2837,3 +2840,95 @@ audio-effects-ee-multiband-compressor = багатосмуговий компр�
 audio-effects-ee-stereo-tools = стереоінструменти
 audio-effects-ee-limiter = лімітер
 audio-effects-ee-filter = фільтр
+
+audio-pane-mixer = Мікшер
+audio-pane-status = Стан
+audio-sidebar-advanced = Додатково
+audio-status-line-on = Аудіослужба увімкнена
+audio-status-line-off = Аудіослужба вимкнена
+audio-status-short-device-missing = { $device } не під'єднано
+audio-status-short-no-output = У { $app } немає виходу
+audio-status-short-dropouts = Пропуски на { $device }
+audio-status-short-clipping = { $name } перевантажує
+audio-status-line-more = { $first } +{ $count }
+audio-kind-hdmi = HDMI
+audio-kind-virtual = Віртуальний
+audio-mixer-title = Мікшер
+audio-mixer-intro = Де грає звук, наскільки гучно і які застосунки ним користуються.
+audio-mixer-service-down = Правила застосунків і приглушення під час дзвінків працюють, лише поки працює аудіослужба.
+audio-mixer-outputs = Виходи
+audio-mixer-apps = Застосунки, що грають
+audio-mixer-inputs = Входи
+audio-mixer-calls-heading = Під час дзвінків
+audio-mixer-default = Типовий
+audio-mixer-no-tuning = Без налаштування
+audio-mixer-tuning-off = { $name } (вимк.)
+audio-mixer-used-by = Використовують: { $apps }
+audio-mixer-not-used = Жоден застосунок не записує звідси
+audio-mixer-no-outputs = Виходів не знайдено
+audio-mixer-no-inputs = Входів не знайдено
+audio-mixer-nothing-playing = Зараз нічого не грає.
+audio-mixer-follow-default = Як типовий
+audio-mixer-default-output = Типовий ({ $name })
+audio-mixer-always-here = Завжди грати { $app } тут
+audio-mixer-calls-lower = Коли застосунок використовує мікрофон, приглушувати інші до
+audio-status-title = Стан
+audio-effects-not-in-use = Не використовується
+audio-devices-details = Профіль, кодек і порти
+audio-devices-sound = Звук
+audio-devices-sound-intro = Як звучить цей вихід для всіх застосунків, що на ньому грають.
+audio-devices-tuning = Налаштування
+audio-devices-compare = Порівняти
+audio-devices-loudness = Гучність
+audio-devices-protect = Захист від перевантаження
+audio-devices-tuning-none = Немає
+audio-devices-tuning-edit = Змінити…
+audio-devices-tuning-new = Новий еквалайзер
+audio-devices-tuning-new-name = EQ { $device }
+audio-devices-compare-off = Вимк.
+audio-devices-compare-on = Налаштовано
+audio-devices-bt-title = Найкращий звук чи мікрофон
+audio-devices-bt-about = Через Bluetooth навушники дають найкращий звук, лише поки мікрофон вимкнений. Профіль гарнітури вмикає мікрофон, але звук падає до якості дзвінка.
+audio-devices-bt-best = Найкращий звук
+audio-devices-bt-headset = Гарнітура з мікрофоном
+audio-devices-bt-switch = Перемикати на гарнітуру, коли дзвінку потрібен мікрофон, і назад після
+audio-status-intro = Що потребує уваги і куди зараз іде звук.
+audio-status-worth-a-look = Варто перевірити
+audio-status-nothing = Ніщо не потребує уваги.
+audio-status-playing = Зараз грає
+audio-status-facts = Відомості
+audio-status-service-off = Аудіослужбу вимкнено, тож правила, ефекти й збережені з'єднання не підтримуються.
+audio-status-rule-missing = { $app } має грати на { $device }, але цей пристрій не під'єднано.
+audio-status-stream-missing = { $app } надіслано на пристрій, який не під'єднано.
+audio-status-dropouts =
+    { $count ->
+        [one] { $count } збій на { $device } за останні 10 хвилин.
+        [few] { $count } збої на { $device } за останні 10 хвилин.
+       *[other] { $count } збоїв на { $device } за останні 10 хвилин.
+    }
+audio-status-raise-buffer = { $frames } кадрів
+audio-status-boost = { $name } підсилює до { $db } дБ, гучні місця можуть спотворюватися.
+audio-status-lower-preamp = Знизити попереднє підсилення на { $db } дБ
+audio-status-not-playing-anywhere = Ще не під'єднано
+audio-status-fact-dropouts = Збої за 10 хвилин
+audio-status-dropouts-count = { $count }
+audio-status-fact-delay = Затримка
+audio-status-delay = { $ms } мс ({ $frames } кадрів при { $rate })
+audio-status-fact-service = Аудіослужба
+audio-status-service-is-on = Працює
+audio-status-service-is-off = Вимкнена
+audio-status-fact-airplay = AirPlay
+audio-status-airplay-off = Вимкнено
+audio-status-airplay-no-module = Увімкнено, але модуль AirPlay для PipeWire не встановлено
+audio-status-airplay-no-avahi = Увімкнено, але Avahi не запущено
+audio-status-airplay-found =
+    { $count ->
+        [0] Увімкнено, шукає колонки
+        [one] Увімкнено, знайдено { $count } колонку
+        [few] Увімкнено, знайдено { $count } колонки
+       *[other] Увімкнено, знайдено { $count } колонок
+    }
+audio-virtual-recording-mix = Мікс для запису
+audio-virtual-recording-mix-add = Мікс для запису
+audio-virtual-hears-none = Поки нічого не чує. Застосунки з'являються тут, поки грають.
+audio-engine-low-latency = Низька затримка

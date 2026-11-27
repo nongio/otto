@@ -533,7 +533,7 @@ trailing glyphs at the row's right end. Every measurement lives in the size's
 - **Shape:** draw function over a layout. `SourceListLayout::compute(count, x, y, width)` for regular one-line rows, or `SourceListLayout::for_items(size, &items, x, y, width)`; then `source_list::draw(canvas, &layout, &items, selected, theme, |canvas, index, slot, rect, tint| ..)`, where `slot` is `GlyphSlot::Leading` or `GlyphSlot::Trailing(n)`. `layout.draw_focus_ring(canvas, index)` draws the keyboard ring in the pill's shape.
 - **Types:** `SourceListItem` (`with_subtitle`, `with_trailing`), `SourceListLayout`, `SourceListSize`, `SourceListMetrics`, `GlyphSlot`, `draw`, `icon_rect`, `item_tint`.
 - **Source:** [`source_list/`](../../components/otto-kit/src/components/source_list/)
-- **Used by:** otto-audio and otto-settings, both at the large size; `examples/sidebar_window.rs` and `examples/list_gallery.rs` show it.
+- **Used by:** otto-mixer and otto-settings, both at the large size; `examples/sidebar_window.rs` and `examples/list_gallery.rs` show it.
 
 ```rust
 use otto_kit::components::source_list::{self, GlyphSlot, SourceListItem, SourceListLayout, SourceListSize};
