@@ -87,3 +87,9 @@ otto-pane-search-symbolic       magnifier
 otto-pane-agent-symbolic        chat-round-dots
 otto-pane-hand-symbolic         shield-keyhole
 otto-pane-about-symbolic        info-circle
+
+# Power: the login and lock screens' buttons and the Otto menu
+otto-suspend-symbolic       moon                    linear bold
+otto-hibernate-symbolic     moon-sleep              linear bold
+otto-restart-symbolic       restart                 linear bold
+otto-shutdown-symbolic      power                   linear bold

@@ -27,6 +27,12 @@ pub fn build() -> Pane {
                 Control::Select("Lock".into()),
             )
             .id("power_management.on_power_button"),
+            Row::new(
+                otto_kit::t!("settings-sleep"),
+                Control::Select("Suspend".into()),
+            )
+            .detail(otto_kit::t!("settings-sleep-detail"))
+            .id("power_management.sleep"),
         ])],
     }
 }

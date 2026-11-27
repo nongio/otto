@@ -22,6 +22,7 @@ use otto_auth_ui::{
     frame_in_flight, reader, Action, Appearance, Clock, Field, Finger, Panel, PowerAction,
     SecretInput, Status, User, View,
 };
+use otto_kit::power::Sleep;
 use otto_kit::surfaces::{SessionLock, SessionLockSurface};
 use otto_kit::{App, AppContext, AppRunner};
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
@@ -229,6 +230,13 @@ struct Locker {
     retry_at: Option<std::time::Instant>,
     /// A power button's request, until logind has answered it.
     power_request: Option<PowerRequest>,
+    /// Which way the sleep button sleeps, once logind has said whether
+    /// hibernating is possible. See [`Sleep::current_in_background`].
+    sleep: std::sync::Arc<std::sync::OnceLock<Sleep>>,
+    /// Whether Cmd is held, which swaps the sleep button to the other sleep.
+    cmd_held: bool,
+    /// The sleep the button was last drawn with.
+    drawn_sleep: PowerAction,
     /// Repaint until this instant, so the panel's transitions are seen through
     /// rather than left frozen at their first step.
     animating_until: Option<std::time::Instant>,
@@ -251,6 +259,9 @@ impl Locker {
             attempt: None,
             retry_at: None,
             power_request: None,
+            sleep: Sleep::current_in_background(),
+            cmd_held: false,
+            drawn_sleep: PowerAction::Suspend,
             animating_until: None,
             painted_at: None,
             clock: Clock::default(),
@@ -430,7 +441,17 @@ impl Locker {
         }
     }
 
-    /// Suspend, restart or shut down, through logind.
+    /// Settle which sleep the sleep button offers. Returns whether it changed,
+    /// so the panel needs redrawing.
+    fn sleep_moved(&mut self) -> bool {
+        let sleep = self.sleep.get().copied().unwrap_or(Sleep::SUSPEND);
+        let action = sleep.action(self.cmd_held);
+        let moved = action != self.drawn_sleep;
+        self.drawn_sleep = action;
+        moved
+    }
+
+    /// Sleep, restart or shut down, through logind.
     ///
     /// Whether this is allowed from a locked session is polkit's call, not the
     /// locker's. The answer arrives in [`Locker::power_answered`]; a refusal
@@ -449,7 +470,7 @@ impl Locker {
         };
         let action = self.power_request.take().expect("polled above").action();
         if let Err(err) = answer {
-            self.session.error = Some(err.line(action, "lock"));
+            self.session.error = Some(otto_auth_ui::power::error_line(&err, action, "lock"));
         }
         true
     }
@@ -462,6 +483,7 @@ impl Locker {
         let view = self.session.view();
         for screen in self.screens.iter_mut() {
             if screen.sized {
+                screen.panel.set_sleep(self.drawn_sleep);
                 screen.panel.update(&view);
             }
         }
@@ -667,7 +689,7 @@ impl App for Locker {
     fn on_update(&mut self, ctx: &AppContext) {
         self.track_outputs(ctx);
 
-        if self.pump() | self.power_answered() || self.tick() {
+        if self.pump() | self.power_answered() | self.sleep_moved() || self.tick() {
             self.draw();
             return;
         }
@@ -754,6 +776,13 @@ impl App for Locker {
         }
 
         if acted {
+            self.draw();
+        }
+    }
+
+    fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: otto_kit::Modifiers) {
+        self.cmd_held = otto_kit::cmd_held(modifiers);
+        if self.sleep_moved() {
             self.draw();
         }
     }

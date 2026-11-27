@@ -342,6 +342,14 @@ on_lid_close = "auto"
 # holds the keyboard.
 on_power_button = "lock"
 
+# How the sleep buttons sleep (default: "suspend"): the login screen's, the
+# lock screen's and Sleep in the Otto menu. Holding Cmd takes the other way,
+# where the machine can hibernate (logind's CanHibernate: swap and a resume
+# device). Without it, sleeping is always a suspend.
+# The login screen reads only /etc/otto/config.toml.
+# Options: "suspend", "hibernate"
+sleep = "suspend"
+
 # Accessibility
 [accessibility]
 # Own `org.freedesktop.a11y.Manager` so assistive technologies — a screen

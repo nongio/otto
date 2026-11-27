@@ -463,6 +463,8 @@ settings-manage-lid-switch = Handle the lid switch
 settings-manage-lid-switch-detail = Otto suspends on lid close instead of logind
 settings-on-lid-close = When the lid closes
 settings-on-power-button = When the power button is pressed
+settings-sleep = Sleep
+settings-sleep-detail = Hold Cmd on a sleep button to take the other way
 
 
 ## Settings — Lock & Login
@@ -709,6 +711,8 @@ settings-choice-power-ignore = Do nothing
 settings-choice-power-lock = Lock the screen
 settings-choice-power-suspend = Suspend
 settings-choice-power-shutdown = Shut down
+settings-choice-sleep-suspend = Suspend
+settings-choice-sleep-hibernate = Hibernate
 settings-choice-widget-none = None
 settings-choice-widget-calendar = Calendar
 # The next two name pages whose text is in English, so they stay as written.
@@ -1344,11 +1348,23 @@ bar-otto-update-available = New Version Available…
 bar-otto-about = About Otto
 bar-otto-settings = Settings…
 bar-otto-log-out = Log Out
+# Sleep sends the machine to sleep at once; holding Cmd swaps it for
+# Hibernate (or back, when hibernating is the preferred sleep).
+bar-otto-sleep = Sleep
+bar-otto-hibernate = Hibernate
+bar-otto-restart = Restart…
+bar-otto-shut-down = Shut Down…
 # The menu under the focused application's name in the top bar.
 bar-app-minimize = Minimise
 bar-app-quit = Quit { $app }
 bar-logout-title = Log out now?
 bar-logout-body = Your apps will be asked to close first, so anything unsaved gets a chance to be saved.
+bar-restart-title = Restart now?
+bar-restart-body = Anything unsaved in your apps will be lost.
+bar-restart-grant = Restart
+bar-shutdown-title = Shut down now?
+bar-shutdown-body = Anything unsaved in your apps will be lost.
+bar-shutdown-grant = Shut Down
 
 
 ## Settings — widgets
@@ -1527,6 +1543,8 @@ schema-power-management-on-lid-close-label = When the lid closes
 schema-power-management-on-lid-close-description = What happens when the laptop lid is closed.
 schema-power-management-on-power-button-label = When the power button is pressed
 schema-power-management-on-power-button-description = What happens when the hardware power button is pressed.
+schema-power-management-sleep-label = Sleep
+schema-power-management-sleep-description = How the sleep buttons sleep. Holding Cmd takes the other way.
 
 # --- lock ---
 schema-lock-locker-command-label = Lock screen command
@@ -1878,6 +1896,14 @@ greeter-power-shutdown-denied = Not permitted to shut down
 # the system tool behind it is missing or failed to launch. One short line.
 greeter-power-suspend-failed = Could not suspend
 
+# Status line under the field: the system refused the hibernate request from
+# the login screen (a policy decision, not a failure). One short line.
+greeter-power-hibernate-denied = Not permitted to hibernate
+
+# Status line under the field: the hibernate request could not be run at all.
+# One short line.
+greeter-power-hibernate-failed = Could not hibernate
+
 # As above, for the restart request.
 greeter-power-restart-failed = Could not restart
 
@@ -1973,6 +1999,14 @@ lock-power-shutdown-denied = Not permitted to shut down
 # { $error } is the operating system's own error text and arrives in English.
 # The line is clipped, not wrapped, so keep the part before the error short.
 lock-power-suspend-failed = Could not suspend: { $error }
+
+# Status line under the field: the system refused the hibernate request from
+# the lock screen (a policy decision, not a failure). One short line.
+lock-power-hibernate-denied = Not permitted to hibernate
+
+# Status line under the field: the hibernate request could not be run at all.
+# { $error } is the operating system's own error text and arrives in English.
+lock-power-hibernate-failed = Could not hibernate: { $error }
 
 # As above, for the restart request.
 lock-power-restart-failed = Could not restart: { $error }

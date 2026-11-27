@@ -2416,3 +2416,26 @@ bar-network-signal-good = хороший
 bar-network-signal-excellent = отличный
 schema-topbar-show-network-label = Показывать состояние сети
 schema-topbar-show-network-description = Индикатор Wi-Fi и проводной сети на верхней панели, с меню для подключения к сети. Показывается там, где работает NetworkManager.
+
+## Sleep, hibernate, restart and shut down
+
+settings-sleep = Сон
+settings-sleep-detail = Удерживайте Cmd на кнопке сна, чтобы выбрать другой способ
+settings-choice-sleep-suspend = Ждущий режим
+settings-choice-sleep-hibernate = Гибернация
+bar-otto-sleep = Сон
+bar-otto-hibernate = Гибернация
+bar-otto-restart = Перезагрузить…
+bar-otto-shut-down = Выключить…
+bar-restart-title = Перезагрузить сейчас?
+bar-restart-body = Всё несохранённое в приложениях будет потеряно.
+bar-restart-grant = Перезагрузить
+bar-shutdown-title = Выключить сейчас?
+bar-shutdown-body = Всё несохранённое в приложениях будет потеряно.
+bar-shutdown-grant = Выключить
+schema-power-management-sleep-label = Сон
+schema-power-management-sleep-description = Как кнопки сна усыпляют компьютер. С зажатым Cmd — другим способом.
+greeter-power-hibernate-denied = Гибернация не разрешена
+greeter-power-hibernate-failed = Не удалось перейти в гибернацию
+lock-power-hibernate-denied = Гибернация не разрешена
+lock-power-hibernate-failed = Не удалось перейти в гибернацию: { $error }

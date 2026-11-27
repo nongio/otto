@@ -36,6 +36,8 @@ ureq = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 # Dictation captures the microphone through PipeWire.
 pipewire = { workspace = true, optional = true }
+# `power` reads `[power_management] sleep` from Otto's config.toml.
+toml = { workspace = true, features = ["default"] }
 # Dictation reads its settings from dictation.toml.
 toml_edit = { workspace = true, optional = true }
 # Localisation. fluent-bundle carries the .ftl parser, the selector runtime and

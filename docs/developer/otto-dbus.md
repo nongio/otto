@@ -29,7 +29,7 @@ The interfaces other software serves:
 |--------|-----------|-----------|-----------|
 | `upower` | `org.freedesktop.UPower.Device` | UPower (system bus) | otto-bar, battery |
 | `networkmanager` | `org.freedesktop.NetworkManager` and its device, access point, settings and active-connection interfaces | NetworkManager (system bus) | otto-network |
-| `login1` | `org.freedesktop.login1.Manager` | systemd-logind (system bus) | otto-auth-ui, power buttons |
+| `login1` | `org.freedesktop.login1.Manager` | systemd-logind (system bus) | otto-kit `power` (login and lock screens, the Otto menu) |
 | `polkit` | `org.freedesktop.PolicyKit1.Authority` | polkitd (system bus) | compositor, protected settings; otto-network, showing a Wi-Fi password |
 | `portal_settings` | `org.freedesktop.portal.Settings` | xdg-desktop-portal | otto-kit, `portal_settings.rs` |
 | `portal_access` | `org.freedesktop.impl.portal.Access` | other desktops' portal backends | xdg-desktop-portal-otto, dialog fallback |

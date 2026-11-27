@@ -86,6 +86,15 @@ pub struct MenuItem {
     /// Room before the label for a check, so the items of a menu with any
     /// toggle in it keep their labels in line.
     pub check_gutter: bool,
+
+    /// The item shown in this one's place while Cmd is held: Hibernate under
+    /// Sleep. Its label, icon, action and enabled state swap in; the row, its
+    /// highlight and its place in the menu stay. See [`MenuItem::with_alternate`].
+    pub alternate: Option<Box<MenuItem>>,
+
+    /// Whether the alternate is the one showing now, so its fields are in
+    /// this item's and this item's own are in `alternate`.
+    pub alternate_shown: bool,
 }
 impl Hash for MenuItem {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -116,6 +125,8 @@ impl Hash for MenuItem {
         self.checked.hash(state);
         self.check_gutter.hash(state);
         self.height.to_bits().hash(state);
+        self.alternate.hash(state);
+        self.alternate_shown.hash(state);
     }
 }
 impl MenuItem {
@@ -134,6 +145,8 @@ impl MenuItem {
             icon: None,
             checked: None,
             check_gutter: false,
+            alternate: None,
+            alternate_shown: false,
         }
     }
 
@@ -257,6 +270,36 @@ impl MenuItem {
         self
     }
 
+    /// Show `alternate` in this item's place while Cmd is held.
+    ///
+    /// A menu measures both, so it keeps its width when they swap.
+    pub fn with_alternate(mut self, alternate: MenuItem) -> Self {
+        self.alternate = Some(Box::new(alternate));
+        self
+    }
+
+    /// Swap the alternate in (`on`) or back out. Returns whether anything
+    /// changed, so the caller knows to repaint.
+    pub fn show_alternate(&mut self, on: bool) -> bool {
+        if self.alternate_shown == on {
+            return false;
+        }
+        let Some(other) = self.alternate.as_deref_mut() else {
+            return false;
+        };
+        std::mem::swap(&mut self.kind, &mut other.kind);
+        std::mem::swap(&mut self.icon, &mut other.icon);
+        std::mem::swap(&mut self.enabled, &mut other.enabled);
+        std::mem::swap(&mut self.checked, &mut other.checked);
+        if !self.enabled {
+            self.visual_state = VisualState::Disabled;
+        } else if self.visual_state == VisualState::Disabled {
+            self.visual_state = VisualState::Normal;
+        }
+        self.alternate_shown = on;
+        true
+    }
+
     /// Room for a check before the label, though this item has none.
     pub fn with_check_gutter(mut self) -> Self {
         self.check_gutter = true;
@@ -346,6 +389,31 @@ mod tests {
 
         item.set_hovered(false);
         assert_eq!(item.visual_state(), VisualState::Normal);
+    }
+
+    #[test]
+    fn cmd_swaps_the_alternate_in_and_out() {
+        let mut item = MenuItem::action("Sleep")
+            .with_action_id("suspend")
+            .with_alternate(MenuItem::action("Hibernate").with_action_id("hibernate"));
+        item.set_hovered(true);
+
+        assert!(item.show_alternate(true));
+        assert_eq!(item.label(), Some("Hibernate"));
+        assert_eq!(item.action_id(), Some("hibernate"));
+        assert_eq!(item.visual_state(), VisualState::Hovered);
+        assert!(!item.show_alternate(true));
+
+        assert!(item.show_alternate(false));
+        assert_eq!(item.label(), Some("Sleep"));
+        assert_eq!(item.action_id(), Some("suspend"));
+    }
+
+    #[test]
+    fn an_item_without_an_alternate_stays_put() {
+        let mut item = MenuItem::action("Restart…");
+        assert!(!item.show_alternate(true));
+        assert_eq!(item.label(), Some("Restart…"));
     }
 
     #[test]

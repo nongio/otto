@@ -211,12 +211,9 @@ pub enum Finger {
     Accepted,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PowerAction {
-    Suspend,
-    Restart,
-    Shutdown,
-}
+/// A power button's action. The first button sleeps, and which way it
+/// sleeps is the client's to say: see [`Panel::set_sleep`].
+pub use otto_kit::power::PowerAction;
 
 /// Something the pointer can be over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -831,6 +828,25 @@ impl Panel {
                 Rect::from_xywh(x, power_y, POWER_BUTTON, POWER_BUTTON),
             ));
             x += POWER_BUTTON + gap;
+        }
+    }
+
+    /// Which way the sleep button sleeps: suspend or hibernate.
+    ///
+    /// The client decides, from the person's preference and whether Cmd is
+    /// held (see [`otto_kit::power::Sleep`]); the panel redraws the button's
+    /// glyph and sends clicks on it to the new action.
+    pub fn set_sleep(&mut self, action: PowerAction) {
+        let Some((current, layer)) = self.power.first_mut() else {
+            return;
+        };
+        if *current == action {
+            return;
+        }
+        *current = action;
+        layer.set_draw_content(draw_power_icon(action));
+        if let Some((hit, _)) = self.power_hitboxes.first_mut() {
+            *hit = action;
         }
     }
 
@@ -1611,65 +1627,27 @@ fn draw_clock(appearance: &Appearance) -> impl Fn(&Canvas, f32, f32) -> Rect + S
     }
 }
 
+/// The glyph's size inside a power button, in points.
+const POWER_GLYPH: f32 = 22.0;
+
+/// Draw `action`'s Solar glyph in the middle of a power button.
 fn draw_power_icon(action: PowerAction) -> impl Fn(&Canvas, f32, f32) -> Rect + Send + Sync {
     move |canvas, w, h| {
-        let center = Point::new(w / 2.0, h / 2.0);
-        let mut paint = Paint::default();
-        paint.set_anti_alias(true);
-        paint.set_style(PaintStyle::Stroke);
-        paint.set_stroke_width(1.6);
-        paint.set_stroke_cap(otto_kit::skia::PaintCap::Round);
-        paint.set_color(Color::from_argb(235, 255, 255, 255));
-
-        let radius = 7.5;
-        let arc = Rect::from_xywh(
-            center.x - radius,
-            center.y - radius,
-            radius * 2.0,
-            radius * 2.0,
-        );
-
-        match action {
-            // A power symbol: a ring open at the top, with a stem through it.
-            PowerAction::Shutdown => {
-                canvas.draw_arc(arc, -60.0, 300.0, false, &paint);
-                canvas.draw_line(
-                    Point::new(center.x, center.y - radius - 2.5),
-                    Point::new(center.x, center.y - 1.0),
-                    &paint,
-                );
-            }
-            // A ring open at the top with a solid arrowhead on the loose end,
-            // so it reads as rotation rather than as a broken circle.
-            PowerAction::Restart => {
-                canvas.draw_arc(arc, -70.0, 320.0, false, &paint);
-                let tip = Point::new(center.x + 1.0, center.y - radius);
-                let head = otto_kit::skia::Path::polygon(
-                    &[
-                        tip,
-                        Point::new(tip.x - 5.5, tip.y - 3.5),
-                        Point::new(tip.x - 5.5, tip.y + 3.5),
-                    ],
-                    true,
-                    None,
-                    None,
-                );
-                paint.set_style(PaintStyle::Fill);
-                canvas.draw_path(&head, &paint);
-            }
-            // A crescent: one disc with a second cut out of it.
-            PowerAction::Suspend => {
-                let moon = otto_kit::skia::Path::circle(center, radius, None);
-                let bite = otto_kit::skia::Path::circle(
-                    Point::new(center.x + 5.0, center.y - 4.5),
-                    radius,
-                    None,
-                );
-                if let Some(crescent) = moon.op(&bite, otto_kit::skia::PathOp::Difference) {
-                    paint.set_style(PaintStyle::Fill);
-                    canvas.draw_path(&crescent, &paint);
-                }
-            }
+        // Rasterised at the canvas's own scale, so the glyph lands on the
+        // pixel grid of whichever output the panel is on.
+        let scale = canvas.local_to_device_as_3x3().scale_x().abs().max(1.0);
+        let size_px = (POWER_GLYPH * scale).round() as i32;
+        let ink = Color::from_argb(235, 255, 255, 255);
+        if let Some(glyph) = otto_kit::icons::cached_glyph_chain(&[action.glyph()], size_px, ink) {
+            let dst = Rect::from_xywh(
+                (w - POWER_GLYPH) / 2.0,
+                (h - POWER_GLYPH) / 2.0,
+                POWER_GLYPH,
+                POWER_GLYPH,
+            );
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            otto_kit::icons::draw_icon(canvas, &glyph, dst, &paint);
         }
         Rect::from_wh(w, h)
     }

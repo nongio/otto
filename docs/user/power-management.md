@@ -89,6 +89,29 @@ whatever your keyboard layout is and whatever has grabbed the keyboard: a
 fullscreen game, a lock screen, a greeter. There is no state in which pressing
 the power button does nothing.
 
+## Sleep and hibernate
+
+The login screen, the lock screen and the Otto menu (the two dots at the far
+left of the top bar) each have a way to send the machine to sleep. The Otto
+menu also has **Restart…** and **Shut Down…**, which ask first.
+
+Sleeping suspends by default. Hold **Cmd** and the sleep button hibernates
+instead: on the login and lock screens its glyph changes, and in the Otto menu
+**Sleep** becomes **Hibernate**. Let go and it changes back.
+
+To make hibernating the default, with Cmd for a suspend, pick **Hibernate**
+under **Settings › Power › Sleep**, or:
+
+```toml
+[power_management]
+sleep = "hibernate"
+```
+
+Hibernating needs swap at least as large as your memory and a resume device
+the kernel knows about. When logind says the machine cannot hibernate, every
+sleep button suspends and Cmd does nothing. The login screen reads only
+`/etc/otto/config.toml`, so set it there too if you want it before logging in.
+
 ## Idle locking
 
 Auto-lock after a period of inactivity is configured separately, under `[lock]`:
@@ -106,7 +129,7 @@ See [Lock Screen](lock-screen.md) for the full picture, including how
 - **DPMS blanking on idle.** The screen does not turn off by itself. Only
   auto-lock is timer-driven.
 - **Idle suspend.** Otto never suspends on a timer, only on lid close.
-- **Hibernate and hybrid sleep.**
+- **Hybrid sleep**, and hibernating on a timer or from the lid.
 - **Battery-level policies**: no "suspend at 5%".
 - **Moving the dock and top bar to the external monitor** while the internal
   panel is off in clamshell mode. They stay assigned to the primary monitor.

@@ -2322,3 +2322,26 @@ bar-network-signal-good = 良好
 bar-network-signal-excellent = 极佳
 schema-topbar-show-network-label = 显示网络状态
 schema-topbar-show-network-description = 顶部栏中的 Wi-Fi 和有线网络指示器，附带用于加入网络的菜单。在运行 NetworkManager 的系统上显示。
+
+## Sleep, hibernate, restart and shut down
+
+settings-sleep = 睡眠
+settings-sleep-detail = 在睡眠按钮上按住 Cmd 可改用另一种方式
+settings-choice-sleep-suspend = 挂起
+settings-choice-sleep-hibernate = 休眠
+bar-otto-sleep = 睡眠
+bar-otto-hibernate = 休眠
+bar-otto-restart = 重新启动…
+bar-otto-shut-down = 关机…
+bar-restart-title = 现在重新启动？
+bar-restart-body = 应用中未保存的内容将会丢失。
+bar-restart-grant = 重新启动
+bar-shutdown-title = 现在关机？
+bar-shutdown-body = 应用中未保存的内容将会丢失。
+bar-shutdown-grant = 关机
+schema-power-management-sleep-label = 睡眠
+schema-power-management-sleep-description = 睡眠按钮的睡眠方式。按住 Cmd 改用另一种。
+greeter-power-hibernate-denied = 不允许休眠
+greeter-power-hibernate-failed = 无法休眠
+lock-power-hibernate-denied = 不允许休眠
+lock-power-hibernate-failed = 无法休眠：{ $error }
