@@ -177,6 +177,7 @@ impl ContextMenu {
         if register_handler {
             s.register_pointer_handler();
             s.register_keyboard_leave_handler();
+            s.register_modifiers_handler();
         }
         s
     }
@@ -263,6 +264,7 @@ impl ContextMenu {
             .set(self.close_generation.get().wrapping_add(1));
         self.dismiss_pending.set(false);
         self.typeahead.borrow_mut().0.clear();
+        self.sync_alternates();
         self.show_menu_at_depth(0, parent, positioner, Some(serial));
     }
 
@@ -284,6 +286,7 @@ impl ContextMenu {
         self.close_generation
             .set(self.close_generation.get().wrapping_add(1));
         self.dismiss_pending.set(false);
+        self.sync_alternates();
         self.show_menu_at_depth_for_layer(0, layer_surface, positioner, None);
     }
 
@@ -306,6 +309,7 @@ impl ContextMenu {
             .set(self.close_generation.get().wrapping_add(1));
         self.dismiss_pending.set(false);
         self.typeahead.borrow_mut().0.clear();
+        self.sync_alternates();
         self.show_menu_at_depth_for_layer(0, layer_surface, positioner, Some(serial));
     }
 
@@ -901,6 +905,45 @@ impl ContextMenu {
         });
     }
 
+    /// Swap items' alternates in while Cmd is held, and back out when it is
+    /// let go, repainting the open levels in place. The menu measured the
+    /// alternates when it sized itself, so nothing needs to resize.
+    ///
+    /// Holds the menu weakly: once the menu is dropped the callback
+    /// unsubscribes.
+    fn register_modifiers_handler(&mut self) {
+        let state = Rc::downgrade(&self.state);
+        let style = Rc::downgrade(&self.style);
+        let popups = Rc::downgrade(&self.popups);
+        AppContext::register_modifiers_callback(move |modifiers| {
+            let (Some(state), Some(style), Some(popups)) =
+                (state.upgrade(), style.upgrade(), popups.upgrade())
+            else {
+                return false;
+            };
+            if !state
+                .borrow_mut()
+                .show_alternates(crate::cmd_held(modifiers))
+            {
+                return true;
+            }
+            let style = style.borrow().clone();
+            let popups: Vec<_> = popups.borrow().clone();
+            for (depth, popup) in popups.iter().enumerate() {
+                if popup.borrow().is_some() {
+                    Self::render_menu_at_depth(&state, &style, popup, depth);
+                }
+            }
+            true
+        });
+    }
+
+    /// Show the alternates if Cmd is already down as the menu opens.
+    fn sync_alternates(&self) {
+        let cmd = crate::cmd_held(AppContext::current_modifiers());
+        self.state.borrow_mut().show_alternates(cmd);
+    }
+
     /// Register pointer event handler (called only by root menu)
     fn register_pointer_handler(&mut self) {
         let registered_surfaces = self.registered_surfaces.clone();
@@ -1372,6 +1415,7 @@ impl ContextMenu {
         if let Some(from) = self.state.borrow_mut().replace_items(items) {
             Self::hide_submenus_from_static(&self.state, &self.popups, from);
         }
+        self.sync_alternates();
 
         // A slider being dragged keeps where the pointer has it: the new
         // items carry what the caller last heard back, which lags behind.

@@ -20,8 +20,6 @@ tracing.workspace = true
 libc = { workspace = true, optional = true }
 # Wipes what was typed into the field, and every copy of it on the way out.
 zeroize.workspace = true
-# The power buttons ask logind directly.
-zbus.workspace = true
 
 [features]
 # The PAM conversation otto-lock and otto-authorize share. Off by default so

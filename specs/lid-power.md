@@ -42,6 +42,9 @@ Configuration (`[power_management]`):
   `on_power_button = "lock"` performs.
 - `on_power_button` — `"lock"` (default), `"suspend"`, `"shutdown"` or
   `"ignore"`.
+- `sleep` — `"suspend"` (default) or `"hibernate"`: how the sleep buttons
+  sleep (see [Sleep buttons](#sleep-buttons)). The compositor only carries it;
+  the clients read it from the config files.
 
 On lid close (`manage_lid_switch = true`):
 
@@ -94,6 +97,30 @@ On power button press:
   configured locker (no-op if the session is already locked).
 - `"suspend"` and `"shutdown"` delegate to logind (`systemctl suspend` /
   `systemctl poweroff`).
+
+## Sleep buttons
+
+The login screen and the lock screen have a sleep button among their power
+buttons, and the bar's Otto menu has *Sleep*, *Restart…* and *Shut Down…*
+above *Log Out*. All of them ask logind (`org.freedesktop.login1.Manager`)
+through `otto_kit::power`, interactively, so polkit decides and may ask.
+
+- The sleep button sleeps the way `sleep` says. Holding Cmd (the Logo
+  modifier) swaps it, in place, to the other way: its glyph on the login and
+  lock screens, its label and action in the Otto menu. Letting go swaps it
+  back. A menu sizes itself for both labels, so it does not change width.
+- Hibernate is offered only when logind's `CanHibernate` answers `yes` or
+  `challenge`. Otherwise sleeping is always a suspend, whatever `sleep` says,
+  and Cmd changes nothing. The answer is asked once per process, off the
+  draw thread; until it arrives the button suspends.
+- The config is read system first (`/etc/otto/config.toml`), then the user's,
+  which wins. The greeter runs as the greeter user, so it follows only the
+  system file. The bar reads it again each time the Otto menu opens; the lock
+  screen when it starts.
+- *Sleep* in the Otto menu acts at once. *Restart…* and *Shut Down…* ask first
+  through otto-islands' system dialog, the way *Log Out* does, and go ahead
+  unasked only when nobody serves `org.otto.Dialog1`. They do not close the
+  applications first: anything unsaved is lost, and the question says so.
 
 ## Constraints & Edge Cases
 

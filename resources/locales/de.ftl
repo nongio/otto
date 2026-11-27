@@ -2838,3 +2838,27 @@ audio-virtual-recording-mix = Aufnahme-Mix
 audio-virtual-recording-mix-add = Mix für Aufnahme
 audio-virtual-hears-none = Hört noch nichts. Apps erscheinen hier, während sie spielen.
 audio-engine-low-latency = Niedrige Latenz
+
+
+## Sleep, hibernate, restart and shut down
+
+settings-sleep = Schlafen
+settings-sleep-detail = Halte Cmd auf einer Schlaftaste gedrückt, um die andere Art zu nehmen
+settings-choice-sleep-suspend = Ruhezustand
+settings-choice-sleep-hibernate = Tiefschlaf
+bar-otto-sleep = Schlafen
+bar-otto-hibernate = Tiefschlaf
+bar-otto-restart = Neu starten…
+bar-otto-shut-down = Ausschalten…
+bar-restart-title = Jetzt neu starten?
+bar-restart-body = Alles Ungespeicherte in deinen Apps geht verloren.
+bar-restart-grant = Neu starten
+bar-shutdown-title = Jetzt ausschalten?
+bar-shutdown-body = Alles Ungespeicherte in deinen Apps geht verloren.
+bar-shutdown-grant = Ausschalten
+schema-power-management-sleep-label = Schlafen
+schema-power-management-sleep-description = Wie die Schlaftasten schlafen legen. Mit gedrückter Cmd-Taste die andere Art.
+greeter-power-hibernate-denied = Tiefschlaf nicht erlaubt
+greeter-power-hibernate-failed = Tiefschlaf nicht möglich
+lock-power-hibernate-denied = Tiefschlaf nicht erlaubt
+lock-power-hibernate-failed = Tiefschlaf nicht möglich: { $error }

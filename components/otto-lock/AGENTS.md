@@ -8,7 +8,7 @@ Otto's screen locker. The compositor starts it when the session locks (the `Lock
 - **Internal:** `otto-auth-ui` with its `pam` feature, for the panel, the PAM conversation and the power buttons. `otto-kit` for drawing and i18n.
 - **External:**
   - PAM (`libpam`) through the `otto-lock` service. `otto-lock.pam` in the crate is the stack to install as `/etc/pam.d/otto-lock`; without it the service falls back to `system-auth`, then `login`.
-  - logind on the system bus for suspend, restart and shut down, through `otto-auth-ui`.
+  - logind on the system bus for sleep, hibernate, restart and shut down, through `otto-auth-ui`.
   - `ext-session-lock-v1` from the compositor.
 
 ## Develop

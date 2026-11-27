@@ -2800,3 +2800,27 @@ audio-virtual-recording-mix = 録音用ミックス
 audio-virtual-recording-mix-add = 録音用ミックス
 audio-virtual-hears-none = まだ何も聞いていません。再生中のアプリがここに表示されます。
 audio-engine-low-latency = 低遅延
+
+
+## Sleep, hibernate, restart and shut down
+
+settings-sleep = スリープ
+settings-sleep-detail = スリープボタンで Cmd を押したままにすると、もう一方の方法になります
+settings-choice-sleep-suspend = サスペンド
+settings-choice-sleep-hibernate = ハイバネート
+bar-otto-sleep = スリープ
+bar-otto-hibernate = ハイバネート
+bar-otto-restart = 再起動…
+bar-otto-shut-down = システム終了…
+bar-restart-title = 今すぐ再起動しますか？
+bar-restart-body = アプリで保存していない内容は失われます。
+bar-restart-grant = 再起動
+bar-shutdown-title = 今すぐシステムを終了しますか？
+bar-shutdown-body = アプリで保存していない内容は失われます。
+bar-shutdown-grant = システム終了
+schema-power-management-sleep-label = スリープ
+schema-power-management-sleep-description = スリープボタンの動作。Cmd を押したままにするともう一方になります。
+greeter-power-hibernate-denied = ハイバネートは許可されていません
+greeter-power-hibernate-failed = ハイバネートできませんでした
+lock-power-hibernate-denied = ハイバネートは許可されていません
+lock-power-hibernate-failed = ハイバネートできませんでした: { $error }

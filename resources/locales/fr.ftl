@@ -2865,3 +2865,27 @@ audio-virtual-recording-mix = Mix d'enregistrement
 audio-virtual-recording-mix-add = Mix pour enregistrer
 audio-virtual-hears-none = N'entend rien pour l'instant. Les apps apparaissent ici pendant leur lecture.
 audio-engine-low-latency = Faible latence
+
+
+## Sleep, hibernate, restart and shut down
+
+settings-sleep = Veille
+settings-sleep-detail = Maintiens Cmd sur un bouton de veille pour passer à l'autre mode
+settings-choice-sleep-suspend = Suspendre
+settings-choice-sleep-hibernate = Hiberner
+bar-otto-sleep = Veille
+bar-otto-hibernate = Hiberner
+bar-otto-restart = Redémarrer…
+bar-otto-shut-down = Éteindre…
+bar-restart-title = Redémarrer maintenant ?
+bar-restart-body = Ce qui n'est pas enregistré dans tes apps sera perdu.
+bar-restart-grant = Redémarrer
+bar-shutdown-title = Éteindre maintenant ?
+bar-shutdown-body = Ce qui n'est pas enregistré dans tes apps sera perdu.
+bar-shutdown-grant = Éteindre
+schema-power-management-sleep-label = Veille
+schema-power-management-sleep-description = Comment les boutons de veille mettent en veille. Avec Cmd enfoncé, l'autre mode.
+greeter-power-hibernate-denied = Hibernation non autorisée
+greeter-power-hibernate-failed = Impossible d'hiberner
+lock-power-hibernate-denied = Hibernation non autorisée
+lock-power-hibernate-failed = Impossible d'hiberner : { $error }

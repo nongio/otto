@@ -2804,3 +2804,27 @@ audio-virtual-recording-mix = 录音混音
 audio-virtual-recording-mix-add = 录音混音
 audio-virtual-hears-none = 还没有听到任何内容。应用播放时会显示在这里。
 audio-engine-low-latency = 低延迟
+
+
+## Sleep, hibernate, restart and shut down
+
+settings-sleep = 睡眠
+settings-sleep-detail = 在睡眠按钮上按住 Cmd 可改用另一种方式
+settings-choice-sleep-suspend = 挂起
+settings-choice-sleep-hibernate = 休眠
+bar-otto-sleep = 睡眠
+bar-otto-hibernate = 休眠
+bar-otto-restart = 重新启动…
+bar-otto-shut-down = 关机…
+bar-restart-title = 现在重新启动？
+bar-restart-body = 应用中未保存的内容将会丢失。
+bar-restart-grant = 重新启动
+bar-shutdown-title = 现在关机？
+bar-shutdown-body = 应用中未保存的内容将会丢失。
+bar-shutdown-grant = 关机
+schema-power-management-sleep-label = 睡眠
+schema-power-management-sleep-description = 睡眠按钮的睡眠方式。按住 Cmd 改用另一种。
+greeter-power-hibernate-denied = 不允许休眠
+greeter-power-hibernate-failed = 无法休眠
+lock-power-hibernate-denied = 不允许休眠
+lock-power-hibernate-failed = 无法休眠：{ $error }

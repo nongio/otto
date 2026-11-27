@@ -196,6 +196,11 @@ thread_local! {
     /// that must not outlive the focus (menus, popovers) subscribe here.
     #[allow(clippy::type_complexity)]
     static KEYBOARD_LEAVE_CALLBACKS: RefCell<Vec<Box<dyn FnMut(&ObjectId)>>> = const { RefCell::new(Vec::new()) };
+
+    /// Called with the keyboard's modifiers whenever they change. A callback
+    /// returns whether it still wants them; `false` unsubscribes it.
+    #[allow(clippy::type_complexity)]
+    static MODIFIERS_CALLBACKS: RefCell<Vec<Box<dyn FnMut(super::Modifiers) -> bool>>> = const { RefCell::new(Vec::new()) };
 }
 
 // -- Cursor shape state --
@@ -1273,6 +1278,18 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    /// Subscribe to modifier changes: a menu swapping in its alternate items
+    /// while Cmd is held. The callback returns whether it still wants them,
+    /// so one that outlives its owner can drop out rather than pile up.
+    pub fn register_modifiers_callback<F>(callback: F)
+    where
+        F: FnMut(super::Modifiers) -> bool + 'static,
+    {
+        MODIFIERS_CALLBACKS.with(|callbacks| {
+            callbacks.borrow_mut().push(Box::new(callback));
+        });
+    }
+
     pub fn register_window(window: crate::components::window::Window) {
         WINDOWS.with(|windows| {
             let mut windows = windows.borrow_mut();
@@ -1834,6 +1851,17 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    pub(crate) fn dispatch_modifiers(modifiers: super::Modifiers) {
+        MODIFIERS_CALLBACKS.with(|callbacks| {
+            // Taken out of the cell first: a callback may register another.
+            let mut taken = std::mem::take(&mut *callbacks.borrow_mut());
+            taken.retain_mut(|callback| callback(modifiers));
+            let mut slot = callbacks.borrow_mut();
+            taken.append(&mut slot);
+            *slot = taken;
+        });
+    }
+
     pub(crate) fn dispatch_keyboard_leave(surface_id: &ObjectId) {
         KEYBOARD_LEAVE_CALLBACKS.with(|callbacks| {
             // Copy out of the RefCell borrow first: a callback may close a menu,
@@ -2299,6 +2327,7 @@ impl<'a> AppContext<'a> {
         POINTER_CALLBACKS.with(|c| c.borrow_mut().clear());
         POINTER_BATCH_END_CALLBACKS.with(|c| c.borrow_mut().clear());
         KEYBOARD_LEAVE_CALLBACKS.with(|c| c.borrow_mut().clear());
+        MODIFIERS_CALLBACKS.with(|c| c.borrow_mut().clear());
         FRAME_CALLBACKS.with(|c| c.borrow_mut().clear());
         POPUP_CONFIGURE_CALLBACKS.with(|c| c.borrow_mut().clear());
         POPUP_DONE_CALLBACKS.with(|c| c.borrow_mut().clear());

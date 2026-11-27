@@ -120,7 +120,12 @@ impl ContextMenuRenderer {
         let submenu_arrow_space: f32 = 20.0;
 
         let mut max_width: f32 = 0.0;
-        for item in items {
+        // Alternates are measured too, so the menu keeps its width when Cmd
+        // swaps them in.
+        let with_alternates = items
+            .iter()
+            .flat_map(|item| std::iter::once(item).chain(item.alternate.as_deref()));
+        for item in with_alternates {
             let (label, shortcut, is_submenu) = match &item.kind {
                 MenuItemKind::Action {
                     label, shortcut, ..

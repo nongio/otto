@@ -8,7 +8,9 @@ compositor for a greeter client, the role `cage` plays for `gtkgreet`, and
 
 The same panel [otto-lock](lock-screen.md) uses, plus the session picker bottom
 left; click it to cycle through the installed sessions. The power controls
-bottom right sleep, restart and shut down the machine without logging in.
+bottom right sleep, restart and shut down the machine without logging in. Hold
+Cmd and the sleep button hibernates instead; see
+[Power Management](power-management.md#sleep-and-hibernate).
 
 ## Authentication
 

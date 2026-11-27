@@ -2864,3 +2864,27 @@ audio-virtual-recording-mix = Mix de gravação
 audio-virtual-recording-mix-add = Mix para gravação
 audio-virtual-hears-none = Ainda não ouve nada. Os apps aparecem aqui enquanto tocam.
 audio-engine-low-latency = Baixa latência
+
+
+## Sleep, hibernate, restart and shut down
+
+settings-sleep = Repousar
+settings-sleep-detail = Segure Cmd num botão de repouso para usar o outro modo
+settings-choice-sleep-suspend = Suspender
+settings-choice-sleep-hibernate = Hibernar
+bar-otto-sleep = Repousar
+bar-otto-hibernate = Hibernar
+bar-otto-restart = Reiniciar…
+bar-otto-shut-down = Desligar…
+bar-restart-title = Reiniciar agora?
+bar-restart-body = O que não estiver salvo nos seus apps será perdido.
+bar-restart-grant = Reiniciar
+bar-shutdown-title = Desligar agora?
+bar-shutdown-body = O que não estiver salvo nos seus apps será perdido.
+bar-shutdown-grant = Desligar
+schema-power-management-sleep-label = Repouso
+schema-power-management-sleep-description = Como os botões de repouso põem para dormir. Segurando Cmd, o outro modo.
+greeter-power-hibernate-denied = Hibernação não permitida
+greeter-power-hibernate-failed = Não foi possível hibernar
+lock-power-hibernate-denied = Hibernação não permitida
+lock-power-hibernate-failed = Não foi possível hibernar: { $error }

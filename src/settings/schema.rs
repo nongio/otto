@@ -985,6 +985,14 @@ pub static SETTINGS: &[SettingSpec] = &[
             "settings-choice-power-shutdown",
         ],
     ),
+    labelled_choice(
+        "power_management.sleep",
+        "Sleep",
+        "How the sleep buttons sleep. Holding Cmd takes the other way.",
+        Live,
+        &["suspend", "hibernate"],
+        &["settings-choice-sleep-suspend", "settings-choice-sleep-hibernate"],
+    ),
     // ---- Lock & Login ----------------------------------------------------
     spec(
         "lock.locker_command",

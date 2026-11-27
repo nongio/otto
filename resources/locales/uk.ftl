@@ -2932,3 +2932,27 @@ audio-virtual-recording-mix = Мікс для запису
 audio-virtual-recording-mix-add = Мікс для запису
 audio-virtual-hears-none = Поки нічого не чує. Застосунки з'являються тут, поки грають.
 audio-engine-low-latency = Низька затримка
+
+
+## Sleep, hibernate, restart and shut down
+
+settings-sleep = Сон
+settings-sleep-detail = Утримуйте Cmd на кнопці сну, щоб вибрати інший спосіб
+settings-choice-sleep-suspend = Режим очікування
+settings-choice-sleep-hibernate = Гібернація
+bar-otto-sleep = Сон
+bar-otto-hibernate = Гібернація
+bar-otto-restart = Перезавантажити…
+bar-otto-shut-down = Вимкнути…
+bar-restart-title = Перезавантажити зараз?
+bar-restart-body = Усе незбережене в застосунках буде втрачено.
+bar-restart-grant = Перезавантажити
+bar-shutdown-title = Вимкнути зараз?
+bar-shutdown-body = Усе незбережене в застосунках буде втрачено.
+bar-shutdown-grant = Вимкнути
+schema-power-management-sleep-label = Сон
+schema-power-management-sleep-description = Як кнопки сну присипляють комп'ютер. З утримуваним Cmd — іншим способом.
+greeter-power-hibernate-denied = Гібернацію не дозволено
+greeter-power-hibernate-failed = Не вдалося перейти в гібернацію
+lock-power-hibernate-denied = Гібернацію не дозволено
+lock-power-hibernate-failed = Не вдалося перейти в гібернацію: { $error }
