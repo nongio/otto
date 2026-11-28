@@ -1386,6 +1386,9 @@ bar-otto-menu = Otto
 bar-otto-update-available = New Version Available…
 bar-otto-about = About Otto
 bar-otto-settings = Settings…
+bar-otto-lock = Lock Screen
+# The keys that lock the screen, shown beside Lock Screen in the Otto menu.
+bar-otto-lock-shortcut = Ctrl+Alt+Esc
 bar-otto-log-out = Log Out
 # Sleep sends the machine to sleep at once; holding Cmd swaps it for
 # Hibernate (or back, when hibernating is the preferred sleep).

@@ -1023,6 +1023,8 @@ bar-otto-menu = Otto
 bar-otto-update-available = 新しいバージョンがあります…
 bar-otto-about = Otto について
 bar-otto-settings = 設定…
+bar-otto-lock = 画面をロック
+bar-otto-lock-shortcut = Ctrl+Alt+Esc
 bar-otto-log-out = ログアウト
 # The menu under the focused application's name in the top bar.
 bar-app-minimize = 最小化

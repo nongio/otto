@@ -1,4 +1,5 @@
-//! The Otto menu's way out: Sleep, Restart…, Shut Down… and Log Out.
+//! The Otto menu's way out: Sleep, Restart…, Shut Down…, Lock Screen and
+//! Log Out.
 //!
 //! Restart, Shut Down and Log Out ask first. The question is put by
 //! otto-islands' system dialog (`org.otto.Dialog1`), the one the portal and
@@ -6,7 +7,8 @@
 //! question the desktop asks. Logging out hands the compositor its `logout`
 //! command, which closes the windows one by one and ends the session once
 //! they have gone (see `src/state/logout.rs`). Sleeping, restarting and
-//! shutting down are logind's, asked through `otto_kit::power`.
+//! shutting down are logind's, asked through `otto_kit::power`, and so is
+//! locking, which logind hands back to the compositor as `Lock`.
 
 use otto_kit::dbus::dialog::DialogProxy;
 use otto_kit::power::PowerAction;
@@ -115,6 +117,20 @@ pub fn power(action: PowerAction) {
         });
     if let Err(err) = spawned {
         tracing::warn!(?action, %err, "could not start the power request");
+    }
+}
+
+/// Ask logind to lock the session, on a thread of its own.
+pub fn lock() {
+    let spawned = std::thread::Builder::new()
+        .name("lock-session".into())
+        .spawn(|| {
+            if let Err(err) = otto_kit::power::lock_session() {
+                tracing::warn!(%err, "logind did not lock the session");
+            }
+        });
+    if let Err(err) = spawned {
+        tracing::warn!(%err, "could not start the lock request");
     }
 }
 

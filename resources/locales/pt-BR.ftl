@@ -1061,6 +1061,8 @@ bar-otto-menu = Otto
 bar-otto-update-available = Nova versão disponível…
 bar-otto-about = Sobre o Otto
 bar-otto-settings = Configurações…
+bar-otto-lock = Bloquear tela
+bar-otto-lock-shortcut = Ctrl+Alt+Esc
 bar-otto-log-out = Encerrar sessão
 # The menu under the focused application's name in the top bar.
 bar-app-minimize = Minimizar

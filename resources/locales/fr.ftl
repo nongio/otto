@@ -1071,6 +1071,8 @@ bar-otto-menu = Otto
 bar-otto-update-available = Nouvelle version disponible…
 bar-otto-about = À propos d’Otto
 bar-otto-settings = Réglages…
+bar-otto-lock = Verrouiller l’écran
+bar-otto-lock-shortcut = Ctrl+Alt+Esc
 bar-otto-log-out = Fermer la session
 # The menu under the focused application's name in the top bar.
 bar-app-minimize = Réduire
