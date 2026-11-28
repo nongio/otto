@@ -116,6 +116,11 @@ while IFS= read -r f; do
     install -D -m$m "$f" "$tmpdir/$PKGDIR/$f"
 done < <(find resources/widgets -type f)
 
+# Otto's look for herdr-app, a tree the PKGBUILDs install whole.
+while IFS= read -r f; do
+    install -D -m644 "$f" "$tmpdir/$PKGDIR/$f"
+done < <(find resources/herdr -type f)
+
 # The default icon theme, Otto-MacTahoe: the PKGBUILDs copy the themes and
 # extract their symlinks from the links list into the package.
 scripts/packaging/fetch-icon-theme.sh
