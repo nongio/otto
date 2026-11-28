@@ -15,6 +15,7 @@ pub mod elicitation;
 pub mod facade;
 pub mod herdr;
 pub mod herdr_core;
+pub mod herdr_look;
 pub mod herdr_tools;
 pub mod host;
 pub mod i18n;

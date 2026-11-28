@@ -1,0 +1,7 @@
+mods/otto-spaces/main.js is adapted from herdr-app's "spaces" mod,
+Apache License 2.0.
+
+The glyphs in mods/otto-spaces/icons/ and mods/otto-sessions/chevron-*.svg
+are from the Solar icon set by 480 Design (@solar-icons/static 2.3.2),
+https://www.figma.com/community/file/1166831539721848736,
+licensed under CC BY 4.0, https://creativecommons.org/licenses/by/4.0/.

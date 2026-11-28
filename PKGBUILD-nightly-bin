@@ -243,6 +243,15 @@ package() {
             "$pkgdir/usr/share/otto/plugins/${_file#resources/plugins/}"
     done < <(find "$_plugins" -type f)
 
+    # Otto's look for herdr-app: a layout, two themes and a sessions mod, laid
+    # out as herdr's config folder is. `otto-agents plugins install` copies it
+    # into that folder, which is the only place herdr reads.
+    _herdr="resources/herdr"
+    [ -d "$_herdr" ] || { echo "missing $_herdr" >&2; return 1; }
+    while IFS= read -r _file; do
+        install -D -m644 "$_file" "$pkgdir/usr/share/otto/herdr/${_file#resources/herdr/}"
+    done < <(find "$_herdr" -type f)
+
     # The desktop widgets: one ewwii configuration, which Otto copies to the
     # user's cache and runs when a widget is chosen. Installed whole and by
     # mode, like the plugin above, so its scripts stay executable.

@@ -139,6 +139,17 @@ else
     echo "  (no python3, scripts not run)"
 fi
 
+echo "== herdr-app look =="
+# The layout, themes and sessions mod otto-agents copies into herdr's folder.
+h=/usr/share/otto/herdr
+check "$h/layouts/otto.json"
+check "$h/themes/otto-dark.json"
+check "$h/themes/otto-light.json"
+check "$h/mods/otto-sessions/main.js"
+check "$h/mods/otto-sessions/mod.json"
+check "$h/mods/otto-spaces/main.js"
+check "$h/mods/otto-spaces/icons/folder.svg"
+
 echo "== documentation =="
 check /usr/share/doc/otto/README.md
 check /usr/share/doc/otto/portals.conf.example

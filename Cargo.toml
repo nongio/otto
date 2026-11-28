@@ -411,6 +411,13 @@ assets = [
     ["resources/plugins/otto/skills/otto-help/*.md", "usr/share/otto/plugins/otto/skills/otto-help/", "644"],
     ["resources/plugins/otto/skills/otto-help/references/**/*", "usr/share/otto/plugins/otto/skills/otto-help/references/", "644"],
     ["resources/plugins/otto/skills/otto-help/scripts/*", "usr/share/otto/plugins/otto/skills/otto-help/scripts/", "755"],
+    # Otto's look for herdr-app, which otto-agents copies into herdr's config folder.
+    ["resources/herdr/layouts/*", "usr/share/otto/herdr/layouts/", "644"],
+    ["resources/herdr/themes/*", "usr/share/otto/herdr/themes/", "644"],
+    ["resources/herdr/mods/otto-sessions/*", "usr/share/otto/herdr/mods/otto-sessions/", "644"],
+    ["resources/herdr/mods/otto-spaces/*.*", "usr/share/otto/herdr/mods/otto-spaces/", "644"],
+    ["resources/herdr/mods/otto-spaces/icons/*", "usr/share/otto/herdr/mods/otto-spaces/icons/", "644"],
+    ["resources/herdr/NOTICE", "usr/share/otto/herdr/", "644"],
     # The desktop widgets' ewwii configuration; ewwii itself is optional.
     ["resources/widgets/ewwii/ewwii.*", "usr/share/otto/widgets/ewwii/", "644"],
     ["resources/widgets/ewwii/scripts/*", "usr/share/otto/widgets/ewwii/scripts/", "755"],
@@ -538,6 +545,13 @@ assets = [
     { source = "resources/plugins/otto/skills/otto-help/*.md", dest = "/usr/share/otto/plugins/otto/skills/otto-help/", mode = "644" },
     { source = "resources/plugins/otto/skills/otto-help/references/**/*", dest = "/usr/share/otto/plugins/otto/skills/otto-help/references/", mode = "644" },
     { source = "resources/plugins/otto/skills/otto-help/scripts/*", dest = "/usr/share/otto/plugins/otto/skills/otto-help/scripts/", mode = "755" },
+    # Otto's look for herdr-app, which otto-agents copies into herdr's config folder.
+    { source = "resources/herdr/layouts/*", dest = "/usr/share/otto/herdr/layouts/", mode = "644" },
+    { source = "resources/herdr/themes/*", dest = "/usr/share/otto/herdr/themes/", mode = "644" },
+    { source = "resources/herdr/mods/otto-sessions/*", dest = "/usr/share/otto/herdr/mods/otto-sessions/", mode = "644" },
+    { source = "resources/herdr/mods/otto-spaces/*.*", dest = "/usr/share/otto/herdr/mods/otto-spaces/", mode = "644" },
+    { source = "resources/herdr/mods/otto-spaces/icons/*", dest = "/usr/share/otto/herdr/mods/otto-spaces/icons/", mode = "644" },
+    { source = "resources/herdr/NOTICE", dest = "/usr/share/otto/herdr/", mode = "644" },
     # The desktop widgets' ewwii configuration; ewwii itself is optional.
     { source = "resources/widgets/ewwii/ewwii.*", dest = "/usr/share/otto/widgets/ewwii/", mode = "644" },
     { source = "resources/widgets/ewwii/scripts/*", dest = "/usr/share/otto/widgets/ewwii/scripts/", mode = "755" },
@@ -666,6 +680,13 @@ files = [
     ["resources/plugins/otto/skills/otto-help/*.md", "/usr/share/otto/plugins/otto/skills/otto-help/", "644"],
     ["resources/plugins/otto/skills/otto-help/references/**/*", "/usr/share/otto/plugins/otto/skills/otto-help/references/", "644"],
     ["resources/plugins/otto/skills/otto-help/scripts/*", "/usr/share/otto/plugins/otto/skills/otto-help/scripts/", "755"],
+    # Otto's look for herdr-app, which otto-agents copies into herdr's config folder.
+    ["resources/herdr/layouts/*", "/usr/share/otto/herdr/layouts/", "644"],
+    ["resources/herdr/themes/*", "/usr/share/otto/herdr/themes/", "644"],
+    ["resources/herdr/mods/otto-sessions/*", "/usr/share/otto/herdr/mods/otto-sessions/", "644"],
+    ["resources/herdr/mods/otto-spaces/*.*", "/usr/share/otto/herdr/mods/otto-spaces/", "644"],
+    ["resources/herdr/mods/otto-spaces/icons/*", "/usr/share/otto/herdr/mods/otto-spaces/icons/", "644"],
+    ["resources/herdr/NOTICE", "/usr/share/otto/herdr/", "644"],
     # The desktop widgets' ewwii configuration; ewwii itself is optional.
     ["resources/widgets/ewwii/ewwii.*", "/usr/share/otto/widgets/ewwii/", "644"],
     ["resources/widgets/ewwii/scripts/*", "/usr/share/otto/widgets/ewwii/scripts/", "755"],
