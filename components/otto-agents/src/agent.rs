@@ -88,6 +88,57 @@ pub fn instructions_from_meta(
         .map(str::to_owned)
 }
 
+/// What a session's client asked for, as the `_meta` it created the session
+/// with: what [`McpStdio::from_meta`], [`instructions_from_meta`],
+/// [`runs_as_from_meta`] and [`subject_from_meta`] read. `None` when it asked
+/// for nothing.
+pub fn client_meta(
+    servers: &[McpStdio],
+    instructions: Option<&str>,
+    runs_as: Option<&str>,
+    subject: &[PathBuf],
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let mut otto = serde_json::Map::new();
+    if !servers.is_empty() {
+        let servers: Vec<serde_json::Value> = servers
+            .iter()
+            .map(|server| {
+                let env: serde_json::Map<String, serde_json::Value> = server
+                    .env
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone().into()))
+                    .collect();
+                serde_json::json!({
+                    "name": server.name,
+                    "command": server.command,
+                    "args": server.args,
+                    "env": env,
+                })
+            })
+            .collect();
+        otto.insert("mcpServers".to_owned(), servers.into());
+    }
+    if let Some(instructions) = instructions {
+        otto.insert("instructions".to_owned(), instructions.into());
+    }
+    if let Some(runs_as) = runs_as {
+        otto.insert("agent".to_owned(), runs_as.into());
+    }
+    if !subject.is_empty() {
+        let subject: Vec<serde_json::Value> = subject
+            .iter()
+            .map(|path| crate::uri::from_path(path).into())
+            .collect();
+        otto.insert("subject".to_owned(), subject.into());
+    }
+    if otto.is_empty() {
+        return None;
+    }
+    let mut meta = serde_json::Map::new();
+    meta.insert("otto".to_owned(), otto.into());
+    Some(meta)
+}
+
 /// An MCP server the agent starts and talks to over its stdin and stdout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpStdio {
@@ -228,6 +279,29 @@ pub enum SessionEvent {
     HistoryLoaded {
         turns: Vec<HistoryTurn>,
     },
+    /// Someone used the session outside Otto, such as by typing in its
+    /// terminal: it counts as the latest change, for the order sessions are
+    /// listed in.
+    Active,
+    /// Whether the agent's process is running: `false` once it has gone,
+    /// such as when its terminal was closed. Only from backends whose
+    /// sessions outlive the service (see [`Backend::live`]).
+    Running(bool),
+    /// The agent started a turn Otto did not ask for, on `prompt` typed in
+    /// its terminal. The turn shows in the chat like one started here, and
+    /// ends with `TurnEnded`.
+    TurnStarted {
+        turn_id: String,
+        prompt: String,
+    },
+    /// What the agent is doing outside the turns Otto started, such as
+    /// working on a prompt typed in its terminal, as `SessionStatus` bits
+    /// shown on top of the chat's own. `0` when it is doing nothing.
+    Outside(u32),
+    /// The agent no longer waits on the permission question or input request
+    /// with this id, answered elsewhere (in its terminal, say) or given up:
+    /// it is taken down unanswered.
+    RequestWithdrawn(String),
     CreationFailed(String),
     /// The agent's modes — its own permission and sandboxing presets, such as
     /// Claude's "Accept edits" or Codex's "read-only" — and which one it is
@@ -274,7 +348,20 @@ pub enum SessionEvent {
         request: ChatInputRequest,
         reply: oneshot::Sender<InputAnswer>,
     },
-    /// A tool call the agent was given permission for has finished.
+    /// The agent runs a tool it needs no permission for. It shows running
+    /// until `ToolCallFinished`.
+    ToolCallStarted {
+        turn_id: String,
+        tool_call_id: String,
+        /// The tool's own name, such as `Bash`.
+        tool_name: String,
+        /// What it does, as the chat names it: the command, or the tool and
+        /// its file.
+        title: String,
+        /// The tool's input as JSON.
+        input: Option<String>,
+    },
+    /// A tool call that started, or was given permission, has finished.
     ToolCallFinished {
         turn_id: String,
         tool_call_id: String,
@@ -414,6 +501,40 @@ pub trait Backend: Send + Sync + 'static {
         None
     }
 
+    /// Whether the agent's own session `agent_session` of `provider` is
+    /// running right now without Otto, as a terminal that outlived the
+    /// service. Such sessions are taken up again as soon as the service
+    /// starts, so the list shows what they are doing. `false`, the default,
+    /// for agents that only run while Otto runs them.
+    fn live(&self, _provider: &str, _agent_session: &str) -> bool {
+        false
+    }
+
+    /// Whether this backend reports [`SessionEvent::Running`], so the
+    /// session list can tell running sessions from dormant ones.
+    fn reports_running(&self) -> bool {
+        false
+    }
+
+    /// Whether the agent's own session `agent_session` still exists where
+    /// the backend keeps sessions, for backends that own them rather than
+    /// Otto: a stored session it no longer has is dropped. `None`, the
+    /// default, when Otto's store is what keeps sessions, or the backend
+    /// cannot tell right now.
+    fn exists(&self, _provider: &str, _agent_session: &str) -> Option<bool> {
+        None
+    }
+
+    /// Removes the backend's own copy of a session Otto was told to dispose
+    /// of. Nothing, the default, for backends whose sessions live only in Otto.
+    fn forget(&self, _provider: &str, _agent_session: &str) {}
+
+    /// Reports the sessions the backend keeps as they come and go, for
+    /// backends that own sessions rather than Otto: every one it has is in
+    /// Otto, and one removed there leaves Otto too. Nothing, the default,
+    /// for backends whose sessions live only in Otto.
+    fn watch_sessions(&self, _changes: mpsc::UnboundedSender<SessionChange>) {}
+
     /// Starts a session in the background. The session ends when `commands`
     /// is closed; it reports through `events` until then.
     fn start(
@@ -438,6 +559,15 @@ pub trait Backend: Send + Sync + 'static {
         None
     }
 
+    /// The window that already shows the backend's sessions, by app id, when
+    /// they live in one: there, the [`Backend::terminal`] command shows the
+    /// session in that window rather than opening a terminal, and the
+    /// service goes on running it. `None`, the default, for a terminal of
+    /// its own per session.
+    fn window(&self, _provider: &str) -> Option<String> {
+        None
+    }
+
     /// The same command without a terminal around it: what `otto-agents new`
     /// and `otto-agents enter` run in the terminal they are already in.
     fn enter(
@@ -449,6 +579,34 @@ pub trait Backend: Send + Sync + 'static {
     ) -> Option<Vec<String>> {
         None
     }
+}
+
+/// A session coming or going where a backend keeps its sessions.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionChange {
+    /// A session the backend has, which Otto shows if it does not yet.
+    Found(FoundSession),
+    /// The agent's own id for a session the backend no longer has.
+    Removed(String),
+    /// What the agent calls a session now, such as a summary it made of it.
+    Titled {
+        agent_session: String,
+        title: String,
+    },
+}
+
+/// A session found where the backend keeps them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FoundSession {
+    pub provider: String,
+    /// The agent's own id for it.
+    pub agent_session: String,
+    pub cwd: PathBuf,
+    /// What it is called: the agent's own title for it, else its first
+    /// prompt, when there is one.
+    pub title: Option<String>,
+    /// Whether the agent runs it right now.
+    pub running: bool,
 }
 
 pub fn agent_info(provider: &str, display_name: &str, description: &str) -> AgentInfo {
@@ -509,6 +667,24 @@ impl Backend for EchoBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_a_client_asked_for_reads_back_the_same() {
+        let servers = vec![McpStdio {
+            name: "preview".to_owned(),
+            command: PathBuf::from("/usr/bin/otto-preview"),
+            args: vec!["--mcp".to_owned()],
+            env: vec![("OTTO_PREVIEW_DOC".to_owned(), "/tmp/a.pdf".to_owned())],
+        }];
+        let subject = vec![PathBuf::from("/tmp/a.pdf")];
+        let meta = client_meta(&servers, Some("Edit it."), Some("studio"), &subject);
+        let meta = meta.as_ref();
+        assert_eq!(McpStdio::from_meta(meta), servers);
+        assert_eq!(instructions_from_meta(meta).as_deref(), Some("Edit it."));
+        assert_eq!(runs_as_from_meta(meta).as_deref(), Some("studio"));
+        assert_eq!(subject_from_meta(meta), subject);
+        assert_eq!(client_meta(&[], None, None, &[]), None);
+    }
 
     fn meta(servers: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
         serde_json::json!({ "otto": { "mcpServers": servers } })

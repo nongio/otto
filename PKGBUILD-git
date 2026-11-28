@@ -19,6 +19,7 @@ depends=(
     "glibc"
     "gst-plugins-base-libs"
     "gstreamer"
+    "herdr-core"
     "inter-font"
     "libgcc"
     "libglvnd"
@@ -247,8 +248,6 @@ package() {
         "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"
     install -Dm644 components/otto-agents/otto-agents.service \
         "$pkgdir/usr/lib/systemd/user/otto-agents.service"
-    install -Dm644 components/otto-agents/otto-agents-bridge.service \
-        "$pkgdir/usr/lib/systemd/user/otto-agents-bridge.service"
     # The audio routing service, off until the user enables it:
     # systemctl --user enable --now otto-mixer-service
     install -Dm644 components/otto-mixer/otto-mixer-service.service \

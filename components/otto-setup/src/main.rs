@@ -2,10 +2,10 @@
 //!
 //! Starts with the agents: finds what is installed, adds agents for the
 //! harnesses the user ticks with the instructions they pick, gives the
-//! services the PATH their programs live on, links Otto's skills, and turns
-//! the agent service and the chat bridge on, previewing each step before it
-//! runs. What it does not do itself (install Node.js, a harness, an ACP
-//! adapter or cc-connect, sign in) it explains. The user guide is
+//! service the PATH its programs live on, links Otto's skills, and turns
+//! the agent service on, previewing each step before it runs. What it does
+//! not do itself (install Node.js, a harness, an ACP adapter, sign in) it
+//! explains. The user guide is
 //! `docs/user/agents.md`.
 
 // Rust guideline compliant 2026-02-21
@@ -19,8 +19,8 @@ mod tui;
 
 use std::process::ExitCode;
 
-use crate::plan::{Bridge, Choices, State};
-use crate::probe::Facts;
+use crate::plan::{Choices, State};
+use crate::probe::{Backend, Facts};
 
 const USAGE: &str = "\
 Usage: otto-setup [agents] [options]
@@ -28,15 +28,18 @@ Usage: otto-setup [agents] [options]
 Sets Otto up the first time. For now there is one topic, `agents`
 (the default): the AI agents that answer in Ask and run your Sessions.
 It adds the agents you pick to agents.toml, makes sure Otto's agent
-service can find them, and starts it; it can also turn on the Telegram
-chat bridge. It installs nothing itself: for anything missing (Node.js,
-an agent, an adapter, cc-connect) it shows the commands to run.
+service can find them, and starts it. Sessions run in herdr when it is
+installed, else in Otto. It installs nothing itself: for anything missing
+(herdr, an agent, Node.js, an adapter) it shows the commands to run.
 Nothing changes until you apply. Settings › Agents has the rest.
 
 Options:
       --check    print what is set up and what is left, and exit 1 when
                  something is left to do
       --apply    apply without asking, adding every agent that is ready
+      --rewrite  with --apply, also rewrite the agents set up for Otto's
+                 sessions from the herdr preset, backing up agents.toml first;
+                 without it --apply leaves them as they are
   -V, --version  print the version and exit
   -h, --help     print this and exit
 
@@ -49,7 +52,11 @@ otherwise it behaves as --check.
 enum Command {
     Interactive,
     Check,
-    Apply,
+    /// Applies without asking; `rewrite` also rewrites the agents set up
+    /// for Otto's sessions when they run in herdr.
+    Apply {
+        rewrite: bool,
+    },
     Help,
     Version,
 }
@@ -57,11 +64,13 @@ enum Command {
 /// Parses the arguments after the program name.
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String> {
     let mut command = Command::Interactive;
+    let mut rewrite = false;
     for arg in args {
         match arg.as_str() {
             "agents" => {}
             "--check" => command = Command::Check,
-            "--apply" => command = Command::Apply,
+            "--apply" => command = Command::Apply { rewrite: false },
+            "--rewrite" => rewrite = true,
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
             other if other.starts_with('-') => return Err(format!("unknown option {other:?}")),
@@ -72,7 +81,11 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String>
             }
         }
     }
-    Ok(command)
+    match command {
+        Command::Apply { .. } => Ok(Command::Apply { rewrite }),
+        _ if rewrite => Err("--rewrite goes with --apply".to_owned()),
+        command => Ok(command),
+    }
 }
 
 fn main() -> ExitCode {
@@ -102,18 +115,33 @@ fn main() -> ExitCode {
             }
         },
         Command::Interactive | Command::Check => check(&Facts::read()),
-        Command::Apply => apply(&Facts::read()),
+        Command::Apply { rewrite } => apply(&Facts::read(), rewrite),
     }
 }
 
 /// Prints what is there and the plan for the agents that are ready.
 fn check(facts: &Facts) -> ExitCode {
     let choices = Choices::initial(facts);
+    let herdr = choices.backend == Backend::Herdr;
     println!("Agents");
+    let why = match facts.backend {
+        Some(_) => "set in agents.toml",
+        None if herdr => "herdr is installed",
+        None => "herdr isn't installed",
+    };
+    println!(
+        "  {:<16}{} ({why})",
+        "Sessions run in",
+        choices.backend.label()
+    );
     for harness in plan::HARNESSES {
         let name = harness.name().unwrap_or_default();
-        let line = match plan::readiness(facts, harness) {
+        let line = match plan::readiness(facts, choices.backend, harness) {
+            plan::Readiness::Configured if herdr && harness.herdr_program().is_none() => {
+                "already added, runs only in Otto".to_owned()
+            }
             plan::Readiness::Configured => "already added".to_owned(),
+            plan::Readiness::OttoOnly => "runs only in Otto, not in herdr".to_owned(),
             plan::Readiness::Ready(path) if choices.picks.contains(&harness) => {
                 format!("ready to add ({})", facts.shown(&path))
             }
@@ -131,31 +159,11 @@ fn check(facts: &Facts) -> ExitCode {
     };
     println!("  {:<16}{studio}", "Studio");
     println!("\nRequirements");
-    let node = match plan::node(facts) {
-        plan::Node::Missing => "not installed".to_owned(),
-        plan::Node::TooOld(major) => {
-            format!("v{major} is too old: needs {} or newer", plan::NODE_MIN)
-        }
-        plan::Node::Ok => facts.node_version.clone().unwrap_or_default(),
-    };
-    println!("  {:<16}{node}", "Node.js");
-    let adapters: Vec<String> = plan::adapters(facts, &choices)
-        .into_iter()
-        .filter_map(|(harness, state)| {
-            let bin = harness.adapter()?.bin;
-            Some(match state {
-                plan::Adapter::Installed => format!("{bin} installed"),
-                plan::Adapter::Npx => format!("{} downloads its own", harness.name()?),
-                plan::Adapter::Missing => format!("{bin} missing"),
-            })
-        })
-        .collect();
-    let adapters = if adapters.is_empty() {
-        "none needed".to_owned()
+    if herdr {
+        print_herdr_requirements(facts, &choices);
     } else {
-        adapters.join(", ")
-    };
-    println!("  {:<16}{adapters}", "Adapters");
+        print_acp_requirements(facts, &choices);
+    }
     let skills = plan::skills(facts);
     let skills = if facts.plugins.is_none() {
         "otto-agents cannot say".to_owned()
@@ -186,20 +194,6 @@ fn check(facts: &Facts) -> ExitCode {
         profiles.join(", ")
     };
     println!("  {:<16}{profiles}", "Agent profiles");
-    println!("\nOptional");
-    let cc = facts
-        .found
-        .get("cc-connect")
-        .map_or_else(|| "not installed".to_owned(), |p| facts.shown(p));
-    println!("  {:<16}{cc}", "cc-connect");
-    let bridge = match plan::bridge(facts) {
-        Bridge::Running => "running".to_owned(),
-        Bridge::Off => "set up, off".to_owned(),
-        Bridge::Ready => "ready to turn on".to_owned(),
-        Bridge::Missing(missing) => format!("needs {}", missing.join(", ")),
-        Bridge::Unavailable(why) => why.to_owned(),
-    };
-    println!("  {:<16}{bridge}", "Chat bridge");
     println!("\nSteps");
     let steps = plan::steps(facts, &choices);
     for step in &steps {
@@ -207,20 +201,99 @@ fn check(facts: &Facts) -> ExitCode {
             State::Done => "ok  ",
             State::Todo => "todo",
             State::Blocked => "!!  ",
+            State::Offered => "off ",
         };
         println!("  [{mark}] {:<18}{}", step.title, step.summary);
     }
-    if steps.iter().any(|s| s.state == State::Todo) {
+    let offered = steps.iter().any(|s| s.state == State::Offered);
+    if steps
+        .iter()
+        .any(|s| matches!(s.state, State::Todo | State::Offered))
+    {
         println!("\nRun otto-setup in a terminal to choose and apply, or otto-setup --apply.");
+        if offered {
+            println!("--apply leaves the agents to rewrite as they are; --apply --rewrite rewrites them.");
+        }
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
     }
 }
 
+/// Where each of `programs` is, or that it is missing, joined for one line.
+fn found_line(facts: &Facts, programs: &[&str]) -> String {
+    programs
+        .iter()
+        .map(|p| match facts.found.get(*p) {
+            Some(path) => format!("{p} {}", facts.shown(path)),
+            None => format!("{p} missing"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// What herdr needs: herdr itself, and each agent's own program.
+fn print_herdr_requirements(facts: &Facts, choices: &Choices) {
+    println!(
+        "  {:<16}{}",
+        "herdr",
+        found_line(facts, &plan::HERDR_PROGRAMS)
+    );
+    let programs = plan::agent_programs(facts, choices);
+    let programs = if programs.is_empty() {
+        "no agent ticked".to_owned()
+    } else {
+        found_line(facts, &programs)
+    };
+    println!("  {:<16}{programs}", "Agent programs");
+}
+
+/// What Otto needs to run the agents over ACP: Node.js and the adapters.
+fn print_acp_requirements(facts: &Facts, choices: &Choices) {
+    let node = match plan::node(facts) {
+        plan::Node::Missing => "not installed".to_owned(),
+        plan::Node::TooOld(major) => {
+            format!("v{major} is too old: needs {} or newer", plan::NODE_MIN)
+        }
+        plan::Node::Ok => facts.node_version.clone().unwrap_or_default(),
+    };
+    println!("  {:<16}{node}", "Node.js");
+    let adapters: Vec<String> = plan::adapters(facts, choices)
+        .into_iter()
+        .filter_map(|(harness, state)| {
+            let bin = harness.adapter()?.bin;
+            Some(match state {
+                plan::Adapter::Installed => format!("{bin} installed"),
+                plan::Adapter::Npx => format!("{} downloads its own", harness.name()?),
+                plan::Adapter::Missing => format!("{bin} missing"),
+            })
+        })
+        .collect();
+    let adapters = if adapters.is_empty() {
+        "none needed".to_owned()
+    } else {
+        adapters.join(", ")
+    };
+    println!("  {:<16}{adapters}", "Adapters");
+}
+
 /// Applies the plan for the agents that are ready, saying how it went.
-fn apply(facts: &Facts) -> ExitCode {
-    let steps = plan::steps(facts, &Choices::initial(facts));
+///
+/// The agents set up for Otto's sessions are rewritten for herdr only when
+/// `rewrite` is set: it changes agents the user already has, so it is never
+/// done without being asked for.
+fn apply(facts: &Facts, rewrite: bool) -> ExitCode {
+    let choices = Choices {
+        rewrite,
+        ..Choices::initial(facts)
+    };
+    let steps = plan::steps(facts, &choices);
+    if let Some(step) = steps.iter().find(|s| s.state == State::Offered) {
+        println!(
+            "[off ] {}: left as they are; --apply --rewrite rewrites them.",
+            step.title
+        );
+    }
     if steps.iter().all(|s| s.state != State::Todo) {
         println!("Nothing to do.");
         return ExitCode::SUCCESS;
@@ -252,7 +325,13 @@ mod tests {
     fn parses_the_topic_and_the_modes() {
         assert_eq!(parse(&[]), Ok(Command::Interactive));
         assert_eq!(parse(&["agents", "--check"]), Ok(Command::Check));
-        assert_eq!(parse(&["--apply"]), Ok(Command::Apply));
+        assert_eq!(parse(&["--apply"]), Ok(Command::Apply { rewrite: false }));
+        assert_eq!(
+            parse(&["--rewrite", "--apply"]),
+            Ok(Command::Apply { rewrite: true })
+        );
+        assert!(parse(&["--rewrite"]).is_err());
+        assert!(parse(&["--check", "--rewrite"]).is_err());
         assert!(parse(&["display"]).is_err());
         assert!(parse(&["--frobnicate"]).is_err());
     }

@@ -1,8 +1,8 @@
 //! `otto-agents acp`: the service, seen from outside as one ACP agent.
 //!
-//! Tools that drive ACP agents — chat bridges such as cc-connect, or an
-//! editor — start `otto-agents acp` as if it were an agent and speak ACP to it
-//! over stdio. Every ACP session is one of the desktop's sessions:
+//! Tools that drive ACP agents, such as an editor or a relay from a chat app,
+//! start `otto-agents acp` as if it were an agent and speak ACP to it over
+//! stdio. Every ACP session is one of the desktop's sessions:
 //! `session/new` creates one, `session/load` takes up one that is already
 //! there by its id (or the start of it), and a prompt is queued on the
 //! session's chat the way the launcher queues one. So a conversation begun
@@ -59,7 +59,7 @@ const START_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum Permissions {
     /// The ACP client as well as the desktop; the first answer wins. Whoever
-    /// can write to the client, such as everyone a chat bridge lets in, can
+    /// can write to the client, such as everyone a chat relay lets in, can
     /// then approve tool calls.
     Client,
     /// The desktop only: the default. Also for clients that answer every
@@ -211,8 +211,8 @@ pub async fn serve(
             {
                 let service = service.clone();
                 // The desktop's sessions, most recently changed first: those
-                // working in `cwd` when the client names a folder, as a chat
-                // bridge does with its own. All in one page.
+                // working in `cwd` when the client names a folder. All in one
+                // page.
                 async move |request: ListSessionsRequest,
                             responder,
                             connection: ConnectionTo<Client>| {
@@ -805,17 +805,6 @@ fn kind(
         _ if approve => PermissionOptionKind::AllowOnce,
         _ => PermissionOptionKind::RejectOnce,
     }
-}
-
-/// The chat app a chat bridge relays from, as cc-connect tells the agent it
-/// starts: the platform at the head of `CC_SESSION_KEY`, such as
-/// `telegram:<chat>:<user>`.
-pub fn remote_from_env() -> Option<String> {
-    let key = std::env::var("CC_SESSION_KEY").ok()?;
-    let platform = key.split(':').next()?.trim();
-    let mut letters = platform.chars();
-    let first = letters.next()?;
-    Some(first.to_uppercase().chain(letters).collect())
 }
 
 /// An ACP prompt as a chat message, marked as written in `remote` when it

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 336" width="760" height="336" role="img" aria-label="otto-agents: AHP clients connect over a Unix socket to the service, whose host runs one ACP agent process per session and asks otto-islands over D-Bus">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 336" width="760" height="336" role="img" aria-label="otto-agents: AHP clients connect over a Unix socket to the service, whose host runs each session through a backend: herdr, where the agent runs in a herdr-core terminal driven over its API and read from its transcript, or ACP, one agent process per session; dialogs go to otto-islands over D-Bus">
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
     .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
@@ -41,7 +41,7 @@
   <text class="t" x="28" y="217">otto-agents CLI</text>
   <text class="tm" x="28" y="232">sessions, show, new, enter</text>
   <rect class="box" x="16" y="252" width="190" height="40" rx="6"/>
-  <text class="t" x="28" y="269">chat bridge</text>
+  <text class="t" x="28" y="269">ACP clients</text>
   <text class="tm" x="28" y="284">via otto-agents acp</text>
 
   <rect class="acc" x="240" y="56" width="150" height="56" rx="6"/>
@@ -61,10 +61,15 @@
   <text class="tm" x="254" y="188">sessions, chats, seq</text>
   <path class="ln" d="M315 112 V144"/>
 
-  <rect class="acc" x="410" y="146" width="142" height="60" rx="6"/>
-  <text class="tb" x="424" y="170">ACP backend</text>
-  <text class="tm" x="424" y="188">one per session</text>
-  <path class="ln" d="M390 176 H408"/>
+  <rect class="acc" x="410" y="120" width="142" height="44" rx="6"/>
+  <text class="tb" x="424" y="139">herdr backend</text>
+  <text class="tm" x="424" y="155">when herdr is installed</text>
+  <path class="ln" d="M390 166 L408 146"/>
+
+  <rect class="acc" x="410" y="180" width="142" height="44" rx="6"/>
+  <text class="tb" x="424" y="199">ACP backend</text>
+  <text class="tm" x="424" y="215">otherwise</text>
+  <path class="ln" d="M390 186 L408 200"/>
 
   <rect class="box" x="240" y="252" width="150" height="52" rx="6"/>
   <text class="t" x="254" y="273">store</text>
@@ -76,12 +81,20 @@
   <text class="tm" x="424" y="290">prompts, questions</text>
   <path class="ln" d="M350 206 V228 H480 V250"/>
 
-  <rect class="box" x="602" y="140" width="150" height="66" rx="6"/>
-  <rect class="box" x="596" y="146" width="150" height="66" rx="6"/>
-  <text class="tb" x="610" y="168">agent process</text>
-  <text class="tm" x="610" y="186">child of the service</text>
-  <text class="tm" x="610" y="201">ACP on stdio</text>
-  <path class="ln" d="M552 176 H594"/>
+  <rect class="box" x="596" y="50" width="150" height="102" rx="6"/>
+  <text class="tb" x="610" y="70">herdr-core</text>
+  <text class="tm" x="610" y="88">the agent's own TUI</text>
+  <text class="tm" x="610" y="103">API: events.subscribe,</text>
+  <text class="tm" x="610" y="118">terminal.send, labels</text>
+  <text class="tm" x="610" y="140">+ the agent's transcript</text>
+  <path class="ln" d="M552 136 L594 110"/>
+
+  <rect class="box" x="602" y="170" width="150" height="62" rx="6"/>
+  <rect class="box" x="596" y="176" width="150" height="62" rx="6"/>
+  <text class="tb" x="610" y="197">agent process</text>
+  <text class="tm" x="610" y="214">child of the service</text>
+  <text class="tm" x="610" y="229">ACP on stdio</text>
+  <path class="ln" d="M552 204 H594"/>
 
   <rect class="box" x="596" y="252" width="150" height="52" rx="6"/>
   <text class="t" x="610" y="273">otto-islands</text>

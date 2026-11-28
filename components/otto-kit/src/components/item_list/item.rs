@@ -42,6 +42,8 @@ pub enum Activity {
     Idle,
     /// Blocked until someone answers: yellow.
     Waiting,
+    /// Not running at all, only kept to be taken up again: a faint gray ring.
+    Dormant,
 }
 
 /// Where an item came from, so the right source is asked to act on it.

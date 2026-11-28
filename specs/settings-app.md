@@ -750,7 +750,10 @@ Shortcuts can be reset individually and as a group.
 ### Agents
 
 The agents pane edits `agents.toml`, the file the otto-agents service reads
-when it starts. It shows the default agent, then one group per configured
+when it starts. It shows what runs the sessions (Sessions run in: Automatic,
+herdr or Otto, written as `backend`, unset for Automatic, whose detail says
+which one Automatic picks, by whether herdr's `hc` is on `PATH`), the default
+agent, then one group per configured
 agent, titled with its name, holding its harness, command, permission policy,
 model, folder and colour. Everything else in an agent's block is edited by hand.
 

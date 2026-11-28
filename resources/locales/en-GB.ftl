@@ -599,6 +599,14 @@ settings-search-reindex-failed = Couldn't reach the indexer. Is it running?
 settings-agents-intro = The agents Ask can hand a request to. Permissions decide what happens when one asks to do something, and its folder is everything it can read.
 settings-agents-default = Default agent
 settings-agents-default-detail = Who a request goes to when you don't pick one
+settings-agents-backend = Sessions run in
+settings-agents-backend-auto-herdr = In herdr, since it's installed
+settings-agents-backend-auto-acp = In Otto, since herdr isn't installed
+settings-agents-backend-herdr-detail = Each agent in its own terminal. Claude Code, pi and opencode only
+settings-agents-backend-acp-detail = Otto runs every agent itself
+settings-agents-backend-auto = Automatic
+settings-agents-backend-herdr = herdr
+settings-agents-backend-acp = Otto
 # The row holding the Revert and Apply buttons.
 settings-agents-changes = Changes
 settings-agents-revert = Revert
@@ -619,16 +627,6 @@ settings-agents-service-missing = Not installed
 settings-agents-service-unmanaged = Can't tell: this system has no systemctl
 settings-agents-start = Start
 settings-agents-restart = Restart
-# The group that turns on a chat bridge: a program such as cc-connect
-# that lets chat apps on a phone talk to the agents.
-settings-agents-bridge-group = Chat bridge
-settings-agents-bridge = Bridge
-settings-agents-bridge-off = Off. Chat apps can't reach your agents.
-settings-agents-bridge-unset = Set a command below and apply it, then turn this on.
-settings-agents-bridge-failed = Stopped after an error. journalctl --user -u otto-agents-bridge says why.
-settings-agents-bridge-missing = Not installed
-settings-agents-bridge-command = Command
-settings-agents-bridge-command-detail = What runs the bridge, such as a gateway set up to start otto-agents acp as its agent.
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = Configuration file
 settings-agents-none = No agents set up

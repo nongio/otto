@@ -114,6 +114,9 @@ enum Update {
     /// The frosted material each coloured agent wears, by provider id, as the
     /// root state's `_meta` says under `otto.colours`.
     Colours(HashMap<String, String>),
+    /// The folder each agent starts its sessions in, by provider id, as the
+    /// root state's `_meta` says under `otto.folders`.
+    Folders(HashMap<String, PathBuf>),
     /// The agent of the followed session, by provider id.
     Provider(String),
     /// The URI of the followed session, once it is open or created.
@@ -644,6 +647,10 @@ pub struct Terminal {
     pub session: Option<String>,
     /// What the window is called, standing in for `{title}` in the command.
     pub title: String,
+    /// The app id of the window that already shows the session, when the
+    /// service runs it in one (herdr-app): the command shows it there, and
+    /// the window is brought forward in place of a new terminal.
+    pub window: Option<String>,
 }
 
 impl Terminal {
@@ -663,11 +670,16 @@ impl Terminal {
             .get("session")
             .and_then(Value::as_str)
             .map(str::to_owned);
+        let window = terminal
+            .get("window")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         Some(Self {
             command,
             cwd,
             session,
             title: String::new(),
+            window,
         })
     }
 
@@ -735,6 +747,17 @@ impl Terminal {
     }
 }
 
+/// An agent's row under its name: what it is, then where it works, so two
+/// agents of one name tell apart by their folders.
+fn agent_subtitle(agent: &AgentInfo, folder: Option<&PathBuf>) -> Option<String> {
+    let folder = folder.map(|folder| otto_kit::xdg::tilde(folder));
+    match (agent.description.as_str(), folder) {
+        ("", folder) => folder,
+        (description, None) => Some(description.to_owned()),
+        (description, Some(folder)) => Some(format!("{description} · {folder}")),
+    }
+}
+
 /// The material each coloured agent wears, from the root state's `_meta`:
 /// `otto.colours` maps provider ids to the names otto-kit's `Frosted` takes.
 fn colours_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> HashMap<String, String> {
@@ -783,6 +806,8 @@ pub struct Ask {
     agents: Vec<AgentInfo>,
     /// The material each coloured agent wears, by provider id.
     colours: HashMap<String, String>,
+    /// The folder each agent starts its sessions in, by provider id.
+    folders: HashMap<String, PathBuf>,
     /// The service's sessions, as they stood when the launcher connected.
     sessions: Vec<SessionSummary>,
     sessions_listed: bool,
@@ -844,6 +869,7 @@ impl Ask {
             link,
             agents: Vec::new(),
             colours: HashMap::new(),
+            folders: HashMap::new(),
             sessions: Vec::new(),
             sessions_listed: false,
             attachments: Vec::new(),
@@ -1063,6 +1089,7 @@ impl Ask {
         match update {
             Update::Agents(agents) => self.agents = agents,
             Update::Colours(colours) => self.colours = colours,
+            Update::Folders(folders) => self.folders = folders,
             Update::Session(session) => {
                 if let Some(run) = self.run.as_mut() {
                     run.session = Some(session);
@@ -1165,7 +1192,7 @@ impl Ask {
             .enumerate()
             .map(|(index, agent)| Item {
                 title: agent.display_name.clone(),
-                subtitle: (!agent.description.is_empty()).then(|| agent.description.clone()),
+                subtitle: agent_subtitle(agent, self.folders.get(&agent.provider)),
                 icon: None,
                 activity: None,
                 checked: None,
@@ -2192,6 +2219,7 @@ async fn serve(
                 folders = folders_from_meta(root.meta.as_ref());
                 reporter.send(Update::Agents(root.agents));
                 reporter.send(Update::Colours(colours_from_meta(root.meta.as_ref())));
+                reporter.send(Update::Folders(folders.clone()));
             }
         }
         Err(err) => tracing::warn!(%err, "could not list the agents"),
@@ -3433,6 +3461,7 @@ mod tests {
             cwd: PathBuf::from("/"),
             session: session.map(str::to_owned),
             title: String::new(),
+            window: None,
         };
         assert!(
             !terminal(Some("no-process-names-this-0f3c1e")).already_open(),
@@ -3464,6 +3493,7 @@ mod tests {
                 cwd: PathBuf::from("/home/me"),
                 session: Some("abc".into()),
                 title: String::new(),
+                window: None,
             })
         );
 
@@ -3654,6 +3684,7 @@ mod tests {
                 // A service that says no id still opens the session.
                 session: None,
                 title: "Ask: Fix the build".into(),
+                window: None,
             })
         );
         // A session the service has said nothing about opens nowhere.

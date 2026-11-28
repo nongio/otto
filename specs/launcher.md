@@ -73,11 +73,15 @@ so the composer's agent list carries none.
 icon would go: the theme's accent while the session is working, its yellow
 while it waits for input, and its faint text colour (`text_tertiary`) when it
 is idle or stopped (a failed session included — the subtitle says it failed).
+A session the service keeps but nothing runs (`_meta.otto.running` is
+`false`, such as a herdr session whose agent quit) has a ring of that faint
+colour instead of a dot; opening it starts the agent again.
 The colours come from the theme, so the dot follows the user's accent and the
 colour scheme.
 
-**Sessions from the phone, and from Studio.** A session written to through a
-chat bridge carries a pill at the end of its row naming the chat app,
+**Sessions from the phone, and from Studio.** A session written to from a
+chat app, through `otto-agents acp --remote`, carries a pill at the end of its
+row naming the chat app,
 "Telegram", from the session's `otto.remote`, shaped and filled as the mode's
 pill in the log. A session Preview started about a file (one that opens in
 Preview, below) carries "Studio" instead, even after it was written to from
@@ -187,6 +191,10 @@ anything is stashed ends the stash, struck items included.
 request as soon as the card is up, so the card opens on the running
 conversation rather than on the text waiting in the field. It does nothing
 with `--session`, which opens an existing conversation instead.
+
+`--terminal`, with `--session`, takes that session up in its terminal as soon
+as the service says which, as Ctrl+O does, and the launcher goes. The side
+canvas uses it for its own Ctrl+O.
 
 **A request of attachments alone.** Enter with nothing typed sends a request
 when at least one attachment is not struck out: the attachments can be the

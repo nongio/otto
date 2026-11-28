@@ -165,12 +165,20 @@ pub fn paint_item_rows_styled(
             // In the icon's place, centred where a full-size icon would be.
             let color = match activity {
                 Activity::Working => theme.accent,
-                Activity::Idle => theme.text_tertiary,
+                Activity::Idle | Activity::Dormant => theme.text_tertiary,
                 Activity::Waiting => theme.accent_yellow,
             };
             let mut dot = Paint::new(Color4f::from(color), None);
             dot.set_anti_alias(true);
-            canvas.draw_circle(centre, DOT_RADIUS, &dot);
+            if activity == Activity::Dormant {
+                // A ring the dot's size, its stroke inside the outline.
+                const RING: f32 = 1.5;
+                dot.set_style(skia_safe::paint::Style::Stroke);
+                dot.set_stroke_width(RING);
+                canvas.draw_circle(centre, DOT_RADIUS - RING / 2.0, &dot);
+            } else {
+                canvas.draw_circle(centre, DOT_RADIUS, &dot);
+            }
         }
         if let Some(checked) = item.checked {
             Check {

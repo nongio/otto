@@ -1,7 +1,8 @@
 //! The interactive setup: a welcome that says what it is for, then three
-//! pages: the agents to add and who they are, what they require (Node.js, the ACP adapters) and the optional chat bridge, and the
-//! steps that follow with Apply. Every row opens its instructions, or a
-//! preview of exactly what it will write or run.
+//! pages: what runs the sessions and the agents to add and who they are,
+//! what they require (herdr and the agents' own programs, or Node.js and the
+//! ACP adapters), and the steps that follow with Apply. Every row opens its
+//! instructions, or a preview of exactly what it will write or run.
 //!
 //! The look and the terminal are `otto-term-kit`'s, shared with
 //! `otto-msg doctor`.
@@ -16,8 +17,8 @@ use otto_term_kit::{printable, Key, Spans, Terminal};
 
 use crate::apply::{self, Outcome};
 use crate::guide;
-use crate::plan::{self, Bridge, Choices, Readiness, State, Step, Studio, HARNESSES};
-use crate::probe::Facts;
+use crate::plan::{self, Choices, Readiness, State, Step, Studio, HARNESSES};
+use crate::probe::{Backend, Facts};
 
 /// How often the loop wakes without input to notice a resize.
 const RESIZE_POLL_MS: i32 = 250;
@@ -69,13 +70,14 @@ impl Page {
 /// One row of a page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Row {
+    Sessions,
     Harness(Harness),
     Otto,
     Studio,
+    Herdr,
+    Programs,
     Node,
     Adapters,
-    Bridge,
-    CcConnect,
     Skills,
     Profiles,
     Step(usize),
@@ -160,40 +162,56 @@ pub fn run(facts: Facts) -> io::Result<()> {
 
 impl App {
     fn rows(&self) -> Vec<Row> {
+        // What the agents require depends on what runs the sessions.
+        let required = match self.choices.backend {
+            Backend::Herdr => [Row::Herdr, Row::Programs],
+            Backend::Acp => [Row::Node, Row::Adapters],
+        };
         match self.page {
-            Page::Agents => HARNESSES
+            Page::Agents => [Row::Sessions]
                 .into_iter()
-                .map(Row::Harness)
+                .chain(HARNESSES.into_iter().map(Row::Harness))
                 .chain([Row::Otto, Row::Studio])
                 .collect(),
-            Page::Requirements => vec![Row::Node, Row::Adapters, Row::Bridge],
-            Page::Review => [
-                Row::Node,
-                Row::Adapters,
-                Row::CcConnect,
-                Row::Skills,
-                Row::Profiles,
-            ]
-            .into_iter()
-            .chain((0..self.steps.len()).map(Row::Step))
-            .chain([Row::Apply])
-            .collect(),
+            Page::Requirements => required.to_vec(),
+            Page::Review => required
+                .into_iter()
+                .chain([Row::Skills, Row::Profiles])
+                .chain((0..self.steps.len()).map(Row::Step))
+                .chain([Row::Apply])
+                .collect(),
         }
+    }
+
+    /// The agent programs missing in herdr, which herdr starts.
+    fn programs_missing(&self) -> Vec<&'static str> {
+        plan::agent_programs(&self.facts, &self.choices)
+            .into_iter()
+            .filter(|p| !self.facts.found.contains_key(*p))
+            .collect()
     }
 
     /// What the user has to fix by hand: a required program missing, or a
     /// skill whose name something of theirs has taken.
     fn to_fix(&self) -> usize {
-        let node = usize::from(plan::node(&self.facts) != plan::Node::Ok);
-        let adapters = plan::adapters(&self.facts, &self.choices)
-            .iter()
-            .filter(|(_, state)| *state == plan::Adapter::Missing)
-            .count();
-        let skills = plan::needed_skills(&self.facts, &self.choices)
+        let required = match self.choices.backend {
+            Backend::Herdr => {
+                plan::herdr_missing(&self.facts).len() + self.programs_missing().len()
+            }
+            Backend::Acp => {
+                let node = usize::from(plan::node(&self.facts) != plan::Node::Ok);
+                let adapters = plan::adapters(&self.facts, &self.choices)
+                    .iter()
+                    .filter(|(_, state)| *state == plan::Adapter::Missing)
+                    .count();
+                node + adapters
+            }
+        };
+        let skills = plan::skills(&self.facts)
             .iter()
             .filter(|s| s.in_the_way())
             .count();
-        node + adapters + skills
+        required + skills
     }
 
     fn todo(&self) -> usize {
@@ -209,7 +227,6 @@ impl App {
         self.facts = Facts::read();
         let facts = &self.facts;
         self.choices.picks.retain(|h| !facts.configured.contains(h));
-        self.choices.bridge = false;
         self.replan();
         let failed = self.outcomes.iter().any(|o| !o.ok);
         self.status = if failed {
@@ -329,35 +346,64 @@ impl App {
 
     fn toggle(&mut self, row: Row) {
         match row {
-            Row::Harness(harness) => match plan::readiness(&self.facts, harness) {
-                Readiness::Configured => {
-                    self.status = "Already added. Settings › Agents changes or removes it.".into();
-                }
-                Readiness::Missing(missing) => {
+            Row::Sessions => {
+                if let Some(backend) = self.facts.backend {
                     self.status = format!(
-                        "Needs {}. Enter shows how to install it.",
-                        missing.join(", ")
+                        "agents.toml says {}. Settings › Agents › Sessions run in changes it.",
+                        backend.label()
                     );
+                    return;
                 }
-                Readiness::Ready(_) => {
-                    let picks = &mut self.choices.picks;
-                    if let Some(at) = picks.iter().position(|h| *h == harness) {
-                        picks.remove(at);
-                        if harness == Harness::Claude
-                            && self.choices.studio
-                            && plan::studio(&self.facts, &self.choices) != Studio::Ready
-                        {
-                            self.choices.studio = false;
-                            self.status = "Studio needs Claude Code, so it is unticked too.".into();
-                        }
-                    } else {
-                        picks.push(harness);
-                        // Keep the list order, so the file does too.
-                        picks.sort_by_key(|h| HARNESSES.iter().position(|x| x == h));
+                let other = match self.choices.backend {
+                    Backend::Herdr => Backend::Acp,
+                    Backend::Acp => Backend::Herdr,
+                };
+                self.choices.set_backend(&self.facts, other);
+                self.status = match other {
+                    Backend::Herdr => "Sessions run in herdr: Claude Code, pi and OpenCode.".into(),
+                    Backend::Acp => "Sessions run in Otto: every agent, over ACP.".into(),
+                };
+                self.replan();
+            }
+            Row::Harness(harness) => {
+                match plan::readiness(&self.facts, self.choices.backend, harness) {
+                    Readiness::Configured => {
+                        self.status =
+                            "Already added. Settings › Agents changes or removes it.".into();
                     }
-                    self.replan();
+                    Readiness::OttoOnly => {
+                        self.status = format!(
+                            "herdr doesn't run {}. Switch Sessions run in to Otto to add it.",
+                            harness.name().unwrap_or_default()
+                        );
+                    }
+                    Readiness::Missing(missing) => {
+                        self.status = format!(
+                            "Needs {}. Enter shows how to install it.",
+                            missing.join(", ")
+                        );
+                    }
+                    Readiness::Ready(_) => {
+                        let picks = &mut self.choices.picks;
+                        if let Some(at) = picks.iter().position(|h| *h == harness) {
+                            picks.remove(at);
+                            if harness == Harness::Claude
+                                && self.choices.studio
+                                && plan::studio(&self.facts, &self.choices) != Studio::Ready
+                            {
+                                self.choices.studio = false;
+                                self.status =
+                                    "Studio needs Claude Code, so it is unticked too.".into();
+                            }
+                        } else {
+                            picks.push(harness);
+                            // Keep the list order, so the file does too.
+                            picks.sort_by_key(|h| HARNESSES.iter().position(|x| x == h));
+                        }
+                        self.replan();
+                    }
                 }
-            },
+            }
             Row::Otto => {
                 if self.facts.instructions.iter().any(|n| n == harness::OTTO) {
                     self.choices.otto = !self.choices.otto;
@@ -367,24 +413,20 @@ impl App {
                 }
             }
             Row::Studio => self.toggle_studio(),
-            Row::Bridge => match plan::bridge(&self.facts) {
-                Bridge::Ready | Bridge::Off => {
-                    self.choices.bridge = !self.choices.bridge;
-                    self.replan();
-                }
-                Bridge::Running => {
-                    self.status =
-                        "Already running. Settings › Agents › Chat bridge turns it off.".into();
-                }
-                Bridge::Missing(_) | Bridge::Unavailable(_) => {
-                    self.status = "Not set up yet. Enter shows the steps.".into();
-                }
-            },
-            Row::Node | Row::Adapters | Row::CcConnect => {
+            Row::Herdr | Row::Programs | Row::Node | Row::Adapters => {
                 self.status = "Setup does not install programs. Enter shows the commands.".into();
             }
             Row::Skills | Row::Profiles => {
                 self.status = "Apply does this. Enter shows the details.".into();
+            }
+            Row::Step(index) if self.steps[index].title == plan::REWRITE => {
+                self.choices.rewrite = !self.choices.rewrite;
+                self.status = if self.choices.rewrite {
+                    "Apply rewrites them, after backing up agents.toml.".into()
+                } else {
+                    "Your agents stay as they are.".into()
+                };
+                self.replan();
             }
             Row::Step(_) | Row::Apply => {}
         }
@@ -402,7 +444,7 @@ impl App {
             Studio::Ready => self.choices.studio = true,
             Studio::NeedsClaude => {
                 if matches!(
-                    plan::readiness(&self.facts, Harness::Claude),
+                    plan::readiness(&self.facts, self.choices.backend, Harness::Claude),
                     Readiness::Ready(_)
                 ) {
                     self.choices.picks.insert(0, Harness::Claude);
@@ -429,14 +471,19 @@ impl App {
     /// The instructions or preview a row opens.
     fn text(&self, row: Row) -> String {
         match row {
-            Row::Harness(harness) => guide::harness(&self.facts, harness),
+            Row::Sessions => guide::sessions(&self.facts, &self.choices),
+            Row::Harness(harness) => guide::harness(&self.facts, &self.choices, harness),
             Row::Otto => guide::otto(&self.facts),
             Row::Studio => guide::studio(&self.facts, &self.choices),
+            Row::Herdr => guide::herdr(&self.facts),
+            Row::Programs => guide::programs(&self.facts, &self.choices),
             Row::Node => guide::node(&self.facts),
             Row::Adapters => guide::adapters(&self.facts),
-            Row::Bridge | Row::CcConnect => guide::bridge(&self.facts),
-            Row::Skills => guide::skills(&self.facts, &self.choices),
+            Row::Skills => guide::skills(&self.facts),
             Row::Profiles => guide::profiles(&self.facts, &self.choices),
+            Row::Step(index) if self.steps[index].title == plan::REWRITE => {
+                guide::rewrite(&self.facts, &self.choices)
+            }
             Row::Step(index) => {
                 let step = &self.steps[index];
                 if step.detail.is_empty() {
@@ -451,13 +498,14 @@ impl App {
 
     fn row_title(&self, row: Row) -> String {
         match row {
+            Row::Sessions => "Sessions run in".into(),
             Row::Harness(h) => h.name().unwrap_or_default().to_owned(),
             Row::Otto => "Otto".into(),
             Row::Studio => "Studio".into(),
+            Row::Herdr => "herdr".into(),
+            Row::Programs => "Agent programs".into(),
             Row::Node => "Node.js".into(),
             Row::Adapters => "Agent adapters".into(),
-            Row::Bridge => "Chat bridge".into(),
-            Row::CcConnect => "cc-connect".into(),
             Row::Skills => "Otto's skills".into(),
             Row::Profiles => "Agent profiles".into(),
             Row::Step(index) => self.steps[index].title.into(),
@@ -562,10 +610,11 @@ impl App {
         let items = self.rows();
         for (i, row) in items.iter().enumerate() {
             let heading = match (self.page, row) {
+                (_, Row::Sessions) => Some(" Sessions"),
+                (_, Row::Harness(Harness::Claude)) => Some(" Agents"),
                 (_, Row::Otto) => Some(" Also set up"),
-                (Page::Requirements, Row::Node) => Some(" Required"),
-                (Page::Requirements, Row::Bridge) => Some(" Optional"),
-                (Page::Review, Row::Node) => Some(" Found"),
+                (Page::Requirements, _) if i == 0 => Some(" Required"),
+                (Page::Review, _) if i == 0 => Some(" Found"),
                 (Page::Review, Row::Step(0)) => Some(" Apply will"),
                 _ => None,
             };
@@ -589,8 +638,11 @@ impl App {
             lines.push(String::new());
         }
         let help = match self.page {
-            Page::Agents => " ↑↓ move  space tick  enter details  tab next  q quit",
+            Page::Agents => " ↑↓ move  space tick or switch  enter details  tab next  q quit",
             Page::Requirements => " ↑↓ move  space tick  enter details  tab next  q quit",
+            Page::Review if self.steps.iter().any(|s| s.title == plan::REWRITE) => {
+                " ↑↓ move  space tick  enter details  a apply  tab back  q quit"
+            }
             Page::Review => " ↑↓ move  enter details  a apply  tab back  q quit",
         };
         let mut help = help.to_owned();
@@ -607,20 +659,57 @@ impl App {
         line.push(base, if selected { " ▸ " } else { "   " });
         let title = self.row_title(row);
         let (mark, mark_style, note, note_style): (&str, &str, String, &str) = match row {
-            Row::Harness(harness) => match plan::readiness(&self.facts, harness) {
-                Readiness::Configured => ("[x]", GREEN, "already added".into(), DIM),
-                Readiness::Ready(path) => {
-                    let mark = if self.choices.picks.contains(&harness) {
-                        "[x]"
-                    } else {
-                        "[ ]"
-                    };
-                    (mark, GREEN, self.facts.shown(&path), DIM)
+            Row::Sessions => {
+                let label = self.choices.backend.label();
+                let why = match (self.facts.backend, plan::automatic(&self.facts)) {
+                    (Some(_), _) => "set in agents.toml".to_owned(),
+                    (None, auto) if auto == self.choices.backend => match auto {
+                        Backend::Herdr => "since herdr is installed".to_owned(),
+                        Backend::Acp => "since herdr isn't installed".to_owned(),
+                    },
+                    (None, _) => "chosen here · Apply writes it".to_owned(),
+                };
+                let what = match self.choices.backend {
+                    Backend::Herdr => "Claude Code, pi and OpenCode",
+                    Backend::Acp => "every agent",
+                };
+                let mark = if self.facts.backend.is_some() {
+                    " · "
+                } else {
+                    " ⇄ "
+                };
+                (mark, GREEN, format!("{label}, {why} · {what}"), DIM)
+            }
+            Row::Harness(harness) => {
+                match plan::readiness(&self.facts, self.choices.backend, harness) {
+                    Readiness::Configured
+                        if self.choices.backend == Backend::Herdr
+                            && harness.herdr_program().is_none() =>
+                    {
+                        (
+                            "[x]",
+                            DIM,
+                            "already added · runs only in Otto".into(),
+                            YELLOW,
+                        )
+                    }
+                    Readiness::Configured => ("[x]", GREEN, "already added".into(), DIM),
+                    Readiness::OttoOnly => {
+                        ("[ ]", DIM, "runs only in Otto, not in herdr".into(), DIM)
+                    }
+                    Readiness::Ready(path) => {
+                        let mark = if self.choices.picks.contains(&harness) {
+                            "[x]"
+                        } else {
+                            "[ ]"
+                        };
+                        (mark, GREEN, self.facts.shown(&path), DIM)
+                    }
+                    Readiness::Missing(missing) => {
+                        ("[ ]", DIM, format!("needs {}", missing.join(", ")), YELLOW)
+                    }
                 }
-                Readiness::Missing(missing) => {
-                    ("[ ]", DIM, format!("needs {}", missing.join(", ")), YELLOW)
-                }
-            },
+            }
             Row::Otto => {
                 let mark = if self.choices.otto { "[x]" } else { "[ ]" };
                 if self.facts.instructions.iter().any(|n| n == harness::OTTO) {
@@ -652,6 +741,35 @@ impl App {
                         "chat about the file open in Studio · needs Claude Code".into(),
                         YELLOW,
                     ),
+                }
+            }
+            Row::Herdr => {
+                let missing = plan::herdr_missing(&self.facts);
+                if missing.is_empty() {
+                    (" ✓ ", GREEN, "hc, herdr-app found".into(), DIM)
+                } else {
+                    (
+                        " ✗ ",
+                        RED,
+                        format!("missing {} · Enter for how", missing.join(", ")),
+                        RED,
+                    )
+                }
+            }
+            Row::Programs => {
+                let programs = plan::agent_programs(&self.facts, &self.choices);
+                let missing = self.programs_missing();
+                if programs.is_empty() {
+                    (" ✓ ", GREEN, "no agent ticked yet".into(), DIM)
+                } else if !missing.is_empty() {
+                    (
+                        " ✗ ",
+                        RED,
+                        format!("missing {} · Enter for how", missing.join(", ")),
+                        RED,
+                    )
+                } else {
+                    (" ✓ ", GREEN, format!("{} found", programs.join(", ")), DIM)
                 }
             }
             Row::Node => match plan::node(&self.facts) {
@@ -706,46 +824,8 @@ impl App {
                     (" ✓ ", GREEN, parts.join(" · "), DIM)
                 }
             }
-            Row::Bridge => match plan::bridge(&self.facts) {
-                Bridge::Running => (
-                    "[x]",
-                    GREEN,
-                    "message your agents from Telegram · running".into(),
-                    DIM,
-                ),
-                Bridge::Off | Bridge::Ready => {
-                    let mark = if self.choices.bridge { "[x]" } else { "[ ]" };
-                    let note = if plan::bridge(&self.facts) == Bridge::Off {
-                        "message your agents from Telegram · set up, turned off"
-                    } else {
-                        "message your agents from Telegram · ready to turn on"
-                    };
-                    (mark, GREEN, note.into(), DIM)
-                }
-                Bridge::Missing(_) => (
-                    "[ ]",
-                    DIM,
-                    "message your agents from Telegram · Enter to set it up".into(),
-                    DIM,
-                ),
-                Bridge::Unavailable(why) => ("[ ]", DIM, why.into(), DIM),
-            },
-            Row::CcConnect => match self.facts.found.get("cc-connect") {
-                Some(_) => (
-                    " ✓ ",
-                    GREEN,
-                    "installed · for the chat bridge".to_owned(),
-                    DIM,
-                ),
-                None => (
-                    " · ",
-                    DIM,
-                    "not installed · optional, for the chat bridge".into(),
-                    DIM,
-                ),
-            },
             Row::Skills => {
-                let skills = plan::needed_skills(&self.facts, &self.choices);
+                let skills = plan::skills(&self.facts);
                 let names = |pick: fn(&crate::plugins::Skill) -> bool| -> String {
                     skills
                         .iter()
@@ -790,6 +870,8 @@ impl App {
                 };
                 if !self.choices.otto {
                     (" ✓ ", GREEN, "none: Otto is unticked".into(), DIM)
+                } else if self.choices.backend == Backend::Herdr {
+                    (" ✓ ", GREEN, "none needed in herdr".into(), DIM)
                 } else if profiles.is_empty() {
                     (" ✓ ", GREEN, "none needed for Claude Code".into(), DIM)
                 } else if behind.is_empty() {
@@ -817,8 +899,10 @@ impl App {
                 let step = &self.steps[index];
                 let (glyph, style) = match step.state {
                     State::Done => (" ✓ ", GREEN),
+                    State::Todo if step.title == plan::REWRITE => ("[x]", YELLOW),
                     State::Todo => (" ● ", YELLOW),
                     State::Blocked => (" ! ", RED),
+                    State::Offered => ("[ ]", DIM),
                 };
                 (glyph, style, printable(&step.summary), DIM)
             }

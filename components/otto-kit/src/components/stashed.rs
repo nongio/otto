@@ -28,8 +28,8 @@ use crate::dbus::stash::{StashProxy, SERVICE as NAME};
 /// Each stashed file, with whether it is struck out: kept, but not sent.
 pub type Items = Vec<(PathBuf, bool)>;
 
-/// How long otto-stash is given to add the selection.
-const ADD_TIMEOUT: Duration = Duration::from_millis(800);
+/// How long otto-stash is given to add the selection and report the stash.
+const READY_TIMEOUT: Duration = Duration::from_millis(800);
 
 /// A change asked of otto-stash.
 #[derive(Debug)]
@@ -58,15 +58,18 @@ impl Stashed {
     ///
     /// With `add_selection`, what is selected in the focused app is added
     /// first, once the stash is held, so the card never shows for it.
-    /// That waits for otto-stash, briefly: it is called before the app's
-    /// own window takes the keyboard, while otto-stash can still read the
-    /// selection from whatever has it.
+    /// That has to happen before the app's own window takes the keyboard,
+    /// while otto-stash can still read the selection from whatever has it.
+    ///
+    /// Holding the stash, or adding to it, waits for otto-stash, briefly, so
+    /// [`Self::items`] has what is stashed from the start: a request sent
+    /// as soon as the app is up goes with it.
     ///
     /// # Panics
     ///
     /// When the wake-up socket or the thread cannot be made.
     pub fn follow(hold: bool, add_selection: bool) -> Self {
-        let (added_tx, added) = mpsc::channel::<()>();
+        let (ready_tx, ready) = mpsc::channel::<()>();
         let (requests, request_rx) = async_mpsc::unbounded_channel();
         let (update_tx, updates) = mpsc::channel();
         let (wake, wake_tx) = UnixStream::pair().expect("cannot create a wake-up socket");
@@ -91,21 +94,24 @@ impl Stashed {
                         return;
                     }
                 };
-                let added = add_selection.then_some(added_tx);
-                if let Err(err) = runtime.block_on(follow(hold, added, request_rx, report)) {
+                let follower = follow(hold, add_selection, ready_tx, request_rx, report);
+                if let Err(err) = runtime.block_on(follower) {
                     tracing::debug!(%err, "stopped following otto-stash");
                 }
             })
             .expect("cannot start following otto-stash");
-        if add_selection && added.recv_timeout(ADD_TIMEOUT).is_err() {
-            tracing::warn!("otto-stash did not add the selection in time");
+        // The follower drops its end on any failure, which ends the wait.
+        if (hold || add_selection) && ready.recv_timeout(READY_TIMEOUT).is_err() {
+            tracing::debug!("otto-stash did not report the stash in time");
         }
-        Self {
+        let mut stashed = Self {
             requests,
             updates,
             wake,
             items: Items::new(),
-        }
+        };
+        stashed.pump();
+        stashed
     }
 
     /// The socket that becomes readable when the stash changed.
@@ -166,9 +172,12 @@ impl Stashed {
 
 /// Follow the stash until the app goes: hold it, report it now and on
 /// every change, pass requests on, and start over whenever otto-stash does.
+/// `ready` is told once the stash has first been reported, or that
+/// otto-stash isn't running.
 async fn follow(
     hold: bool,
-    added: Option<mpsc::Sender<()>>,
+    add_selection: bool,
+    ready: mpsc::Sender<()>,
     mut requests: async_mpsc::UnboundedReceiver<Request>,
     report: impl Fn(Items),
 ) -> zbus::Result<()> {
@@ -184,14 +193,14 @@ async fn follow(
         if hold {
             hold_stash(&stash).await;
         }
-        if let Some(added) = added {
+        if add_selection {
             if let Err(err) = stash.add().await {
                 tracing::debug!(%err, "cannot add the selection to the stash");
             }
-            let _ = added.send(());
         }
         report_items(&stash, &report).await;
     }
+    let _ = ready.send(());
     loop {
         tokio::select! {
             request = requests.recv() => {

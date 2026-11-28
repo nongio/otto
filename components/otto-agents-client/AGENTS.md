@@ -18,7 +18,7 @@ How it works: [Agents](../../docs/developer/agents.md).
 - `src/transport.rs`: the socket path, `default_url`, and `connect`, which returns an AHP transport.
 - `src/session.rs`: `ahp-session:/` URIs, and picking one session out of a list by a typed prefix.
 - `src/uri.rs`: file URIs to paths and back.
-- `src/harness.rs`: the harnesses (Claude Code, Codex, OpenCode, Hermes, pi), each one's command and what it needs in its `[[agents]]` block. Settings › Agents and `otto-setup` write agents with it, so they write the same block. Also each harness's npm packages (its own program, its ACP adapter), for the instructions `otto-setup` gives.
+- `src/harness.rs`: the harnesses (Claude Code, Codex, OpenCode, Hermes, pi), each one's command and what it needs in its `[[agents]]` block, over ACP (`command`, `write`) and in herdr (`herdr_program`, `write_herdr`: the plain program, no enter lines). Settings › Agents and `otto-setup` write agents with it, so they write the same block. Also each harness's npm packages (its own program, its ACP adapter), for the instructions `otto-setup` gives.
 - `src/instructions.rs`: the plugin agent files an agent can run as, found the way `otto-agents` finds them.
 
 ## Rules

@@ -12,7 +12,7 @@ How it works: [otto-launcher](../../docs/developer/otto-launcher.md).
 
 ## Develop
 - Otto binds it to a key (`"Ctrl+Space" = { run = { cmd = "otto-launcher", args = [] } }` in `otto_config.example.toml`). A dev build runs the same way: `cargo run -p otto-launcher`, or under a dev compositor `cargo run -- --winit` then `WAYLAND_DISPLAY=wayland-1 cargo run -p otto-launcher`.
-- Modes: `--apps`, `--windows`, `--all`, `--ask`, `--agents`; `--file PATH`, `--session URI`, `--selection` and `--send` start in Ask. Started as `otto-ask` (a symlink the package installs) it opens in Ask.
+- Modes: `--apps`, `--windows`, `--all`, `--ask`, `--agents`; `--file PATH`, `--session URI` (with `--terminal`: straight to its terminal, as Ctrl+O), `--selection` and `--send` start in Ask. Started as `otto-ask` (a symlink the package installs) it opens in Ask.
 - It grabs the keyboard, so for work on how it looks render the card offscreen: `cargo run -p otto-launcher --example preview -- /tmp/launcher "term"`.
 - `RUST_LOG` filters logging (default `info`); `OTTO_AGENTS_URL` picks another agent service.
 - Tests: `cargo test -p otto-launcher`.

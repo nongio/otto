@@ -85,8 +85,8 @@ enum Command {
         url: String,
     },
     /// Speak ACP on stdin and stdout, as one agent whose sessions are the
-    /// desktop's. For tools that drive ACP agents, such as chat bridges: they
-    /// start `otto-agents acp` in place of an agent command.
+    /// desktop's. For tools that drive ACP agents: they start
+    /// `otto-agents acp` in place of an agent command.
     Acp {
         /// The agent new sessions run, by its id in `agents.toml` or the name
         /// it is shown under. Defaults to the service's first agent.
@@ -94,26 +94,37 @@ enum Command {
         agent: Option<String>,
         /// Who answers the agent's permission requests: the desktop only (the
         /// default), or the ACP client as well as the desktop, first answer
-        /// wins. `client` lets whoever can write to the bridge approve tool
+        /// wins. `client` lets whoever can write to the client approve tool
         /// calls, "always" rules included, so it is opt-in.
         #[arg(long, value_enum, default_value = "desktop")]
         permissions: facade::Permissions,
         /// The chat app messages are relayed from, such as `Telegram`: each
         /// one tells the agent it was written away from the desktop, on the
-        /// person's phone. Under cc-connect, its platform is the default.
+        /// person's phone.
         #[arg(long, value_name = "APP")]
         remote: Option<String>,
         /// The server: `unix:///path` (the default, in the runtime directory) or `ws://`.
         #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
         url: String,
     },
-    /// Run the chat bridge `[bridge]` in `agents.toml` names, in place of this
-    /// process. The `otto-agents-bridge` unit runs this; Settings turns it on.
-    Bridge {
-        /// Agent configuration file. Defaults to Otto's config files.
-        #[arg(long, env = "OTTO_AGENTS_CONFIG")]
-        config: Option<PathBuf>,
+    /// Show a herdr session in herdr-app: its terminal's tab, in front.
+    /// What Ctrl+O runs for a session of `serve --herdr`.
+    #[command(hide = true)]
+    HerdrShow {
+        /// The agent's own id for the session.
+        session: String,
+        /// The server, which starts the session again when it is not running.
+        #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
+        url: String,
     },
+    /// The `ask` MCP server a herdr session's Claude Code runs: its
+    /// questions wait in the terminal's labels for Otto's answer.
+    #[command(hide = true)]
+    HerdrAsk,
+    /// Claude Code's `PermissionRequest` hook in a herdr session, answered
+    /// from Otto.
+    #[command(hide = true)]
+    HerdrPermission,
     /// Put the desktop's skills and its agent where each harness looks for them.
     #[command(alias = "skills")]
     Plugins {
@@ -171,6 +182,14 @@ struct ServeArgs {
     /// Serve a built-in echo agent instead of real agents, for trying out clients.
     #[arg(long)]
     echo: bool,
+    /// Run sessions as agents' own terminals in herdr: Claude Code, pi or
+    /// opencode (plan 0016). The default when herdr is installed, unless
+    /// `agents.toml` sets `backend`.
+    #[arg(long, conflicts_with_all = ["echo", "acp"])]
+    herdr: bool,
+    /// Run agents over ACP in the service, whatever `agents.toml` says.
+    #[arg(long, conflicts_with = "echo")]
+    acp: bool,
     /// Where sessions are kept between runs. Defaults to
     /// `$XDG_STATE_HOME/otto-agents/sessions`; with `--echo`, sessions are only
     /// kept when this is given.
@@ -200,6 +219,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Enter { session, url } => cli::enter(&url, session.as_deref()).await,
         Command::Doctor { config, url } => cli::doctor(&url, config.as_deref()).await,
+        Command::HerdrShow { session, url } => otto_agents::herdr::show(&session, &url).await,
+        Command::HerdrAsk => otto_agents::herdr_tools::serve_ask().await,
+        Command::HerdrPermission => otto_agents::herdr_tools::permission_hook().await,
         Command::Show {
             session,
             follow,
@@ -210,11 +232,7 @@ async fn main() -> anyhow::Result<()> {
             permissions,
             remote,
             url,
-        } => {
-            let remote = remote.or_else(facade::remote_from_env);
-            facade::serve(&url, agent.as_deref(), permissions, remote).await
-        }
-        Command::Bridge { config } => cli::run_bridge(config.as_deref()),
+        } => facade::serve(&url, agent.as_deref(), permissions, remote).await,
         Command::Plugins {
             command: PluginsCommand::Install { dir, home, only },
         } => cli::install_plugins(dir.as_deref(), home.as_deref(), only.as_deref()),
@@ -225,10 +243,25 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn serve(args: ServeArgs) -> anyhow::Result<()> {
+    let config = match args.echo {
+        true => None,
+        false => Some(config::load(args.config.as_deref())?),
+    };
+    let herdr = config.as_ref().is_some_and(|config| {
+        args.herdr
+            || !args.acp
+                && config.backend(otto_agents::herdr::installed()) == config::Backend::Herdr
+    });
     let (backend, idle_timeout): (Arc<dyn Backend>, _) = if args.echo {
         (Arc::new(EchoBackend), Some(config::DEFAULT_IDLE_TIMEOUT))
+    } else if herdr {
+        tracing::info!("sessions run in herdr");
+        let config = config.expect("a configuration");
+        let backend = otto_agents::herdr::HerdrBackend::new(&config);
+        backend.install_integrations();
+        (Arc::new(backend), None)
     } else {
-        let config = config::load(args.config.as_deref())?;
+        let config = config.expect("a configuration");
         for agent in &config.agents {
             tracing::info!(id = %agent.id, command = %agent.command, permissions = ?agent.permissions, "agent configured");
         }
@@ -243,6 +276,9 @@ async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     let state_dir = match args.state_dir {
         Some(dir) => Some(dir),
         None if args.echo => None,
+        // herdr sessions are herdr's: they are kept apart from the ACP
+        // service's, which the herdr backend does not have.
+        None if herdr => Store::herdr_dir(),
         None => Store::default_dir(),
     };
     let store = state_dir.map(|dir| {

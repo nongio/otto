@@ -2,20 +2,25 @@
 
 **User guide:** [Ask and Agents](../user/agents.md)
 
-`components/otto-agents/` is Otto's agent service. It runs coding agents as
-child processes that speak the Agent Client Protocol (ACP) on stdio, and serves
-their sessions to every client over the Agent Host Protocol (AHP), so the
+`components/otto-agents/` is Otto's agent service. It runs coding agents and
+serves their sessions to every client over the Agent Host Protocol (AHP), so the
 launcher's Ask, the side canvas and Studio share one synchronised view of each
 session. It is in the **app** layer of `architecture.toml`: nothing links it,
 and clients reach it over the socket through
 [otto-agents-client](otto-agents-client.md). It runs as one long-lived
 process, `otto-agents serve`, usually from the `otto-agents.service` systemd
-user unit. The same binary also carries terminal commands, an ACP facade and
-the chat bridge.
+user unit. The same binary also carries terminal commands and an ACP facade.
 
-![otto-agents serves AHP clients on a Unix socket and runs one ACP agent per session](diagrams/otto-agents.svg)
+A session runs through one of two backends. With herdr installed, each
+session is the agent's own program (Claude Code, pi or OpenCode) in a
+herdr-core terminal, and the service mirrors it; this is in the nightly
+builds, not yet in a release. Otherwise the service runs each agent as a
+child process speaking the Agent Client Protocol (ACP) on stdio. `backend` in
+`agents.toml`, or `serve --herdr` / `--acp`, picks one.
 
-How the service works in depth (the two protocols, the launcher as a client,
+![otto-agents serves AHP clients on a Unix socket and runs each session through the herdr backend, in a herdr-core terminal, or the ACP backend, one agent process per session](diagrams/otto-agents.svg)
+
+How the service works in depth (the two protocols, sessions in herdr, the launcher as a client,
 where permission requests and agents' questions go, skills, configuration) is
 on [Agents](agents.md). This page is the map of the crate.
 
@@ -27,9 +32,12 @@ on [Agents](agents.md). This page is the map of the crate.
 | `rpc` | JSON-RPC framing and error shapes |
 | `host` | The authoritative state: sessions, chats, subscriptions and open questions. Every change goes through one lock, is reduced with `ahp::reducers` and stamped with the next `serverSeq` |
 | `agent` | The `Backend` trait the host drives through a command and an event channel, and the echo backend for tests and `serve --echo` |
-| `acp` | The real backend: one ACP agent per session, as a child process on stdio |
-| `config` | `[[agents]]` and `[bridge]` from `/etc/otto/agents.toml`, then `$XDG_CONFIG_HOME/otto/agents.toml` |
-| `store` | One JSON file per session in `$XDG_STATE_HOME/otto-agents/sessions/`, so sessions outlive a restart |
+| `acp` | The ACP backend: one ACP agent per session, as a child process on stdio |
+| `herdr` | The herdr backend: each session the agent's own program in a herdr terminal, followed through herdr-core's API (`events.subscribe`, labels) and its transcript, driven with `terminal.send`; also `herdr-show` |
+| `herdr_core` | herdr-core's JSON-RPC API on its socket: `call`, `subscribe` (`events.subscribe`) and `label` |
+| `herdr_tools` | `herdr-ask` (the `ask` MCP server) and `herdr-permission` (Claude Code's `PermissionRequest` hook), which a herdr session runs to reach Otto through terminal labels |
+| `config` | `backend` and `[[agents]]` from `/etc/otto/agents.toml`, then `$XDG_CONFIG_HOME/otto/agents.toml` |
+| `store` | One JSON file per session in `$XDG_STATE_HOME/otto-agents/sessions/` (`herdr-sessions/` under herdr), so sessions outlive a restart |
 | `dialog` | Permission and question prompts, escalated to otto-islands over `org.otto.Dialog1` when no client answers |
 | `elicitation` | ACP form elicitations turned into AHP input requests |
 | `attached` | What a session's prompts attached, and the reads of those files that need no second permission |
@@ -37,7 +45,7 @@ on [Agents](agents.md). This page is the map of the crate.
 | `i18n` | The service's own dialog sentences, from the shared Fluent catalogues |
 | `skills`, `vendors` | Otto's plugins and skills, and the plugin's agent written in each harness's own dialect, for `plugins install` |
 | `facade` | `otto-agents acp`: the service presented as one ACP agent on stdin and stdout |
-| `cli` | The terminal commands and `bridge` |
+| `cli` | The terminal commands |
 | `client`, `uri`, `xdg` | Thin re-exports of `otto-agents-client` and `otto-foundations` |
 
 ## Commands
@@ -48,21 +56,24 @@ socket:
 
 | Command | What it does |
 |---------|--------------|
-| `serve [--echo] [--listen ADDR]` | Run the service; `--echo` uses the built-in echo agent |
+| `serve [--echo \| --herdr \| --acp] [--listen ADDR]` | Run the service; `--echo` uses the built-in echo agent, `--herdr` and `--acp` pick the backend over `agents.toml` |
 | `sessions`, `show [--follow]` | List sessions, print a transcript |
-| `new`, `enter` | Start or take up a session in the agent's own terminal interface. `enter` sends `releaseSession` and then replaces itself with the agent's command |
+| `new`, `enter` | Start or take up a session in the agent's own terminal interface. `enter` sends `releaseSession` and then replaces itself with the agent's command; under herdr both show the session in herdr-app instead |
 | `forget` | Remove stored sessions |
-| `doctor` | Check what stops Ask working, such as a missing dialog renderer |
-| `acp` | The ACP facade, for chat bridges and editors |
-| `bridge` | Replace itself with the command `[bridge]` in `agents.toml` names |
-| `plugins install` | Link the desktop's skills into `~/.agents/skills` and write the plugin's agent for each harness |
+| `doctor` | Check what stops Ask working, such as a missing dialog renderer, or under herdr a missing `hc`, `herdr-app` or agent program |
+| `herdr-show`, `herdr-ask`, `herdr-permission` | Hidden: what Ctrl+O runs for a herdr session, and the `ask` MCP server and permission hook a herdr session's Claude Code runs |
+| `acp` | The ACP facade, for editors and other ACP clients |
+| `plugins install`, `plugins status` | Link the desktop's skills into `~/.agents/skills` and write the plugin's agent for each harness; report what is there |
 
 ## How it runs
 
 - **One process, one tokio runtime.** The server task accepts connections on
   `$XDG_RUNTIME_DIR/otto-agents/agents.sock`. The socket's owner-only directory
   is the access check; there is no authentication inside the protocol.
-- **One child per session.** The ACP backend starts the agent command
+- **A backend per service.** The herdr backend runs each session with
+  herdr-core's `terminal.run` and follows it with `events.subscribe` and the
+  agent's transcript; the
+  agents outlive the service. The ACP backend starts the agent command
   configured in `agents.toml` for each session and talks to it on stdio. The
   host never talks to agents itself; it translates backend events into AHP
   actions.
@@ -71,8 +82,6 @@ socket:
   proxy to ask the person, and a request nobody can be asked is denied.
 - **systemd units.** `otto-agents.service` (off by default) runs `serve`,
   hardened with `ProtectSystem=strict` and `ReadWritePaths=%h %t`.
-  `otto-agents-bridge.service` runs `bridge`, wants the service, and is turned
-  on and off from Settings.
 
 ## Dependencies
 
@@ -89,7 +98,7 @@ socket:
 - [otto-agents-client](otto-agents-client.md) and
   [otto-agents-kit](otto-agents-kit.md): the client side.
 - [`components/otto-agents/README.md`](../../components/otto-agents/README.md):
-  commands, `agents.toml`, the chat bridge.
+  commands, `agents.toml`, the ACP front.
 - [`docs/plans/`](../../components/otto-agents/docs/plans/README.md),
   [spec coverage](../../components/otto-agents/docs/spec-coverage.md) and
   [testing](../../components/otto-agents/docs/testing.md).

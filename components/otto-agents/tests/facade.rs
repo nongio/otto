@@ -1,4 +1,4 @@
-//! `otto-agents acp`, driven the way a chat bridge drives it: the binary is
+//! `otto-agents acp`, driven the way an ACP client drives it: the binary is
 //! started as an ACP agent and talks to a server over its socket, and an ACP
 //! client on the other end creates a session, prompts it, answers a
 //! permission request, and takes the session up again from a new process.
@@ -216,7 +216,7 @@ fn prompt(session: &agent_client_protocol::schema::v1::SessionId, text: &str) ->
 }
 
 #[tokio::test]
-async fn a_chat_bridge_drives_a_desktop_session() {
+async fn an_acp_client_drives_a_desktop_session() {
     let url = serving().await;
     let folder = tempfile::tempdir().expect("tempdir");
     let cwd = folder.path().to_path_buf();
@@ -332,7 +332,7 @@ async fn a_chat_bridge_drives_a_desktop_session() {
 }
 
 #[tokio::test]
-async fn a_bridge_says_its_messages_come_from_the_phone() {
+async fn a_remote_client_says_its_messages_come_from_the_phone() {
     let url = serving().await;
     let folder = tempfile::tempdir().expect("tempdir");
     let cwd = folder.path().to_path_buf();
@@ -360,7 +360,7 @@ async fn a_bridge_says_its_messages_come_from_the_phone() {
 }
 
 #[tokio::test]
-async fn a_bridge_lists_the_sessions_in_its_folder() {
+async fn a_client_lists_the_sessions_in_its_folder() {
     let url = serving().await;
     let folder = tempfile::tempdir().expect("tempdir");
     let elsewhere = tempfile::tempdir().expect("tempdir");

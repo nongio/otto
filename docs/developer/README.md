@@ -54,7 +54,7 @@ is the place to start.
 | [File Icons](file-icons.md) | What goes in the icon box: file types, the icon-name chain, themes, animated previews |
 | [Text in Pictures](peek-ocr.md) | Reading the words in a picture: the recogniser, the word cache, selection and copy |
 | [File Search](file-search.md) | Find and Recent in otto-files, and the one index both of them ask |
-| [Agents](agents.md) | Running coding agents behind the launcher: `otto-agents`, AHP and ACP, permission prompts |
+| [Agents](agents.md) | Running coding agents behind the launcher: `otto-agents`, AHP, ACP and herdr, permission prompts |
 | [The Launcher](otto-launcher.md) | Apps, windows, Ask and the agents mode behind one search field |
 | [The Dynamic Island](otto-islands.md) | Notifications, live activities and the system dialog |
 | [The Portal Backend](xdg-desktop-portal-otto.md) | How sandboxed apps reach screen sharing, screenshots, files and settings |

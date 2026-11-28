@@ -1,0 +1,3538 @@
+//! herdr backend (plan 0016, prototype): each session is an agent's own
+//! interface, Claude Code, pi or opencode, in a herdr terminal. herdr-core
+//! owns the process; this backend only renders what herdr and the transcript
+//! say, and sends what Otto does back to the terminal.
+//!
+//! - State comes from `hc events` for the session's terminal.
+//! - Text comes from the agent's transcript (Claude's JSONL, pi's JSONL,
+//!   opencode's database), read in Claude's shape.
+//! - Questions come from the `ask` MCP tool, which waits on the terminal's
+//!   `otto.ask` label; the answer goes back as `otto.answer`.
+//! - Prompts are typed in with `hc send`, Stop is `hc interrupt`.
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::Duration;
+
+use ahp_types::state::{AgentInfo, ChatInputResponseKind, SessionStatus};
+use elicitation_content::to_labels;
+use serde_json::{Value, json};
+use tokio::process::Command;
+use tokio::sync::{mpsc, oneshot};
+
+use crate::agent::{
+    Backend, FoundSession, HistoryPart, HistoryTurn, InputAnswer, SessionChange, SessionCommand,
+    SessionEvent, SessionSpec, TurnOutcome, agent_info,
+};
+use crate::elicitation;
+use crate::herdr_core;
+use crate::skills;
+
+/// The provider id Ask sees.
+pub const PROVIDER: &str = "claude";
+
+/// The agent program a herdr session runs, in its own interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Harness {
+    Claude,
+    Pi,
+    OpenCode,
+}
+
+impl Harness {
+    /// From a program: `pi` (or `pi-acp`, the same agent over ACP) is pi,
+    /// `opencode` opencode, `claude` (or its ACP adapter, such as
+    /// `@agentclientprotocol/claude-agent-acp@latest`) Claude Code. `None`
+    /// for any other program.
+    fn of(program: &str) -> Option<Self> {
+        let name = Path::new(program)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let name = name.split('@').next().unwrap_or_default();
+        if name == "pi" || name.starts_with("pi-") {
+            Some(Self::Pi)
+        } else if name == "opencode" {
+            Some(Self::OpenCode)
+        } else if name == "claude"
+            || name.starts_with("claude-agent")
+            || name.starts_with("claude-code")
+        {
+            Some(Self::Claude)
+        } else {
+            None
+        }
+    }
+
+    /// An `agents.toml` agent's harness, from its command, or the package a
+    /// runner such as `npx` starts. `None` for an agent herdr does not run,
+    /// such as Gemini.
+    fn of_agent(command: &str, args: &[String]) -> Option<Self> {
+        const RUNNERS: [&str; 4] = ["npx", "bunx", "pnpx", "uvx"];
+        let program = Path::new(command)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if RUNNERS.contains(&program) {
+            let package = args.iter().find(|arg| !arg.starts_with('-'))?;
+            return Self::of(package);
+        }
+        Self::of(command)
+    }
+
+    /// Its `otto.harness` label.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Pi => "pi",
+            Self::OpenCode => "opencode",
+        }
+    }
+}
+
+/// An agent Ask offers: Claude Code, pi or opencode, opening its sessions in
+/// a herdr space.
+#[derive(Debug, Clone)]
+struct HerdrAgent {
+    harness: Harness,
+    id: String,
+    name: String,
+    description: String,
+    /// The name a herdr-app space made for its sessions gets; a session opens
+    /// in the space of its folder, each in a tab of its own.
+    space: Option<String>,
+    model: Option<String>,
+    /// The permission mode its sessions start in, `mode` in `agents.toml`:
+    /// Claude's `--permission-mode`, such as `acceptEdits`; `auto` is also
+    /// opencode's `--auto`.
+    mode: Option<String>,
+    /// Whether Claude loads the desktop's plugins (`skills = "claude"`).
+    skills: bool,
+    /// The plugin agent its sessions run as: its prompt, tools and skills.
+    profile: Option<skills::AgentFile>,
+    folder: Option<PathBuf>,
+    colour: Option<&'static str>,
+}
+
+pub struct HerdrBackend {
+    /// The first is the one a session of an unknown provider runs as.
+    agents: Vec<HerdrAgent>,
+    /// The `ask` MCP server's command line.
+    ask_mcp: Vec<String>,
+    /// The `PermissionRequest` hook's command line.
+    permission_hook: Option<String>,
+    /// The sessions this service started: Otto has them already, so the
+    /// watcher does not take them up again.
+    started: Started,
+    /// Held while a session finds or makes its space.
+    placing: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// Claude's flags for the desktop's plugins, found once.
+    plugin_args: Vec<String>,
+    /// The desktop's plugins, whose agents a client may ask a session to run
+    /// as (`_meta.otto.agent`, such as Studio's `studio`).
+    plugins: Vec<skills::Plugin>,
+}
+
+/// Agent session ids, shared between [`HerdrBackend::start`] and the watcher.
+type Started = std::sync::Arc<std::sync::Mutex<HashSet<String>>>;
+
+/// `session` is no longer one this service runs: it failed to start, or left
+/// herdr, so the watcher takes it up should it come back.
+fn not_started(started: &Started, session: &str) {
+    started
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(session);
+}
+
+impl HerdrBackend {
+    /// The agents are `agents.toml`'s that run Claude Code, pi or opencode,
+    /// in its order, the default first. With none of those, the default
+    /// Claude agent the configuration falls back to when it lists none.
+    pub fn new(config: &crate::config::Config) -> Self {
+        let plugins = skills::discover();
+        let profile = |name: &str| {
+            let name = name.rsplit(':').next().unwrap_or(name);
+            let found = skills::agent_file(&plugins, name).map(|(_, agent)| agent.clone());
+            if found.is_none() {
+                tracing::warn!(agent = name, "no plugin agent by that name");
+            }
+            found
+        };
+        let herdr_agent = |agent: &crate::config::AgentConfig| {
+            let Some(harness) = Harness::of_agent(&agent.command, &agent.args) else {
+                tracing::info!(id = %agent.id, "not offered: herdr runs Claude Code, pi and opencode");
+                return None;
+            };
+            tracing::info!(id = %agent.id, space = ?agent.space, "herdr agent configured");
+            // Without a description of its own, an agent is described by the
+            // model it runs: agents of one name differ in model and folder.
+            let description = if agent.description.is_empty() {
+                model_name(agent.model.as_deref(), harness)
+            } else {
+                agent.description.clone()
+            };
+            Some(HerdrAgent {
+                harness,
+                id: agent.id.clone(),
+                name: agent.name.clone(),
+                description,
+                space: agent.space.clone(),
+                model: agent.model.clone(),
+                mode: agent.mode.clone(),
+                skills: agent.skills == crate::config::SkillDelivery::Claude,
+                profile: agent.agent.as_deref().and_then(profile),
+                folder: agent.folder.clone(),
+                colour: agent.colour.map(|colour| colour.name()),
+            })
+        };
+        let mut agents: Vec<HerdrAgent> = config.agents.iter().filter_map(herdr_agent).collect();
+        if agents.is_empty() {
+            agents.extend(herdr_agent(&crate::config::AgentConfig::claude()));
+        }
+        // This binary's own `herdr-ask` and `herdr-permission`.
+        let exe = std::env::current_exe()
+            .ok()
+            .map(|exe| exe.to_string_lossy().into_owned());
+        let ask_mcp = exe
+            .iter()
+            .flat_map(|exe| [exe.clone(), "herdr-ask".to_owned()])
+            .collect();
+        let permission_hook = exe
+            .as_deref()
+            .map(|exe| format!("{} herdr-permission", shell_quote(exe)));
+        Self {
+            agents,
+            ask_mcp,
+            permission_hook,
+            started: Started::default(),
+            placing: Default::default(),
+            plugin_args: skills::claude_cli_args(&plugins, None),
+            plugins,
+        }
+    }
+
+    /// Installs herdr's own integration for each harness the agents run,
+    /// where `herdr integration status` does not list it as current: missing
+    /// or out of date. With it,
+    /// pi and opencode tell herdr whether they are working or waiting rather
+    /// than herdr reading it off the screen, and every agent tells herdr its
+    /// session, so herdr can resume it. Runs on a thread of its own: the
+    /// service does not wait for it.
+    pub fn install_integrations(&self) {
+        let mut wanted: Vec<&'static str> = self
+            .agents
+            .iter()
+            .map(|agent| agent.harness.label())
+            .collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+        std::thread::spawn(move || {
+            let status = match std::process::Command::new("herdr")
+                .args(["integration", "status"])
+                .output()
+            {
+                Ok(output) => String::from_utf8_lossy(&output.stdout).into_owned(),
+                Err(err) => {
+                    tracing::warn!(%err, "cannot ask herdr about its integrations");
+                    return;
+                }
+            };
+            for name in missing_integrations(&status, &wanted) {
+                match std::process::Command::new("herdr")
+                    .args(["integration", "install", name])
+                    .output()
+                {
+                    Ok(output) if output.status.success() => {
+                        tracing::info!(agent = name, "installed herdr's integration");
+                    }
+                    Ok(output) => tracing::warn!(
+                        agent = name,
+                        error = %String::from_utf8_lossy(&output.stderr).trim(),
+                        "herdr could not install its integration"
+                    ),
+                    Err(err) => tracing::warn!(%err, agent = name, "cannot run herdr"),
+                }
+            }
+        });
+    }
+
+    /// The agent a Claude Code session started by hand is taken up as: plain
+    /// Claude, the one whose folder holds the session's, else the first.
+    fn adopt_as(&self) -> Vec<(String, Option<PathBuf>)> {
+        self.agents
+            .iter()
+            .filter(|agent| agent.harness == Harness::Claude && agent.profile.is_none())
+            .map(|agent| (agent.id.clone(), agent.folder.clone()))
+            .collect()
+    }
+
+    fn agent(&self, provider: &str) -> &HerdrAgent {
+        self.agents
+            .iter()
+            .find(|agent| agent.id == provider)
+            .unwrap_or(&self.agents[0])
+    }
+
+    /// The plugin agent a session runs as: the one its client asked for,
+    /// else its agent's own.
+    fn profile<'a>(
+        &'a self,
+        agent: &'a HerdrAgent,
+        spec: &SessionSpec,
+    ) -> Option<&'a skills::AgentFile> {
+        let asked = spec.runs_as.as_deref().and_then(|name| {
+            let found = skills::agent_file(&self.plugins, name).map(|(_, file)| file);
+            if found.is_none() {
+                tracing::warn!(
+                    agent = name,
+                    "no plugin agent by that name; running as the configured one"
+                );
+            }
+            found
+        });
+        asked.or(agent.profile.as_ref())
+    }
+
+    /// The command line that starts or resumes `session`. What the client
+    /// asked for goes in: its MCP servers (Studio's document tools), its
+    /// instructions, and the plugin agent to run as.
+    fn launch(
+        &self,
+        agent: &HerdrAgent,
+        session: &str,
+        resume: bool,
+        spec: &SessionSpec,
+    ) -> Launch {
+        let profile = self.profile(agent, spec);
+        match agent.harness {
+            Harness::Pi => {
+                return Launch::argv(pi_argv(
+                    agent,
+                    session,
+                    profile,
+                    spec.instructions.as_deref(),
+                ));
+            }
+            Harness::OpenCode => {
+                let config = opencode_config(session, profile, spec);
+                return opencode_launch(agent, session, agent.mode.as_deref(), config);
+            }
+            Harness::Claude => {}
+        }
+        let mut argv = vec!["claude".to_owned()];
+        argv.extend([
+            if resume { "--resume" } else { "--session-id" }.to_owned(),
+            session.to_owned(),
+        ]);
+        if let Some(mode) = &agent.mode {
+            argv.extend(["--permission-mode".to_owned(), mode.clone()]);
+        }
+        if let Some(model) = &agent.model {
+            argv.extend(["--model".to_owned(), model.clone()]);
+        }
+        let mut servers = serde_json::Map::new();
+        let mut prompt = Vec::new();
+        if let Some((command, args)) = self.ask_mcp.split_first() {
+            servers.insert(
+                "otto".to_owned(),
+                json!({ "command": command, "args": args }),
+            );
+            argv.extend([
+                "--disallowedTools".to_owned(),
+                "AskUserQuestion".to_owned(),
+                "--allowedTools".to_owned(),
+                "mcp__otto__ask".to_owned(),
+            ]);
+            prompt.push(
+                "To ask the person anything, use the mcp__otto__ask tool, never a plain text question.",
+            );
+        }
+        for server in &spec.mcp_servers {
+            // `otto` is Otto's own ask server, which the flags above allow.
+            if server.name == "otto" {
+                tracing::warn!("a client's MCP server named otto is left out");
+                continue;
+            }
+            let env: serde_json::Map<String, Value> = server
+                .env
+                .iter()
+                .map(|(key, value)| (key.clone(), json!(value)))
+                .collect();
+            servers.insert(
+                server.name.clone(),
+                json!({ "command": server.command, "args": server.args, "env": env }),
+            );
+        }
+        if !servers.is_empty() {
+            argv.extend([
+                "--mcp-config".to_owned(),
+                json!({ "mcpServers": servers }).to_string(),
+            ]);
+        }
+        prompt.extend(spec.instructions.as_deref());
+        if !prompt.is_empty() {
+            argv.extend(["--append-system-prompt".to_owned(), prompt.join("\n\n")]);
+        }
+        if let Some(hook) = &self.permission_hook {
+            // Long enough for a person to answer: the hook gives up first,
+            // and Claude then asks in the terminal.
+            let settings = json!({ "hooks": { "PermissionRequest": [
+                { "matcher": "*", "hooks": [{ "type": "command", "command": hook, "timeout": 600 }] }
+            ] } });
+            argv.extend(["--settings".to_owned(), settings.to_string()]);
+        }
+        if agent.skills {
+            argv.extend(self.plugin_args.iter().cloned());
+        }
+        if let Some(profile) = profile {
+            let definition = agent_definition(profile, !self.ask_mcp.is_empty());
+            argv.extend([
+                "--agents".to_owned(),
+                json!({ profile.name.clone(): definition }).to_string(),
+                "--agent".to_owned(),
+                profile.name.clone(),
+            ]);
+        }
+        Launch::argv(argv)
+    }
+}
+
+/// How a session's agent is started: its command line, and what goes in its
+/// environment.
+#[derive(Debug, Default)]
+struct Launch {
+    argv: Vec<String>,
+    env: serde_json::Map<String, Value>,
+}
+
+impl Launch {
+    fn argv(argv: Vec<String>) -> Self {
+        Self {
+            argv,
+            ..Self::default()
+        }
+    }
+}
+
+impl Backend for HerdrBackend {
+    fn agents(&self) -> Vec<AgentInfo> {
+        self.agents
+            .iter()
+            .map(|agent| agent_info(&agent.id, &agent.name, &agent.description))
+            .collect()
+    }
+
+    fn colour(&self, provider: &str) -> Option<&'static str> {
+        self.agent(provider).colour
+    }
+
+    fn folder(&self, provider: &str) -> Option<&Path> {
+        self.agent(provider).folder.as_deref()
+    }
+
+    fn reports_running(&self) -> bool {
+        true
+    }
+
+    fn live(&self, _provider: &str, agent_session: &str) -> bool {
+        terminals_blocking(agent_session).is_some_and(|terminals| terminals.iter().any(holds_agent))
+    }
+
+    /// `otto-agents herdr-show`: herdr-app shows the session's tab.
+    fn terminal(
+        &self,
+        _provider: &str,
+        agent_session: &str,
+        _cwd: &Path,
+        _written: bool,
+    ) -> Option<Vec<String>> {
+        let exe = std::env::current_exe().ok()?;
+        Some(vec![
+            exe.to_string_lossy().into_owned(),
+            "herdr-show".to_owned(),
+            agent_session.to_owned(),
+        ])
+    }
+
+    fn enter(
+        &self,
+        provider: &str,
+        agent_session: &str,
+        cwd: &Path,
+        written: bool,
+    ) -> Option<Vec<String>> {
+        self.terminal(provider, agent_session, cwd, written)
+    }
+
+    fn window(&self, _provider: &str) -> Option<String> {
+        Some("herdr-app".to_owned())
+    }
+
+    /// herdr keeps a session as long as it keeps one of its terminals,
+    /// running or finished.
+    fn exists(&self, _provider: &str, agent_session: &str) -> Option<bool> {
+        terminals_blocking(agent_session).map(|terminals| !terminals.is_empty())
+    }
+
+    /// Ends the session's terminals and removes them from herdr.
+    fn forget(&self, _provider: &str, agent_session: &str) {
+        let session = agent_session.to_owned();
+        tokio::spawn(async move {
+            for terminal in terminals(&session).await.unwrap_or_default() {
+                let Some(address) = terminal.get("address").and_then(Value::as_str) else {
+                    continue;
+                };
+                // A shell where Claude Code was started by hand is the
+                // person's: it is let go, never ended.
+                if !runs_agent_itself(&terminal) {
+                    let_go(address).await;
+                    continue;
+                }
+                if terminal.get("state").and_then(Value::as_str) == Some("live") {
+                    let _ = herdr_core::call("terminal.kill", json!({ "terminal": address })).await;
+                }
+                remove(address).await;
+            }
+        });
+    }
+
+    /// Follows every herdr terminal: each Otto session in one, running or
+    /// finished, and each Claude Code started in herdr by hand, is a session;
+    /// when the last terminal of one is removed, the session is gone.
+    fn watch_sessions(&self, changes: mpsc::UnboundedSender<SessionChange>) {
+        let adopt_as = self.adopt_as();
+        let started = self.started.clone();
+        tokio::spawn(async move {
+            // Each terminal's session, kept across reconnects so the sessions
+            // already reported are not read again.
+            let mut sessions = std::collections::HashMap::new();
+            let mut wait = Duration::from_secs(2);
+            while !changes.is_closed() {
+                let heard = follow_sessions(&changes, &adopt_as, &started, &mut sessions).await;
+                // The server restarted, or hc is not there: try again, less
+                // often while nothing answers.
+                wait = if heard {
+                    Duration::from_secs(2)
+                } else {
+                    (wait * 2).min(Duration::from_secs(60))
+                };
+                tokio::time::sleep(wait).await;
+            }
+        });
+    }
+
+    fn start(
+        &self,
+        spec: SessionSpec,
+        commands: mpsc::UnboundedReceiver<SessionCommand>,
+        events: mpsc::UnboundedSender<SessionEvent>,
+    ) {
+        let resume = spec.resume.clone();
+        let agent = self.agent(&spec.provider);
+        let session = resume.clone().unwrap_or_else(|| match agent.harness {
+            Harness::OpenCode => opencode_session_id(),
+            _ => uuid::Uuid::new_v4().to_string(),
+        });
+        self.started
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(session.clone());
+        let launch = self.launch(agent, &session, resume.is_some(), &spec);
+        let space = agent.space.clone();
+        let harness = agent.harness;
+        let labels = json!({
+            "otto": "agent",
+            "otto.session": session,
+            "otto.agent": agent.id,
+            "otto.harness": harness.label(),
+        });
+        let ours = self.started.clone();
+        let placing = self.placing.clone();
+        tokio::spawn(async move {
+            let terminal = match find(&session).await {
+                Some(terminal) => terminal,
+                None => {
+                    // opencode takes up only a session it has: a new one is
+                    // made first, under Otto's id.
+                    if harness == Harness::OpenCode && resume.is_none() {
+                        if let Err(error) = opencode_new(&session, &spec.cwd).await {
+                            not_started(&ours, &session);
+                            let _ = events.send(SessionEvent::CreationFailed(error));
+                            return;
+                        }
+                    }
+                    let placement = place(&placing, space, &spec.cwd).await;
+                    let started = run(
+                        &session,
+                        labels,
+                        &spec.cwd,
+                        placement.space.clone(),
+                        &launch,
+                    )
+                    .await;
+                    if let (Ok(_), Some(space), Some(tab)) =
+                        (&started, &placement.space, &placement.first_tab)
+                    {
+                        close_first_tab(space, tab).await;
+                    }
+                    match started {
+                        Ok(terminal) => {
+                            // One terminal per session: the finished ones of
+                            // earlier runs go once the new one is there.
+                            prune(&session, &terminal).await;
+                            terminal
+                        }
+                        Err(error) => {
+                            not_started(&ours, &session);
+                            let _ = events.send(SessionEvent::CreationFailed(error));
+                            return;
+                        }
+                    }
+                }
+            };
+            tracing::info!(%session, %terminal, "herdr session");
+            let transcript = match harness {
+                Harness::Claude => Transcript::Claude(transcript_path(&spec.cwd, &session)),
+                Harness::Pi => Transcript::pi(&session),
+                Harness::OpenCode => Transcript::OpenCode(session.clone()),
+            };
+            // Before the session is ready, so a queued turn starts against a
+            // chat that already holds what was said, here or in the terminal.
+            if resume.is_some() {
+                let turns = history(&transcript.read().await);
+                tracing::info!(turns = turns.len(), "history read from the transcript");
+                let _ = events.send(SessionEvent::HistoryLoaded { turns });
+            }
+            let _ = events.send(SessionEvent::Ready {
+                agent_session: Some(session.clone()),
+            });
+            let _ = events.send(SessionEvent::Running(true));
+            drive(terminal, transcript, spec.cwd.clone(), commands, events).await;
+        });
+    }
+}
+
+/// `word` as a POSIX shell reads it back: in single quotes, a quote inside
+/// closed and escaped. Claude runs a hook's command through the shell.
+fn shell_quote(word: &str) -> String {
+    format!("'{}'", word.replace('\'', r"'\''"))
+}
+
+/// The program herdr runs for an `agents.toml` agent: `claude`, `pi` or
+/// `opencode`, told by its command the way [`HerdrBackend::new`] tells it.
+/// `None` for an agent herdr does not run, such as Codex or Gemini.
+pub fn agent_program(command: &str, args: &[String]) -> Option<&'static str> {
+    Harness::of_agent(command, args).map(Harness::label)
+}
+
+/// Whether herdr is installed: `hc`, herdr-core's command, is on `PATH`.
+pub fn installed() -> bool {
+    crate::cli::which("hc").is_some()
+}
+
+/// A model as a person reads it: `opus` as "Opus"; the agent's own default
+/// when none is set.
+fn model_name(model: Option<&str>, harness: Harness) -> String {
+    match model.filter(|model| !model.is_empty()) {
+        Some(model) => crate::dialog::agent_name(model),
+        None => match harness {
+            Harness::Claude => "Claude Code's default model".to_owned(),
+            Harness::Pi => "pi's default model".to_owned(),
+            Harness::OpenCode => "opencode's default model".to_owned(),
+        },
+    }
+}
+
+/// A plugin agent as Claude's `--agents` takes one. The plugin's own copy
+/// would do, but for its tools: with the `ask` server, its questions go
+/// through `mcp__otto__ask`, which an agent limited to its own list of tools
+/// could not call.
+fn agent_definition(profile: &skills::AgentFile, ask: bool) -> Value {
+    let mut definition = json!({
+        "description": profile.description,
+        "prompt": profile.body,
+    });
+    if !profile.tools.is_empty() {
+        let mut tools: Vec<&str> = profile.tools.iter().map(String::as_str).collect();
+        if ask {
+            tools.retain(|tool| *tool != "AskUserQuestion");
+            tools.push("mcp__otto__ask");
+        }
+        definition["tools"] = json!(tools);
+    }
+    if !profile.skills.is_empty() {
+        definition["skills"] = json!(profile.skills);
+    }
+    if let Some(model) = &profile.model {
+        definition["model"] = json!(model);
+    }
+    definition
+}
+
+/// Where a new terminal goes in herdr-app.
+#[derive(Debug, Default)]
+struct Placement {
+    /// The space's id; `None` only when herdr-app has no spaces to name.
+    space: Option<String>,
+    /// The shell tab herdr-app opens in a space it has just made, closed once
+    /// the session's own tab is there.
+    first_tab: Option<String>,
+}
+
+/// The herdr-app space for a session in `folder`: the one whose terminals
+/// start there. The spaces are in herdr-app's layout, a document herdr-core
+/// keeps. With none, one is made there, called `name` (an agent's `space`)
+/// or else after the folder. When herdr-app cannot make it, the first space.
+async fn place(placing: &tokio::sync::Mutex<()>, name: Option<String>, folder: &Path) -> Placement {
+    // One session at a time, so two sessions in one folder make one space.
+    let _placing = placing.lock().await;
+    let spaces = spaces().await;
+    if let Some(space) = space_in(&spaces, folder) {
+        return Placement {
+            space: Some(space),
+            first_tab: None,
+        };
+    }
+    let name = name
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| folder_name(folder));
+    if let Some(made) = new_space(&name, folder).await {
+        return made;
+    }
+    // A terminal in no space has no tab to be seen in: the first space
+    // takes it.
+    tracing::warn!(folder = %folder.display(), "could not make a herdr space; using the first");
+    Placement {
+        space: spaces
+            .first()
+            .and_then(|space| space.get("id"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        first_tab: None,
+    }
+}
+
+/// A space's name after its folder, as a name reads: `ask` is `Ask`.
+fn folder_name(folder: &Path) -> String {
+    let name = folder
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| folder.to_string_lossy().into_owned());
+    crate::dialog::agent_name(&name)
+}
+
+/// herdr-app's spaces, from its layout, a document herdr-core keeps.
+async fn spaces() -> Vec<Value> {
+    doc("herdr-app")
+        .await
+        .as_ref()
+        .and_then(|layout| layout.pointer("/value/spaces"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// The space whose terminals start in `folder`.
+fn space_in(spaces: &[Value], folder: &Path) -> Option<String> {
+    spaces
+        .iter()
+        .find(|space| {
+            space
+                .get("folder")
+                .and_then(Value::as_str)
+                .is_some_and(|start| Path::new(start) == folder)
+        })?
+        .get("id")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+/// Makes a space called `name`, without showing it. herdr-app makes spaces,
+/// so it has to be running.
+async fn new_space(name: &str, folder: &Path) -> Option<Placement> {
+    let output = Command::new("herdr-app")
+        .args([
+            "do",
+            "space.new",
+            "--name",
+            name,
+            "--focus",
+            "false",
+            "--folder",
+        ])
+        .arg(folder)
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let made: Value = serde_json::from_slice(&output.stdout).ok()?;
+    let text = |key: &str| made.get(key).and_then(Value::as_str).map(str::to_owned);
+    tracing::info!(space = %name, "made a herdr space");
+    Some(Placement {
+        space: Some(text("space")?),
+        first_tab: text("tab"),
+    })
+}
+
+/// Closes the shell tab the new space `space` opened with, once the session's
+/// own tab is in it: a space whose only tab closes, even for a moment, loses
+/// its name.
+async fn close_first_tab(space: &str, tab: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let spaces = spaces().await;
+        let tabs = spaces
+            .iter()
+            .find(|each| each.get("id").and_then(Value::as_str) == Some(space))
+            .and_then(|space| space.get("tabs"))
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        if tabs > 1 {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            // The shell tab stays rather than the space losing its name.
+            tracing::warn!(%space, "the session's tab did not show up; keeping the shell tab");
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let _ = Command::new("herdr-app")
+        .args(["do", "tab.close", "--id", tab, "--confirmed", "true"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await;
+}
+
+/// A document herdr-core keeps.
+async fn doc(name: &str) -> Option<Value> {
+    herdr_core::call("doc.get", json!({ "name": name }))
+        .await
+        .ok()
+}
+
+/// Shows `session`'s running terminal in herdr-app, in its space and tab.
+/// A session not running, its space closed say, is opened through the
+/// service at `url` first, which starts it again.
+pub async fn show(session: &str, url: &str) -> anyhow::Result<()> {
+    let terminal = match find(session).await {
+        Some(terminal) => terminal,
+        None => {
+            let _open = crate::cli::open_by_agent_session(url, session).await?;
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+            loop {
+                if let Some(terminal) = find(session).await {
+                    break terminal;
+                }
+                anyhow::ensure!(
+                    tokio::time::Instant::now() < deadline,
+                    "the session {session} did not start again"
+                );
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        }
+    };
+    // With its window closed, herdr-app is opened first: it takes commands
+    // once its window is up.
+    let running = || async {
+        Command::new("herdr-app")
+            .arg("status")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .is_ok_and(|status| status.success())
+    };
+    if !running().await {
+        use std::os::unix::process::CommandExt;
+        std::process::Command::new("herdr-app")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        while !running().await {
+            anyhow::ensure!(
+                tokio::time::Instant::now() < deadline,
+                "herdr-app did not open"
+            );
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+    // A terminal started in no space, or whose tab was closed, has no pane
+    // to show: it gets a tab of its own. One with a pane keeps it.
+    let status = Command::new("herdr-app")
+        .args([
+            "do",
+            "terminal.keep",
+            "--terminal",
+            &terminal,
+            "--place",
+            "tab",
+        ])
+        .stdout(Stdio::null())
+        .status()
+        .await?;
+    anyhow::ensure!(
+        status.success(),
+        "herdr-app could not give {terminal} a tab"
+    );
+    let status = Command::new("herdr-app")
+        .args(["do", "agent.focus", "--terminal", &terminal])
+        .stdout(Stdio::null())
+        .status()
+        .await?;
+    anyhow::ensure!(status.success(), "herdr-app could not show {terminal}");
+    Ok(())
+}
+
+/// What `terminal.list` asks for to find `session`'s terminals, running or
+/// finished.
+fn session_filter(session: &str) -> Value {
+    json!({ "all": true, "labels": { "otto.session": session } })
+}
+
+/// Every terminal herdr keeps for `session`, running or finished; `None`
+/// when herdr-core cannot be asked.
+async fn terminals(session: &str) -> Option<Vec<Value>> {
+    herdr_core::list(session_filter(session)).await.ok()
+}
+
+/// [`terminals`], for the backend's synchronous questions: given up after a
+/// moment, so a herdr-core that does not answer does not hold the service.
+fn terminals_blocking(session: &str) -> Option<Vec<Value>> {
+    let list = herdr_core::call_blocking("terminal.list", session_filter(session)).ok()?;
+    list.get("terminals")?.as_array().cloned()
+}
+
+/// One terminal's facts; `None` when herdr has no such terminal.
+async fn get(terminal: &str) -> Option<Value> {
+    herdr_core::call("terminal.get", json!({ "terminal": terminal }))
+        .await
+        .ok()
+}
+
+/// Removes a terminal, waiting a moment for one just killed to finish.
+async fn remove(address: &str) {
+    for _ in 0..20 {
+        let finished = get(address)
+            .await
+            .is_none_or(|item| item.get("state").and_then(Value::as_str) != Some("live"));
+        if finished {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    let _ = herdr_core::call("terminal.rm", json!({ "terminal": address })).await;
+}
+
+/// Removes `session`'s finished terminals other than `keep`.
+async fn prune(session: &str, keep: &str) {
+    for terminal in terminals(session).await.unwrap_or_default() {
+        let address = terminal.get("address").and_then(Value::as_str);
+        let finished = terminal.get("state").and_then(Value::as_str) == Some("finished");
+        if let Some(address) = address.filter(|address| finished && *address != keep) {
+            let _ = herdr_core::call("terminal.rm", json!({ "terminal": address })).await;
+        }
+    }
+}
+
+/// One subscription to every terminal, reporting the sessions in them as
+/// they are found and removed; `sessions` is each terminal's session. Returns
+/// when herdr-core goes: whether it answered at all.
+async fn follow_sessions(
+    changes: &mpsc::UnboundedSender<SessionChange>,
+    adopt_as: &[(String, Option<PathBuf>)],
+    started: &Started,
+    sessions: &mut HashMap<String, String>,
+) -> bool {
+    let Ok(mut subscription) = herdr_core::subscribe(json!({})).await else {
+        return false;
+    };
+    // Each terminal's facts, kept current from the changes.
+    let mut items: HashMap<String, Value> = HashMap::new();
+    let mut snapshot = Some(std::mem::take(&mut subscription.snapshot));
+    loop {
+        if let Some(snapshot) = snapshot.take() {
+            items = snapshot
+                .into_iter()
+                .filter_map(|item| {
+                    let address = item.get("address")?.as_str()?.to_owned();
+                    Some((address, item))
+                })
+                .collect();
+            // Terminals gone while herdr was not followed are forgotten here,
+            // not reported removed: a herdr-core that started afresh has
+            // none, and its sessions are hidden at the next start instead.
+            sessions.retain(|address, _| items.contains_key(address));
+            for item in items.values() {
+                let known = item
+                    .get("address")
+                    .and_then(Value::as_str)
+                    .and_then(|address| sessions.get(address));
+                match known {
+                    // Its title may have changed while herdr was not followed.
+                    Some(session) => {
+                        let title = item.get("title").and_then(Value::as_str);
+                        if let Some(title) = title.and_then(agent_title) {
+                            let _ = changes.send(SessionChange::Titled {
+                                agent_session: session.clone(),
+                                title,
+                            });
+                        }
+                    }
+                    None => consider(item, sessions, changes, adopt_as, started).await,
+                }
+            }
+        }
+        let (address, kind) = match subscription.next().await {
+            None => return true,
+            Some(herdr_core::Event::Missed(terminals)) => {
+                snapshot = Some(terminals);
+                continue;
+            }
+            Some(herdr_core::Event::Changed {
+                terminal,
+                kind,
+                data,
+            }) => {
+                let item = items
+                    .entry(terminal.clone())
+                    .or_insert_with(|| json!({ "address": terminal }));
+                herdr_core::Event::apply(item, &kind, &data);
+                (terminal, kind)
+            }
+        };
+        let address = address.as_str();
+        let Some(item) = items.get(address).cloned() else {
+            continue;
+        };
+        match kind.as_str() {
+            // The agent named its session, or named it anew.
+            "title" => {
+                let Some(session) = sessions.get(address) else {
+                    continue;
+                };
+                let title = item.get("title").and_then(Value::as_str);
+                if let Some(title) = title.and_then(agent_title) {
+                    let _ = changes.send(SessionChange::Titled {
+                        agent_session: session.clone(),
+                        title,
+                    });
+                }
+            }
+            "removed" => {
+                items.remove(address);
+                let Some(session) = sessions.remove(address) else {
+                    continue;
+                };
+                if !sessions.values().any(|other| *other == session) {
+                    not_started(started, &session);
+                    let _ = changes.send(SessionChange::Removed(session));
+                }
+            }
+            // A terminal new, with another program in front, or reporting
+            // an agent's status: it may hold a session now. Claude notes its
+            // session a moment after it starts, so its status is the cue
+            // that finds it.
+            // A shell Otto let go of, its Claude gone: the session leaves
+            // with it, and the shell may hold another later.
+            "labels" if sessions.contains_key(address) => {
+                if item.pointer("/labels/otto.session").is_some() {
+                    continue;
+                }
+                let Some(session) = sessions.remove(address) else {
+                    continue;
+                };
+                if !sessions.values().any(|other| *other == session) {
+                    not_started(started, &session);
+                    let _ = changes.send(SessionChange::Removed(session));
+                }
+            }
+            "created" | "foreground" | "labels" | "status" if !sessions.contains_key(address) => {
+                consider(&item, sessions, changes, adopt_as, started).await;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Reports the session a terminal holds: an Otto session by its label, or a
+/// Claude Code started by hand, which is labelled as Otto's from then on.
+async fn consider(
+    item: &Value,
+    sessions: &mut HashMap<String, String>,
+    changes: &mpsc::UnboundedSender<SessionChange>,
+    adopt_as: &[(String, Option<PathBuf>)],
+    started: &Started,
+) {
+    let Some(address) = item.get("address").and_then(Value::as_str) else {
+        return;
+    };
+    let text = |pointer: &str| item.pointer(pointer).and_then(Value::as_str);
+    let running = text("/state") == Some("live");
+    let cwd = PathBuf::from(text("/cwd").unwrap_or_default());
+    let (session, provider, cwd) = match text("/labels/otto.session") {
+        Some(session) => {
+            let provider = text("/labels/otto.agent").unwrap_or(PROVIDER).to_owned();
+            (session.to_owned(), provider, cwd)
+        }
+        None if running => {
+            let Some((session, cwd)) = claude_in(item).await else {
+                return;
+            };
+            let provider = adopted_agent(adopt_as, &cwd);
+            let labels = [
+                ("otto", "agent"),
+                ("otto.session", session.as_str()),
+                ("otto.agent", provider.as_str()),
+            ];
+            let _ = herdr_core::label(address, labels).await;
+            tracing::info!(%address, %session, "a Claude Code started in herdr");
+            (session, provider, cwd)
+        }
+        None => return,
+    };
+    sessions.insert(address.to_owned(), session.clone());
+    let ours = started
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(&session);
+    if ours {
+        // Otto has it already: only its title may be news.
+        if let Some(title) = text("/title").and_then(agent_title) {
+            let _ = changes.send(SessionChange::Titled {
+                agent_session: session,
+                title,
+            });
+        }
+        return;
+    }
+    let transcript = match text("/labels/otto.harness") {
+        Some("pi") => Transcript::pi(&session),
+        Some("opencode") => Transcript::OpenCode(session.clone()),
+        _ if provider_is_pi(item) => Transcript::pi(&session),
+        _ => Transcript::Claude(transcript_path(&cwd, &session)),
+    };
+    let title = match text("/title").and_then(agent_title) {
+        Some(title) => Some(title),
+        None => history(&transcript.read().await)
+            .into_iter()
+            .next()
+            .map(|turn| turn.prompt),
+    };
+    let _ = changes.send(SessionChange::Found(FoundSession {
+        provider,
+        agent_session: session,
+        cwd,
+        title,
+        running,
+    }));
+}
+
+/// The session's title in a terminal title an agent set: Claude Code's is its
+/// summary of the session; pi's is `π - <name> - <folder>`, the name only once
+/// the session has one; opencode's is `OC | <title>`. `None` for one that
+/// names no session, such as a shell's `user@host:folder`.
+fn agent_title(terminal_title: &str) -> Option<String> {
+    let title = terminal_title.trim();
+    let title = if let Some(rest) = title.strip_prefix("OC |") {
+        rest.trim()
+    } else if let Some(rest) = title.strip_prefix("π - ") {
+        // The folder comes last; with nothing before it, there is no name.
+        rest.rsplit_once(" - ")?.0.trim()
+    } else {
+        // Claude Code puts a spinner or a mark in front while it works.
+        title.trim_start_matches(|c: char| !c.is_alphanumeric())
+    };
+    let shell = title
+        .split_once('@')
+        .is_some_and(|(user, host)| !user.contains(' ') && host.contains(':'));
+    let program = ["claude", "claude code", "pi", "opencode"]
+        .iter()
+        .any(|name| title.eq_ignore_ascii_case(name));
+    (!title.is_empty() && !shell && !program).then(|| title.to_owned())
+}
+
+/// Whether the terminal runs pi, as herdr names its agent or its command.
+fn provider_is_pi(item: &Value) -> bool {
+    item.get("agent").and_then(Value::as_str) == Some("pi")
+        || program(item).is_some_and(|program| Harness::of(program) == Some(Harness::Pi))
+}
+
+/// The program a terminal was started with.
+fn program(item: &Value) -> Option<&str> {
+    item.pointer("/argv/0").and_then(Value::as_str)
+}
+
+/// The session of the Claude Code in front in a terminal, and its folder:
+/// Claude notes both in `~/.claude/sessions/<pid>.json`.
+async fn claude_in(item: &Value) -> Option<(String, PathBuf)> {
+    let foreground = item.get("foreground")?;
+    if foreground.get("name").and_then(Value::as_str) != Some("claude") {
+        return None;
+    }
+    let pid = foreground.get("pid")?.as_u64()?;
+    let note = tokio::fs::read_to_string(claude_dir()?.join(format!("sessions/{pid}.json")))
+        .await
+        .ok()?;
+    let note: Value = serde_json::from_str(&note).ok()?;
+    let session = note.get("sessionId")?.as_str()?.to_owned();
+    let cwd = note
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .or_else(|| foreground.get("cwd")?.as_str().map(PathBuf::from))?;
+    Some((session, cwd))
+}
+
+/// The agent a session in `cwd` started by hand is taken up as: the one whose
+/// folder holds `cwd` most closely, else the first, else the default.
+fn adopted_agent(adopt_as: &[(String, Option<PathBuf>)], cwd: &Path) -> String {
+    adopt_as
+        .iter()
+        .filter_map(|(id, folder)| {
+            let folder = folder.as_deref()?;
+            cwd.starts_with(folder)
+                .then(|| (folder.components().count(), id))
+        })
+        .max()
+        .map(|(_, id)| id.clone())
+        .or_else(|| adopt_as.first().map(|(id, _)| id.clone()))
+        .unwrap_or_else(|| PROVIDER.to_owned())
+}
+
+/// The agent programs herdr names in front of a terminal.
+const AGENT_PROGRAMS: &[&str] = &["claude", "pi", "opencode"];
+
+/// Whether a terminal, as `hc ls` or `hc get` gives it, is live with its
+/// agent in front. A terminal Otto started runs the agent itself, so it is
+/// while it is live; a shell where Claude Code was started by hand only while
+/// Claude is in front. Otto never types into the shell left behind.
+fn holds_agent(item: &Value) -> bool {
+    if item.get("state").and_then(Value::as_str) != Some("live") {
+        return false;
+    }
+    // A listing names the agent in front as `agent`: its program, or the
+    // kind herdr has recognised (`claude-code`).
+    if let Some(name) = item.get("agent").and_then(Value::as_str) {
+        return Harness::of(name).is_some();
+    }
+    runs_agent_itself(item)
+        || item.pointer("/foreground/name").and_then(Value::as_str) == Some("claude")
+}
+
+/// Whether the terminal's own program is the agent, as for one Otto started.
+fn runs_agent_itself(item: &Value) -> bool {
+    program(item)
+        .and_then(|program| Path::new(program).file_name())
+        .is_some_and(|name| AGENT_PROGRAMS.iter().any(|agent| name == *agent))
+}
+
+/// Takes Otto's labels off a shell whose hand-started Claude has quit: the
+/// shell holds no session any more, and a Claude started there again is
+/// found afresh.
+async fn let_go(terminal: &str) {
+    let labels = ["otto", "otto.session", "otto.agent", "otto.harness"].map(|key| (key, ""));
+    let _ = herdr_core::label(terminal, labels).await;
+}
+
+/// The live terminal already running `session`, as after an otto-agents
+/// restart: herdr kept it.
+async fn find(session: &str) -> Option<String> {
+    herdr_core::list(json!({ "labels": { "otto.session": session } }))
+        .await
+        .ok()?
+        .iter()
+        .find(|terminal| holds_agent(terminal))?
+        .get("address")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+/// The name of `session`'s terminal, unique among live terminals. Session ids
+/// begin with a timestamp (OpenCode's `ses_…`, pi's UUIDv7), so the name takes
+/// their random end.
+fn terminal_name(session: &str) -> String {
+    let chars: Vec<char> = session.chars().collect();
+    let tail: String = chars[chars.len().saturating_sub(8)..].iter().collect();
+    format!("otto-{tail}")
+}
+
+/// Starts `session`'s agent in a new terminal, in the background, kept
+/// running on its own: its address.
+async fn run(
+    session: &str,
+    mut labels: Value,
+    cwd: &Path,
+    space: Option<String>,
+    launch: &Launch,
+) -> Result<String, String> {
+    // herdr-app opens a terminal whose tab id it has not seen in a new tab.
+    if let (Some(space), Some(labels)) = (space, labels.as_object_mut()) {
+        let tab = format!("tb{}", uuid::Uuid::new_v4().simple());
+        labels.insert("herdr.space".to_owned(), json!(space));
+        labels.insert("herdr.tab".to_owned(), json!(tab));
+    }
+    let params = json!({
+        "argv": launch.argv,
+        "env": launch.env,
+        "name": terminal_name(session),
+        "cwd": cwd,
+        "labels": labels,
+        "keep": true,
+        "no_parent": true,
+        "no_notify": true,
+        "wait": false,
+    });
+    let started = herdr_core::call("terminal.run", params)
+        .await
+        .map_err(|error| error.to_string())?;
+    started
+        .get("address")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| started.to_string())
+}
+
+/// Where a session's transcript is, by harness.
+#[derive(Debug, Clone)]
+enum Transcript {
+    /// Claude's file, which is known from the start.
+    Claude(PathBuf),
+    /// pi's session id: its file, named for the time it was made, is found
+    /// once pi has written it.
+    Pi(String, std::sync::Arc<std::sync::OnceLock<PathBuf>>),
+    /// opencode's session id: its messages are rows in opencode's database.
+    OpenCode(String),
+}
+
+impl Transcript {
+    fn pi(session: &str) -> Self {
+        Self::Pi(session.to_owned(), Default::default())
+    }
+
+    /// The file that changes as the session grows: for opencode, its
+    /// database's write-ahead log, which every session shares.
+    async fn path(&self) -> Option<PathBuf> {
+        match self {
+            Self::Claude(path) => Some(path.clone()),
+            Self::Pi(session, found) => {
+                if let Some(path) = found.get() {
+                    return Some(path.clone());
+                }
+                let path = pi_transcript(session).await?;
+                Some(found.get_or_init(|| path).clone())
+            }
+            Self::OpenCode(_) => Some(opencode_db()?.with_extension("db-wal")),
+        }
+    }
+
+    /// The transcript's lines, in Claude's shape whatever the harness: what
+    /// the rest of the backend reads.
+    async fn read(&self) -> String {
+        if let Self::OpenCode(session) = self {
+            return opencode_as_claude(&opencode_rows(session).await);
+        }
+        let Some(path) = self.path().await else {
+            return String::new();
+        };
+        let text = tokio::fs::read_to_string(path).await.unwrap_or_default();
+        match self {
+            Self::Pi(..) => pi_as_claude(&text),
+            _ => text,
+        }
+    }
+}
+
+/// opencode in a herdr terminal: the session by its id, with the agent's
+/// model; with Otto's permission mode `auto`, it approves what it may. A
+/// `config` goes in its environment as `OPENCODE_CONFIG_CONTENT`, which
+/// opencode adds to the person's own config.
+fn opencode_launch(
+    agent: &HerdrAgent,
+    session: &str,
+    permission_mode: Option<&str>,
+    config: Option<OpencodeConfig>,
+) -> Launch {
+    let mut env = serde_json::Map::new();
+    if let Some(config) = &config {
+        env.insert("OPENCODE_CONFIG_CONTENT".to_owned(), json!(config.content));
+    }
+    let mut argv = vec!["opencode".to_owned(), "-s".to_owned(), session.to_owned()];
+    if let Some(model) = &agent.model {
+        argv.extend(["-m".to_owned(), model.clone()]);
+    }
+    if permission_mode == Some("auto") {
+        argv.push("--auto".to_owned());
+    }
+    if let Some(name) = config.and_then(|config| config.agent) {
+        argv.extend(["--agent".to_owned(), name]);
+    }
+    Launch { argv, env }
+}
+
+/// What a client asked for, as opencode config.
+struct OpencodeConfig {
+    /// The config's JSON text.
+    content: String,
+    /// The primary agent it defines for the session to run as.
+    agent: Option<String>,
+}
+
+/// A session's MCP servers, instructions and plugin agent as opencode config;
+/// `None` when it asked for none of them. opencode reads instructions only
+/// from files, so they are written to one in the runtime folder.
+fn opencode_config(
+    session: &str,
+    profile: Option<&skills::AgentFile>,
+    spec: &SessionSpec,
+) -> Option<OpencodeConfig> {
+    let mut config = serde_json::Map::new();
+    if !spec.mcp_servers.is_empty() {
+        let servers: serde_json::Map<String, Value> = spec
+            .mcp_servers
+            .iter()
+            .map(|server| {
+                let command: Vec<Value> = std::iter::once(json!(server.command))
+                    .chain(server.args.iter().map(|arg| json!(arg)))
+                    .collect();
+                let env: serde_json::Map<String, Value> = server
+                    .env
+                    .iter()
+                    .map(|(key, value)| (key.clone(), json!(value)))
+                    .collect();
+                let server_config =
+                    json!({ "type": "local", "command": command, "environment": env });
+                (server.name.clone(), server_config)
+            })
+            .collect();
+        config.insert("mcp".to_owned(), servers.into());
+    }
+    if let Some(instructions) = &spec.instructions {
+        match write_instructions(session, instructions) {
+            Ok(file) => {
+                config.insert("instructions".to_owned(), json!([file]));
+            }
+            Err(error) => {
+                tracing::warn!(%session, %error, "opencode starts without the client's instructions");
+            }
+        }
+    }
+    let agent = profile.map(|profile| {
+        let definition = json!({
+            "mode": "primary",
+            "description": profile.description,
+            "prompt": profile.body,
+        });
+        config.insert(
+            "agent".to_owned(),
+            json!({ profile.name.clone(): definition }),
+        );
+        profile.name.clone()
+    });
+    if config.is_empty() {
+        return None;
+    }
+    Some(OpencodeConfig {
+        content: Value::Object(config).to_string(),
+        agent,
+    })
+}
+
+/// Writes a session's instructions where opencode reads them:
+/// `$XDG_RUNTIME_DIR/otto-agents/opencode/<session>.md`.
+fn write_instructions(session: &str, instructions: &str) -> std::io::Result<PathBuf> {
+    if !is_opencode_id(session) {
+        return Err(std::io::Error::other("not an opencode session id"));
+    }
+    let folder = otto_foundations::xdg::runtime_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("otto-agents/opencode");
+    std::fs::create_dir_all(&folder)?;
+    let file = folder.join(format!("{session}.md"));
+    std::fs::write(&file, instructions)?;
+    Ok(file)
+}
+
+/// A new opencode session id: `ses_` and 26 letters or digits, as opencode
+/// makes them.
+fn opencode_session_id() -> String {
+    let hex = uuid::Uuid::new_v4().simple().to_string();
+    format!("ses_{}", &hex[..26])
+}
+
+/// Whether `session` is safe to quote in SQL: an opencode id is only
+/// letters, digits and underscores.
+fn is_opencode_id(session: &str) -> bool {
+    session.starts_with("ses_")
+        && session
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn opencode_db() -> Option<PathBuf> {
+    Some(crate::xdg::data_home()?.join("opencode/opencode.db"))
+}
+
+/// Makes an empty opencode session under `session`, in `cwd`: opencode takes
+/// the folder and project of a session it imports from where it is run.
+async fn opencode_new(session: &str, cwd: &Path) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64);
+    let export = json!({
+        "info": {
+            "id": session,
+            "slug": session,
+            "projectID": "global",
+            "directory": cwd,
+            "title": "",
+            // Required, and only recorded: any version will do.
+            "version": "otto",
+            "time": { "created": now, "updated": now },
+        },
+        "messages": [],
+    });
+    let file = otto_foundations::xdg::runtime_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join(format!("otto-{session}.json"));
+    tokio::fs::write(&file, export.to_string())
+        .await
+        .map_err(|error| format!("could not write {}: {error}", file.display()))?;
+    let output = Command::new("opencode")
+        .arg("import")
+        .arg(&file)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .output()
+        .await;
+    let _ = tokio::fs::remove_file(&file).await;
+    let output = output.map_err(|error| format!("could not run opencode: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    Ok(())
+}
+
+/// The session's messages and their parts, oldest first, as
+/// `{message, message_data, part, part_data}` rows; the data is opencode's
+/// JSON text. Read with `sqlite3`: `opencode export` takes seconds.
+async fn opencode_rows(session: &str) -> Vec<Value> {
+    let Some(db) = opencode_db().filter(|_| is_opencode_id(session)) else {
+        return Vec::new();
+    };
+    let query = format!(
+        "select m.id as message, m.data as message_data, p.id as part, p.data as part_data \
+         from message m left join part p on p.message_id = m.id \
+         where m.session_id = '{session}' order by m.time_created, m.id, p.id"
+    );
+    let Ok(output) = Command::new("sqlite3")
+        .arg("-readonly")
+        .arg("-json")
+        .arg(db)
+        .arg(query)
+        .stdin(Stdio::null())
+        .output()
+        .await
+    else {
+        return Vec::new();
+    };
+    serde_json::from_slice(&output.stdout).unwrap_or_default()
+}
+
+/// opencode's rows as Claude's transcript. Its messages are rewritten as
+/// they grow, so every entry is a settled piece with an id of its own: a
+/// prompt, a finished text part, a tool call and its result, and the end of
+/// a turn once the message is complete and stopped for good.
+fn opencode_as_claude(rows: &[Value]) -> String {
+    let data = |row: &Value, key: &str| -> Value {
+        row.get(key)
+            .and_then(Value::as_str)
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or(Value::Null)
+    };
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index < rows.len() {
+        let Some(id) = rows[index].get("message").and_then(Value::as_str) else {
+            index += 1;
+            continue;
+        };
+        let message = data(&rows[index], "message_data");
+        let mut parts = Vec::new();
+        while index < rows.len() && rows[index].get("message").and_then(Value::as_str) == Some(id) {
+            if let Some(part) = rows[index].get("part").and_then(Value::as_str) {
+                parts.push((part.to_owned(), data(&rows[index], "part_data")));
+            }
+            index += 1;
+        }
+        // A compaction's summary is the agent's note to itself, not a reply.
+        if message.get("summary").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        match message.get("role").and_then(Value::as_str) {
+            Some("user") => {
+                let text: Vec<&str> = parts
+                    .iter()
+                    .filter(|(_, part)| part.get("type").and_then(Value::as_str) == Some("text"))
+                    .filter(|(_, part)| {
+                        part.get("synthetic").and_then(Value::as_bool) != Some(true)
+                    })
+                    .filter_map(|(_, part)| part.get("text").and_then(Value::as_str))
+                    .collect();
+                if !text.is_empty() {
+                    out.push(json!({ "type": "user", "uuid": id, "message": {
+                        "content": [{ "type": "text", "text": text.join("\n") }],
+                    } }));
+                }
+            }
+            Some("assistant") => {
+                for (part_id, part) in &parts {
+                    match part.get("type").and_then(Value::as_str) {
+                        Some("text") if part.pointer("/time/end").is_some() => {
+                            out.push(json!({ "type": "assistant", "uuid": part_id, "message": {
+                                "content": [{ "type": "text", "text": part.get("text") }],
+                                "stop_reason": "tool_use",
+                            } }));
+                        }
+                        Some("tool") => {
+                            let call = part.get("callID");
+                            out.push(json!({ "type": "assistant", "uuid": part_id, "message": {
+                                "content": [{
+                                    "type": "tool_use",
+                                    "id": call,
+                                    "name": part.get("tool"),
+                                    "input": part.pointer("/state/input"),
+                                }],
+                                "stop_reason": "tool_use",
+                            } }));
+                            let status = part.pointer("/state/status").and_then(Value::as_str);
+                            if matches!(status, Some("completed" | "error")) {
+                                out.push(json!({ "type": "user", "uuid": format!("{part_id}:result"), "message": {
+                                    "content": [{
+                                        "type": "tool_result",
+                                        "tool_use_id": call,
+                                        "is_error": status == Some("error"),
+                                    }],
+                                } }));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                // A failed request ends the turn with what went wrong.
+                if let Some(error) = message.get("error") {
+                    let text = error
+                        .pointer("/data/message")
+                        .or_else(|| error.get("name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("opencode stopped with an error");
+                    out.push(
+                        json!({ "type": "assistant", "uuid": format!("{id}:error"), "message": {
+                        "content": [{ "type": "text", "text": text }],
+                        "stop_reason": "end_turn",
+                    } }),
+                    );
+                } else if message.pointer("/time/completed").is_some()
+                    && message.get("finish").and_then(Value::as_str) != Some("tool-calls")
+                {
+                    out.push(
+                        json!({ "type": "assistant", "uuid": format!("{id}:end"), "message": {
+                        "content": [{ "type": "end" }],
+                        "stop_reason": "end_turn",
+                    } }),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    out.iter().map(|entry| format!("{entry}\n")).collect()
+}
+
+/// pi in a herdr terminal: the session by its id, made when it is new, with
+/// the agent's model and the profile's prompt.
+/// pi has no MCP: a client's tools are left out, its instructions kept.
+fn pi_argv(
+    agent: &HerdrAgent,
+    session: &str,
+    profile: Option<&skills::AgentFile>,
+    instructions: Option<&str>,
+) -> Vec<String> {
+    let mut argv = vec![
+        "pi".to_owned(),
+        "--session-id".to_owned(),
+        session.to_owned(),
+    ];
+    if let Some(model) = &agent.model {
+        argv.extend(["--model".to_owned(), model.clone()]);
+    }
+    let prompt: Vec<&str> = profile
+        .map(|profile| profile.body.as_str())
+        .into_iter()
+        .chain(instructions)
+        .collect();
+    if !prompt.is_empty() {
+        argv.extend(["--append-system-prompt".to_owned(), prompt.join("\n\n")]);
+    }
+    argv
+}
+
+/// pi keeps each session as `<time>_<id>.jsonl` in a folder per working
+/// folder, under `~/.pi/agent/sessions`.
+async fn pi_transcript(session: &str) -> Option<PathBuf> {
+    let root = crate::xdg::home()?.join(".pi/agent/sessions");
+    let suffix = format!("_{session}.jsonl");
+    let mut folders = tokio::fs::read_dir(root).await.ok()?;
+    while let Ok(Some(folder)) = folders.next_entry().await {
+        let Ok(mut files) = tokio::fs::read_dir(folder.path()).await else {
+            continue;
+        };
+        while let Ok(Some(file)) = files.next_entry().await {
+            if file.file_name().to_string_lossy().ends_with(&suffix) {
+                return Some(file.path());
+            }
+        }
+    }
+    None
+}
+
+/// A pi transcript as Claude's: each message a `user` or `assistant` entry
+/// keyed by `uuid`, a tool's result a `tool_result` block, a tool call a
+/// `tool_use` block, and the end of a turn `end_turn`. Lines that are not
+/// messages go. An unfinished last line stays unfinished.
+fn pi_as_claude(text: &str) -> String {
+    let complete = text.rfind('\n').map_or("", |end| &text[..end]);
+    let mut out = String::new();
+    for line in complete.lines() {
+        if let Some(entry) = pi_entry(line) {
+            out.push_str(&entry.to_string());
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn pi_entry(line: &str) -> Option<Value> {
+    let entry: Value = serde_json::from_str(line).ok()?;
+    if entry.get("type")?.as_str()? != "message" {
+        return None;
+    }
+    let id = entry.get("id")?.as_str()?;
+    let message = entry.get("message")?;
+    let blocks = message
+        .get("content")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    Some(match message.get("role")?.as_str()? {
+        "user" => json!({ "type": "user", "uuid": id, "message": { "content": blocks } }),
+        "toolResult" => json!({ "type": "user", "uuid": id, "message": { "content": [{
+            "type": "tool_result",
+            "tool_use_id": message.get("toolCallId"),
+            "is_error": message.get("isError"),
+        }] } }),
+        "assistant" => {
+            let mut content: Vec<Value> = blocks
+                .iter()
+                .map(|block| match block.get("type").and_then(Value::as_str) {
+                    Some("toolCall") => json!({
+                        "type": "tool_use",
+                        "id": block.get("id"),
+                        "name": block.get("name"),
+                        "input": block.get("arguments"),
+                    }),
+                    _ => block.clone(),
+                })
+                .collect();
+            // A failed request ends the turn with what went wrong.
+            if let Some(error) = message.get("errorMessage").and_then(Value::as_str) {
+                content.push(json!({ "type": "text", "text": error }));
+            }
+            let stop = match message.get("stopReason").and_then(Value::as_str) {
+                Some("toolUse") | None => "tool_use",
+                Some(_) => "end_turn",
+            };
+            json!({ "type": "assistant", "uuid": id, "message": { "content": content, "stop_reason": stop } })
+        }
+        _ => return None,
+    })
+}
+
+/// Claude Code's own folder: `CLAUDE_CONFIG_DIR`, else `~/.claude`.
+fn claude_dir() -> Option<PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| crate::xdg::home().map(|home| home.join(".claude")))
+}
+
+/// Claude keeps a session's transcript under its folder's path with every
+/// character that is not a letter or digit made a dash.
+fn transcript_path(cwd: &Path, session: &str) -> PathBuf {
+    let folder: String = cwd
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    claude_dir()
+        .unwrap_or_default()
+        .join("projects")
+        .join(folder)
+        .join(format!("{session}.jsonl"))
+}
+
+/// The kinds of request a session's agent puts to Otto through labels on its
+/// terminal (see [`crate::herdr_tools`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Request {
+    Ask,
+    Permission,
+}
+
+impl Request {
+    /// The label a request of this kind is under, before its id.
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Ask => "otto.ask.",
+            Self::Permission => "otto.permission.",
+        }
+    }
+
+    /// The label its answer goes under, by the request's id.
+    fn answer_key(self, id: &str) -> String {
+        match self {
+            Self::Ask => format!("otto.ask-answer.{id}"),
+            Self::Permission => format!("otto.permission-answer.{id}"),
+        }
+    }
+}
+
+/// The requests of `kind` in a terminal's labels, by their ids.
+fn requests(item: &Value, kind: Request) -> HashMap<String, Value> {
+    let Some(labels) = item.get("labels").and_then(Value::as_object) else {
+        return HashMap::new();
+    };
+    labels
+        .iter()
+        .filter_map(|(key, raw)| {
+            let id = key.strip_prefix(kind.prefix())?;
+            let request: Value = serde_json::from_str(raw.as_str()?).ok()?;
+            (request.get("id").and_then(Value::as_str) == Some(id))
+                .then(|| (id.to_owned(), request))
+        })
+        .collect()
+}
+
+/// What the terminal tells us, merged from herdr's events and the transcript.
+enum Seen {
+    State(String),
+    /// herdr's turn counter, which moves on as each turn of the agent ends.
+    Turn(u64),
+    /// A request in the terminal's labels: an `ask` question or the
+    /// `PermissionRequest` hook's, by [`Request`].
+    Asked(Request, Value),
+    /// A request gone from the labels: answered, or given up.
+    Settled(Request, String),
+    Text(String),
+    /// The agent called a tool, by the transcript.
+    ToolStarted {
+        id: String,
+        name: String,
+        input: Value,
+    },
+    /// A tool's result came back, by the transcript.
+    ToolFinished {
+        id: String,
+        success: bool,
+    },
+    /// The transcript says the agent finished its turn.
+    Ended,
+    /// A prompt in the transcript: Otto's own, or typed in the terminal.
+    Prompt(String),
+    Gone,
+}
+
+async fn drive(
+    terminal: String,
+    transcript: Transcript,
+    cwd: PathBuf,
+    mut commands: mpsc::UnboundedReceiver<SessionCommand>,
+    events: mpsc::UnboundedSender<SessionEvent>,
+) {
+    let (seen_tx, mut seen) = mpsc::unbounded_channel();
+    let watch_events = tokio::spawn(follow_events(terminal.clone(), seen_tx.clone()));
+    let watch_transcript = tokio::spawn(follow_transcript(transcript.clone(), seen_tx));
+
+    // The turn Ask started, and herdr's count of the agent's turns when its
+    // prompt went in: the count moving past it ends the turn.
+    let mut turn: Option<String> = None;
+    let mut went_in: Option<u64> = None;
+    // The questions and permission requests waiting in the terminal's labels.
+    let mut asked: HashSet<String> = HashSet::new();
+    let mut permitting: HashSet<String> = HashSet::new();
+    // Each permission answered: its id, whether it is allowed, and the
+    // suggestion picked to stop asking.
+    let (decided_tx, mut decided) = mpsc::unbounded_channel::<(String, bool, Option<usize>)>();
+    // A prompt typed into an agent still starting up is dropped: hold prompts
+    // until herdr has seen it ready, or long enough has passed.
+    let mut ready = false;
+    let mut held: Vec<String> = Vec::new();
+    // herdr reports no state for pi or opencode: for pi, a short wait for it
+    // to start; for opencode, its footer on screen, which takes longer while
+    // it starts MCP servers.
+    let patience: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> = match transcript
+    {
+        Transcript::Claude(_) => Box::pin(tokio::time::sleep(Duration::from_secs(20))),
+        Transcript::Pi(..) => Box::pin(tokio::time::sleep(Duration::from_secs(3))),
+        Transcript::OpenCode(_) => Box::pin(shows(
+            terminal.clone(),
+            OPENCODE_READY,
+            Duration::from_secs(30),
+        )),
+    };
+    tokio::pin!(patience);
+    // When herdr's count says the turn ended, the transcript has a grace
+    // period to end it first.
+    let mut fallback: Option<tokio::time::Instant> = None;
+    // Prompts Otto typed in and has not yet seen in the transcript: any
+    // other prompt there was typed in the terminal.
+    let mut sent: Vec<String> = Vec::new();
+    // herdr's latest word on the agent, and the status last reported from it.
+    let mut herdr_state = String::new();
+    let mut herdr_turn: Option<u64> = None;
+    let mut reported: u32 = 0;
+    let (answer_tx, mut answers) =
+        mpsc::unbounded_channel::<(String, Option<InputAnswer>, Value)>();
+    // Claude writes a tool call to its transcript before its permission hook
+    // asks about it: a tool call waits this long before it shows, so a
+    // permission request can claim it and show as the question instead.
+    let claimable = matches!(transcript, Transcript::Claude(_));
+    let mut unclaimed = Unclaimed::new();
+    // The tool call each permission request claimed, by the request's id.
+    let mut claimed: HashMap<String, String> = HashMap::new();
+
+    loop {
+        let now = status_bits(&herdr_state, !asked.is_empty() || !permitting.is_empty());
+        if now != reported {
+            reported = now;
+            let _ = events.send(SessionEvent::Outside(now));
+        }
+        tokio::select! {
+            command = commands.recv() => match command {
+                Some(SessionCommand::Prompt { turn_id, text, attachments, .. }) => {
+                    let mut prompt = String::new();
+                    for attachment in &attachments {
+                        if let Some(path) = crate::uri::to_path(&attachment.uri) {
+                            prompt.push_str(&format!("@{} ", path.display()));
+                        }
+                    }
+                    prompt.push_str(&text);
+                    sent.push(prompt.trim().to_owned());
+                    turn = Some(turn_id);
+                    went_in = None;
+                    if ready {
+                        went_in = deliver(&terminal, &prompt, &mut turn, &events).await;
+                    } else {
+                        held.push(prompt);
+                    }
+                }
+                Some(SessionCommand::Cancel { .. }) => {
+                    let _ = herdr_core::call("terminal.interrupt", json!({ "terminal": terminal })).await;
+                }
+                Some(SessionCommand::SetMode { .. }) => {}
+                // The session is closed in Otto; herdr keeps the terminal.
+                None => break,
+            },
+            () = async { tokio::time::sleep_until(fallback.unwrap_or_else(tokio::time::Instant::now)).await }, if fallback.is_some() => {
+                fallback = None;
+                if asked.is_empty() && permitting.is_empty() {
+                    end(&mut turn, &events);
+                }
+            }
+            () = async {
+                let due = unclaimed.values().map(|(.., due)| *due).min();
+                tokio::time::sleep_until(due.unwrap_or_else(tokio::time::Instant::now)).await
+            }, if !unclaimed.is_empty() => {
+                let now = tokio::time::Instant::now();
+                let due: Vec<String> = unclaimed
+                    .iter()
+                    .filter(|(_, (.., due))| *due <= now)
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for id in due {
+                    if let Some((name, input, _)) = unclaimed.remove(&id) {
+                        show_tool(&events, &turn, id, &name, &input);
+                    }
+                }
+            }
+            () = &mut patience, if !ready => {
+                ready = true;
+                for prompt in held.drain(..) {
+                    went_in = deliver(&terminal, &prompt, &mut turn, &events).await;
+                }
+            }
+            Some(item) = seen.recv() => match item {
+                Seen::State(state) => {
+                    herdr_state = state.clone();
+                    tracing::debug!(%terminal, %state, ready, turn = ?turn, went_in = ?went_in, asked = ?asked, "herdr state");
+                    if !ready && matches!(state.as_str(), "idle" | "done") {
+                        ready = true;
+                        for prompt in held.drain(..) {
+                            went_in = deliver(&terminal, &prompt, &mut turn, &events).await;
+                        }
+                    }
+                }
+                Seen::Turn(count) => {
+                    herdr_turn = Some(count);
+                    // herdr counts the turn ended a little before the
+                    // transcript has the last words: the transcript ends the
+                    // turn, herdr's count only after a grace period.
+                    if went_in.is_some_and(|went_in| count > went_in) {
+                        went_in = None;
+                        if asked.is_empty() && permitting.is_empty() {
+                            fallback = Some(tokio::time::Instant::now() + Duration::from_secs(3));
+                        }
+                    }
+                }
+                Seen::Prompt(prompt) => {
+                    match sent.iter().position(|ours| *ours == prompt.trim()) {
+                        Some(index) => {
+                            sent.remove(index);
+                        }
+                        // Typed in the terminal: it gets a turn in the chat
+                        // like one sent from Otto.
+                        None if turn.is_none() => {
+                            let turn_id = uuid::Uuid::new_v4().to_string();
+                            let _ = events.send(SessionEvent::TurnStarted {
+                                turn_id: turn_id.clone(),
+                                prompt,
+                            });
+                            let _ = events.send(SessionEvent::Active);
+                            turn = Some(turn_id);
+                            went_in = herdr_turn;
+                        }
+                        None => {}
+                    }
+                }
+                Seen::Ended => {
+                    if asked.is_empty() && permitting.is_empty() {
+                        fallback = None;
+                        went_in = None;
+                        end(&mut turn, &events);
+                    }
+                }
+                Seen::ToolStarted { id, name, input } => {
+                    if claimable {
+                        let due = tokio::time::Instant::now() + Duration::from_secs(1);
+                        unclaimed.insert(id, (name, input, due));
+                    } else {
+                        show_tool(&events, &turn, id, &name, &input);
+                    }
+                }
+                Seen::ToolFinished { id, success } => {
+                    if let Some((name, input, _)) = unclaimed.remove(&id) {
+                        show_tool(&events, &turn, id.clone(), &name, &input);
+                    }
+                    if let Some(turn_id) = &turn {
+                        let _ = events.send(SessionEvent::ToolCallFinished {
+                            turn_id: turn_id.clone(),
+                            tool_call_id: id,
+                            success,
+                        });
+                    }
+                }
+                Seen::Text(text) => {
+                    if let Some(turn_id) = &turn {
+                        let _ = events.send(SessionEvent::MessageChunk {
+                            turn_id: turn_id.clone(),
+                            text,
+                        });
+                    }
+                }
+                Seen::Asked(Request::Ask, request) => {
+                    let Some(id) = request.get("id").and_then(Value::as_str).map(str::to_owned) else {
+                        continue;
+                    };
+                    if !asked.insert(id.clone()) {
+                        continue;
+                    }
+                    let questions = request.get("questions").cloned().unwrap_or(Value::Null);
+                    let schema = schema(&questions);
+                    let form = elicitation::form(&id, "", &schema);
+                    let (reply, wait) = oneshot::channel();
+                    let turn_id = turn.clone().unwrap_or_default();
+                    let _ = events.send(SessionEvent::InputRequested {
+                        turn_id,
+                        request: form.request.clone(),
+                        reply,
+                    });
+                    let answer_tx = answer_tx.clone();
+                    tokio::spawn(async move {
+                        let answer = wait.await.ok();
+                        let labels = match &answer {
+                            Some(InputAnswer { response: ChatInputResponseKind::Accept, answers }) => {
+                                to_labels(&questions, &elicitation::content(&form, answers))
+                            }
+                            _ => Value::Null,
+                        };
+                        let _ = answer_tx.send((id, answer, labels));
+                    });
+                }
+                Seen::Asked(Request::Permission, request) => {
+                    let Some(id) = request.get("id").and_then(Value::as_str).map(str::to_owned) else {
+                        continue;
+                    };
+                    if !permitting.insert(id.clone()) {
+                        continue;
+                    }
+                    let tool_call_id = claim(&mut unclaimed, &request).unwrap_or_else(|| id.clone());
+                    claimed.insert(id.clone(), tool_call_id.clone());
+                    let question = permission_question(&tool_call_id, &request, &cwd);
+                    let (reply, wait) = oneshot::channel();
+                    let _ = events.send(SessionEvent::PermissionRequested {
+                        turn_id: turn.clone().unwrap_or_default(),
+                        question: Box::new(question),
+                        reply,
+                    });
+                    let decided_tx = decided_tx.clone();
+                    tokio::spawn(async move {
+                        let decision = wait.await.ok();
+                        let allow = decision.as_ref().is_some_and(|decision| decision.approved());
+                        let always = decision
+                            .as_ref()
+                            .and_then(|decision| decision.option_id())
+                            .and_then(|option| option.strip_prefix(ALWAYS))
+                            .and_then(|index| index.parse().ok());
+                        let _ = decided_tx.send((id, allow, always));
+                    });
+                }
+                // Answered from Otto, this takes down nothing; answered in
+                // the terminal or given up, the question comes down in Otto.
+                Seen::Settled(kind, id) => {
+                    let pending = match kind {
+                        Request::Ask => &mut asked,
+                        Request::Permission => &mut permitting,
+                    };
+                    if pending.remove(&id) {
+                        let id = claimed.remove(&id).unwrap_or(id);
+                        let _ = events.send(SessionEvent::RequestWithdrawn(id));
+                    }
+                }
+                Seen::Gone => {
+                    let _ = events.send(SessionEvent::Running(false));
+                    if let Some(turn_id) = turn.take() {
+                        let _ = events.send(SessionEvent::TurnEnded {
+                            turn_id,
+                            outcome: TurnOutcome::Failed("the terminal ended".into()),
+                        });
+                    }
+                    break;
+                }
+            },
+            Some((id, allow, always)) = decided.recv() => {
+                // A request no longer waiting gets no answer: it would stay.
+                claimed.remove(&id);
+                if !permitting.remove(&id) {
+                    continue;
+                }
+                let reply = json!({ "id": id, "allow": allow, "always": always }).to_string();
+                let key = Request::Permission.answer_key(&id);
+                let _ = herdr_core::label(&terminal, [(key.as_str(), reply.as_str())]).await;
+            }
+            Some((id, answer, labels)) = answers.recv() => {
+                if !asked.remove(&id) {
+                    continue;
+                }
+                let answered = matches!(&answer, Some(InputAnswer { response: ChatInputResponseKind::Accept, .. }));
+                let reply = if answered {
+                    json!({ "id": id, "answers": labels })
+                } else {
+                    json!({ "id": id, "answers": {}, "declined": true })
+                };
+                let reply = reply.to_string();
+                let key = Request::Ask.answer_key(&id);
+                let _ = herdr_core::label(&terminal, [(key.as_str(), reply.as_str())]).await;
+            }
+        }
+    }
+    if reported != 0 {
+        let _ = events.send(SessionEvent::Outside(0));
+    }
+    watch_events.abort();
+    watch_transcript.abort();
+}
+
+/// The hook's request, `{tool_name, tool_input}`, as a permission question:
+/// built as the ACP request Claude's adapter would send, so the card shows
+/// the command, or the file with its diff, as it does for ACP sessions.
+fn permission_question(id: &str, request: &Value, cwd: &Path) -> crate::agent::Question {
+    use agent_client_protocol::schema::v1::{
+        Diff, PermissionOption, PermissionOptionKind, RequestPermissionRequest, ToolCallContent,
+        ToolCallLocation, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    };
+    let tool = request
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let input = request.get("tool_input").cloned().unwrap_or(Value::Null);
+    let text = |key: &str| input.get(key).and_then(Value::as_str);
+    let mut fields = ToolCallUpdateFields::new();
+    fields.kind = Some(match tool {
+        "Bash" => ToolKind::Execute,
+        "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => ToolKind::Edit,
+        "Read" | "Glob" | "Grep" => ToolKind::Read,
+        "WebFetch" | "WebSearch" => ToolKind::Fetch,
+        _ => ToolKind::Other,
+    });
+    let path = text("file_path").or_else(|| text("notebook_path"));
+    fields.title = Some(tool_title(tool, &input));
+    if let Some(path) = path {
+        fields.locations = Some(vec![ToolCallLocation::new(path)]);
+        let diff = match tool {
+            "Write" => text("content").map(|new| Diff::new(path, new)),
+            "Edit" => text("new_string")
+                .map(|new| Diff::new(path, new).old_text(text("old_string").map(str::to_owned))),
+            _ => None,
+        };
+        if let Some(diff) = diff {
+            fields.content = Some(vec![ToolCallContent::from(diff)]);
+        }
+    }
+    fields.raw_input = Some(input);
+    // Allow, then each of Claude's "don't ask again" suggestions, then Reject:
+    // the choices Claude's own prompt offers.
+    let suggestions = request
+        .get("suggestions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, suggestion)| {
+            let label = suggestion_label(suggestion)?;
+            Some(PermissionOption::new(
+                format!("{ALWAYS}{index}"),
+                label,
+                PermissionOptionKind::AllowAlways,
+            ))
+        });
+    let options = std::iter::once(PermissionOption::new(
+        "allow",
+        "Allow",
+        PermissionOptionKind::AllowOnce,
+    ))
+    .chain(suggestions)
+    .chain([PermissionOption::new(
+        "reject",
+        "Reject",
+        PermissionOptionKind::RejectOnce,
+    )])
+    .collect();
+    let request = RequestPermissionRequest::new(
+        id.to_owned(),
+        ToolCallUpdate::new(id.to_owned(), fields),
+        options,
+    );
+    crate::dialog::question_for("Claude", None, cwd, &request)
+}
+
+/// A permission option's id for Claude's suggestion at the index after it.
+const ALWAYS: &str = "always-";
+
+/// One of Claude's `permission_suggestions` as an option reads: "Always allow
+/// Bash(npm test) in this project". `None` for one this does not offer: a
+/// rule that denies or asks, or a change it cannot name.
+fn suggestion_label(suggestion: &Value) -> Option<String> {
+    let text = |key: &str| suggestion.get(key).and_then(Value::as_str);
+    let place = match text("destination") {
+        Some("session") => " for this session",
+        Some("localSettings") => " in this project",
+        Some("projectSettings") => " in this project, for everyone",
+        Some("userSettings") => " everywhere",
+        _ => "",
+    };
+    let list = |key: &str| {
+        suggestion
+            .get(key)
+            .and_then(Value::as_array)
+            .filter(|items| !items.is_empty())
+    };
+    match text("type")? {
+        "addRules" if text("behavior") == Some("allow") => {
+            let rules: Vec<String> = list("rules")?
+                .iter()
+                .filter_map(|rule| {
+                    let tool = rule.get("toolName")?.as_str()?;
+                    Some(match rule.get("ruleContent").and_then(Value::as_str) {
+                        Some(content) => format!("{tool}({content})"),
+                        None => tool.to_owned(),
+                    })
+                })
+                .collect();
+            (!rules.is_empty()).then(|| format!("Always allow {}{place}", rules.join(", ")))
+        }
+        "setMode" => Some(match text("mode")? {
+            "acceptEdits" => format!("Allow all edits{place}"),
+            mode => format!("Switch to {mode} mode{place}"),
+        }),
+        "addDirectories" => {
+            let folders: Vec<&str> = list("directories")?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            Some(format!("Always allow {}{place}", folders.join(", ")))
+        }
+        _ => None,
+    }
+}
+
+/// The integrations of `wanted` that `herdr integration status` lists, one
+/// `name: state (path)` line each, as anything but current.
+fn missing_integrations<'a>(status: &str, wanted: &[&'a str]) -> Vec<&'a str> {
+    wanted
+        .iter()
+        .copied()
+        .filter(|name| {
+            status.lines().any(|line| {
+                line.strip_prefix(name)
+                    .and_then(|rest| rest.strip_prefix(": "))
+                    .is_some_and(|state| !state.starts_with("current"))
+            })
+        })
+        .collect()
+}
+
+/// What herdr says the agent is doing, as session status bits.
+fn status_bits(state: &str, asking: bool) -> u32 {
+    if asking || state == "blocked" {
+        SessionStatus::InputNeeded.bits()
+    } else if state == "working" {
+        SessionStatus::InProgress.bits()
+    } else {
+        0
+    }
+}
+
+/// Tool calls from the transcript not shown yet: name, input, and when
+/// they show.
+type Unclaimed = HashMap<String, (String, Value, tokio::time::Instant)>;
+
+/// Takes the tool call a permission request asks about out of `unclaimed`:
+/// the one with its tool and input (as the hook passes it on, shortened).
+fn claim(unclaimed: &mut Unclaimed, request: &Value) -> Option<String> {
+    let name = request.get("tool_name").and_then(Value::as_str)?;
+    let input = request.get("tool_input").unwrap_or(&Value::Null);
+    let call = unclaimed
+        .iter()
+        .find(|(_, (called, given, _))| {
+            called == name && crate::herdr_tools::shortened(given.clone()) == *input
+        })
+        .map(|(call, _)| call.clone())?;
+    unclaimed.remove(&call);
+    Some(call)
+}
+
+/// Shows a tool call that needs no permission in `turn`, if there is one.
+fn show_tool(
+    events: &mpsc::UnboundedSender<SessionEvent>,
+    turn: &Option<String>,
+    id: String,
+    name: &str,
+    input: &Value,
+) {
+    let Some(turn_id) = turn else {
+        return;
+    };
+    let _ = events.send(SessionEvent::ToolCallStarted {
+        turn_id: turn_id.clone(),
+        tool_call_id: id,
+        tool_name: name.to_owned(),
+        title: tool_title(name, input),
+        input: (!input.is_null()).then(|| input.to_string()),
+    });
+}
+
+fn end(turn: &mut Option<String>, events: &mpsc::UnboundedSender<SessionEvent>) {
+    if let Some(turn_id) = turn.take() {
+        let _ = events.send(SessionEvent::TurnEnded {
+            turn_id,
+            outcome: TurnOutcome::Complete,
+        });
+    }
+}
+
+/// The prompt a transcript line holds, when it is one you wrote: not a tool's
+/// result, a slash command or the harness's own note.
+fn prompt_of(line: &str) -> Option<String> {
+    let entry = serde_json::from_str::<Value>(line).ok()?;
+    let flag = |name: &str| entry.get(name).and_then(Value::as_bool) == Some(true);
+    if entry.get("type").and_then(Value::as_str) != Some("user")
+        || flag("isMeta")
+        || flag("isSidechain")
+        || flag("isCompactSummary")
+    {
+        return None;
+    }
+    let text = match entry.pointer("/message/content")? {
+        Value::String(text) => text.clone(),
+        Value::Array(blocks) => blocks
+            .iter()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => return None,
+    };
+    let text = text.trim();
+    (!text.is_empty() && !text.starts_with('<')).then(|| text.to_owned())
+}
+
+/// Whether a transcript line is the assistant finishing its turn.
+///
+/// Claude writes each block of its last message as an entry of its own, all
+/// marked `end_turn`, thinking first: only a block that is not thinking ends
+/// the turn, or the text written after it would be lost.
+fn ends_turn(line: &str) -> bool {
+    serde_json::from_str::<Value>(line).is_ok_and(|entry| {
+        let said = entry
+            .pointer("/message/content")
+            .and_then(Value::as_array)
+            .is_some_and(|blocks| {
+                blocks.iter().any(|block| {
+                    !matches!(
+                        block.get("type").and_then(Value::as_str),
+                        Some("thinking" | "redacted_thinking")
+                    )
+                })
+            });
+        entry.get("type").and_then(Value::as_str) == Some("assistant")
+            && entry
+                .pointer("/message/stop_reason")
+                .and_then(Value::as_str)
+                == Some("end_turn")
+            && said
+    })
+}
+
+/// What opencode's footer shows once it takes input.
+const OPENCODE_READY: &str = "ctrl+p commands";
+
+/// Waits until the terminal's screen shows `text`, or `limit` has passed.
+async fn shows(terminal: String, text: &str, limit: Duration) {
+    let deadline = tokio::time::Instant::now() + limit;
+    while tokio::time::Instant::now() < deadline {
+        let screen =
+            herdr_core::call("terminal.read", json!({ "terminal": terminal, "lines": 0 })).await;
+        let shown = screen.is_ok_and(|screen| {
+            screen
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|screen| screen.contains(text))
+        });
+        if shown {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// Types `prompt` into the terminal, once it is sure the agent is in front;
+/// herdr's count of the agent's turns when it went in.
+async fn send(terminal: &str, prompt: &str) -> Result<Option<u64>, String> {
+    let item = get(terminal)
+        .await
+        .ok_or_else(|| "herdr no longer has the terminal".to_owned())?;
+    if !holds_agent(&item) {
+        return Err("the agent is no longer running in its terminal".to_owned());
+    }
+    herdr_core::call(
+        "terminal.send",
+        json!({ "terminal": terminal, "text": prompt }),
+    )
+    .await
+    .map(|sent| sent.get("turn").and_then(Value::as_u64))
+    .map_err(|error| format!("the prompt did not reach the agent: {}", error.message))
+}
+
+/// [`send`], ending the turn as failed when the prompt does not get there.
+async fn deliver(
+    terminal: &str,
+    prompt: &str,
+    turn: &mut Option<String>,
+    events: &mpsc::UnboundedSender<SessionEvent>,
+) -> Option<u64> {
+    match send(terminal, prompt).await {
+        Ok(went_in) => went_in,
+        Err(error) => {
+            tracing::warn!(%terminal, %error, "a prompt was not sent");
+            if let Some(turn_id) = turn.take() {
+                let _ = events.send(SessionEvent::TurnEnded {
+                    turn_id,
+                    outcome: TurnOutcome::Failed(error),
+                });
+            }
+            None
+        }
+    }
+}
+
+/// herdr's view of the terminal: its status and the requests in its labels,
+/// kept current from the changes herdr-core reports.
+async fn follow_events(terminal: String, seen: mpsc::UnboundedSender<Seen>) {
+    let Ok(mut subscription) = herdr_core::subscribe(json!({ "terminal": terminal })).await else {
+        let _ = seen.send(Seen::Gone);
+        return;
+    };
+    let mut state = String::new();
+    let mut count: Option<u64> = None;
+    let mut waiting: HashSet<(Request, String)> = HashSet::new();
+    let mut item = json!({ "address": terminal });
+    let mut items = std::mem::take(&mut subscription.snapshot);
+    loop {
+        for fresh in items.drain(..) {
+            if fresh.get("address").and_then(Value::as_str) == Some(terminal.as_str()) {
+                item = fresh;
+            }
+        }
+        {
+            let item = &item;
+            if item.get("state").and_then(Value::as_str) == Some("finished") {
+                let _ = seen.send(Seen::Gone);
+                return;
+            }
+            // A shell whose hand-started Claude quit, the shell itself in
+            // front again (not a tool Claude runs): the session is gone from
+            // it, though the shell runs on.
+            let shell_in_front = !runs_agent_itself(item)
+                && item
+                    .pointer("/foreground/pid")
+                    .and_then(Value::as_u64)
+                    .is_some()
+                && item.pointer("/foreground/pid") == item.get("pid");
+            if shell_in_front {
+                let_go(&terminal).await;
+                let _ = seen.send(Seen::Gone);
+                return;
+            }
+            let now = item
+                .pointer("/status/state")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            if now != state {
+                state = now.clone();
+                let _ = seen.send(Seen::State(now));
+            }
+            let turn = item.get("turn").and_then(Value::as_u64);
+            if turn != count {
+                count = turn;
+                if let Some(turn) = turn {
+                    let _ = seen.send(Seen::Turn(turn));
+                }
+            }
+            for kind in [Request::Ask, Request::Permission] {
+                let now = requests(item, kind);
+                let gone: Vec<String> = waiting
+                    .iter()
+                    .filter(|(was, id)| *was == kind && !now.contains_key(id))
+                    .map(|(_, id)| id.clone())
+                    .collect();
+                for id in gone {
+                    waiting.remove(&(kind, id.clone()));
+                    let _ = seen.send(Seen::Settled(kind, id));
+                }
+                for (id, request) in now {
+                    if waiting.insert((kind, id)) {
+                        let _ = seen.send(Seen::Asked(kind, request));
+                    }
+                }
+            }
+        }
+        match subscription.next().await {
+            None => break,
+            Some(herdr_core::Event::Missed(terminals)) => items = terminals,
+            Some(herdr_core::Event::Changed { kind, .. }) if kind == "removed" => break,
+            Some(herdr_core::Event::Changed { kind, data, .. }) => {
+                herdr_core::Event::apply(&mut item, &kind, &data)
+            }
+        }
+    }
+    let _ = seen.send(Seen::Gone);
+}
+
+/// The agent's text, as Claude writes it to the transcript. Only entries
+/// written after the session is opened here: earlier ones are history.
+/// Entries are told apart by their `uuid`, not their place in the file, as a
+/// resumed Claude rewrites the file rather than only appending to it.
+async fn follow_transcript(transcript: Transcript, seen: mpsc::UnboundedSender<Seen>) {
+    let mut known: HashSet<String> = entries(&transcript.read().await)
+        .map(|(key, _)| key)
+        .collect();
+    let mut last = None;
+    loop {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let Some(path) = transcript.path().await else {
+            continue;
+        };
+        // Its size and time: a write-ahead log is rewritten at one size.
+        let Ok(now) = tokio::fs::metadata(&path)
+            .await
+            .map(|m| (m.len(), m.modified().ok()))
+        else {
+            continue;
+        };
+        if last == Some(now) {
+            continue;
+        }
+        last = Some(now);
+        let text = transcript.read().await;
+        for (key, line) in entries(&text) {
+            if !known.insert(key) {
+                continue;
+            }
+            for text in assistant_text(line) {
+                if seen.send(Seen::Text(text)).is_err() {
+                    return;
+                }
+            }
+            for tool in tool_calls(line) {
+                if seen.send(tool).is_err() {
+                    return;
+                }
+            }
+            if let Some(prompt) = prompt_of(line) {
+                if seen.send(Seen::Prompt(prompt)).is_err() {
+                    return;
+                }
+            }
+            if ends_turn(line) && seen.send(Seen::Ended).is_err() {
+                return;
+            }
+        }
+    }
+}
+
+/// The complete lines of a transcript, each with what identifies it: its
+/// `uuid`, or the line itself for the few entries without one.
+fn entries(text: &str) -> impl Iterator<Item = (String, &str)> {
+    let complete = text.rfind('\n').map_or("", |end| &text[..end]);
+    complete
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let key = serde_json::from_str::<Value>(line)
+                .ok()
+                .and_then(|entry| entry.get("uuid")?.as_str().map(str::to_owned))
+                .unwrap_or_else(|| line.to_owned());
+            (key, line)
+        })
+}
+
+/// The conversation in a transcript, as turns: each prompt you wrote, and
+/// what the agent said and which tools it ran in answer.
+fn history(transcript: &str) -> Vec<HistoryTurn> {
+    let mut turns: Vec<HistoryTurn> = Vec::new();
+    for line in transcript.lines() {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let flag = |name: &str| entry.get(name).and_then(Value::as_bool) == Some(true);
+        // A compaction's summary is written as a prompt; it is Claude's note
+        // to itself, not something you wrote.
+        if flag("isMeta") || flag("isSidechain") || flag("isCompactSummary") {
+            continue;
+        }
+        let content = entry.pointer("/message/content");
+        match entry.get("type").and_then(Value::as_str) {
+            Some("user") => {
+                // A tool's result comes back as a user entry: it settles the
+                // call, it is not a prompt.
+                let results = content.and_then(Value::as_array).into_iter().flatten();
+                for block in results {
+                    if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+                        continue;
+                    }
+                    let id = block.get("tool_use_id").and_then(Value::as_str);
+                    let failed = block.get("is_error").and_then(Value::as_bool) == Some(true);
+                    if let (Some(id), Some(turn)) = (id, turns.last_mut()) {
+                        for part in &mut turn.parts {
+                            if let HistoryPart::ToolCall {
+                                tool_call_id,
+                                success,
+                                ..
+                            } = part
+                            {
+                                if tool_call_id == id {
+                                    *success = !failed;
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(prompt) = prompt_of(line) {
+                    turns.push(HistoryTurn {
+                        prompt,
+                        ..HistoryTurn::default()
+                    });
+                }
+            }
+            Some("assistant") => {
+                let Some(turn) = turns.last_mut() else {
+                    continue;
+                };
+                for block in content.and_then(Value::as_array).into_iter().flatten() {
+                    match block.get("type").and_then(Value::as_str) {
+                        Some("text") => {
+                            if let Some(text) = block.get("text").and_then(Value::as_str) {
+                                turn.parts.push(HistoryPart::Message(format!("{text}\n\n")));
+                            }
+                        }
+                        Some("tool_use") => {
+                            let id = block.get("id").and_then(Value::as_str).unwrap_or_default();
+                            let name = block
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
+                            turn.parts.push(HistoryPart::ToolCall {
+                                tool_call_id: id.to_owned(),
+                                title: name.to_owned(),
+                                success: true,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    turns
+}
+
+/// The tools one transcript line starts (the assistant's `tool_use` blocks)
+/// or settles (the `tool_result` blocks of a user line).
+fn tool_calls(line: &str) -> Vec<Seen> {
+    let Ok(entry) = serde_json::from_str::<Value>(line) else {
+        return Vec::new();
+    };
+    let flag = |name: &str| entry.get(name).and_then(Value::as_bool) == Some(true);
+    if flag("isSidechain") {
+        return Vec::new();
+    }
+    let kind = entry.get("type").and_then(Value::as_str);
+    let blocks = entry
+        .pointer("/message/content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    let text = |block: &Value, key: &str| block.get(key).and_then(Value::as_str).map(str::to_owned);
+    blocks
+        .filter_map(
+            |block| match (kind, block.get("type").and_then(Value::as_str)) {
+                (Some("assistant"), Some("tool_use")) => Some(Seen::ToolStarted {
+                    id: text(block, "id")?,
+                    name: text(block, "name").unwrap_or_default(),
+                    input: block.get("input").cloned().unwrap_or(Value::Null),
+                }),
+                (Some("user"), Some("tool_result")) => Some(Seen::ToolFinished {
+                    id: text(block, "tool_use_id")?,
+                    success: block.get("is_error").and_then(Value::as_bool) != Some(true),
+                }),
+                _ => None,
+            },
+        )
+        .collect()
+}
+
+/// How the chat names a tool call: its command, the tool and its file, or
+/// the tool alone.
+fn tool_title(tool: &str, input: &Value) -> String {
+    let text = |key: &str| input.get(key).and_then(Value::as_str);
+    let path = ["file_path", "notebook_path", "filePath", "path"]
+        .into_iter()
+        .find_map(text);
+    match (text("command"), path) {
+        (Some(command), _) => command.to_owned(),
+        (None, Some(path)) => format!("{tool} {path}"),
+        _ => tool.to_owned(),
+    }
+}
+
+/// The text blocks of one transcript line, when it is the assistant's.
+fn assistant_text(line: &str) -> Vec<String> {
+    let Ok(entry) = serde_json::from_str::<Value>(line) else {
+        return Vec::new();
+    };
+    if entry.get("type").and_then(Value::as_str) != Some("assistant") {
+        return Vec::new();
+    }
+    entry
+        .pointer("/message/content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|block| block.get("text").and_then(Value::as_str))
+        .map(|text| format!("{text}\n\n"))
+        .collect()
+}
+
+/// The `ask` tool's questions as the elicitation schema claude-agent-acp sends
+/// for AskUserQuestion, so the existing form mapping applies.
+fn schema(questions: &Value) -> Value {
+    let mut properties = serde_json::Map::new();
+    for (index, question) in questions.as_array().into_iter().flatten().enumerate() {
+        let id = format!("question_{index}");
+        let text = question
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let title = question
+            .get("header")
+            .and_then(Value::as_str)
+            .unwrap_or(text);
+        let options: Vec<Value> = question
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|option| {
+                let label = option.get("label")?.as_str()?;
+                let mut choice = json!({ "const": label, "title": label });
+                if let Some(description) = option.get("description").and_then(Value::as_str) {
+                    choice["description"] = json!(description);
+                }
+                Some(choice)
+            })
+            .collect();
+        let field = if question.get("multiSelect").and_then(Value::as_bool) == Some(true) {
+            json!({ "type": "array", "title": title, "description": text, "items": { "anyOf": options } })
+        } else {
+            json!({ "type": "string", "title": title, "description": text, "oneOf": options })
+        };
+        properties.insert(id.clone(), field);
+        properties.insert(
+            format!("{id}_custom"),
+            json!({
+                "type": "string",
+                "title": "Other",
+                "_meta": { "_askUserQuestionCustomAnswer": { "questionId": id, "isCustomAnswer": true } },
+            }),
+        );
+    }
+    json!({ "type": "object", "properties": properties })
+}
+
+mod elicitation_content {
+    use std::collections::BTreeMap;
+
+    use agent_client_protocol::schema::v1::ElicitationContentValue;
+    use serde_json::{Value, json};
+
+    /// The form's field values back as `{question text: answer}`, what the
+    /// `ask` tool returns to the agent.
+    pub fn to_labels(
+        questions: &Value,
+        content: &BTreeMap<String, ElicitationContentValue>,
+    ) -> Value {
+        let mut answers = serde_json::Map::new();
+        for (index, question) in questions.as_array().into_iter().flatten().enumerate() {
+            let text = question
+                .get("question")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let id = format!("question_{index}");
+            let mut parts: Vec<String> = match content.get(&id) {
+                Some(ElicitationContentValue::String(value)) => vec![value.clone()],
+                Some(ElicitationContentValue::StringArray(values)) => values.clone(),
+                _ => Vec::new(),
+            };
+            if let Some(ElicitationContentValue::String(other)) =
+                content.get(&format!("{id}_custom"))
+            {
+                parts.push(other.clone());
+            }
+            answers.insert(text.to_owned(), json!(parts.join(", ")));
+        }
+        Value::Object(answers)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_integrations_herdr_lists_as_not_installed_are_installed() {
+        let status = "pi: not installed (/home/u/.pi/agent/extensions/herdr-agent-state.ts)\n\
+                      omp: not installed (/home/u/.omp/agent/extensions/x.ts)\n\
+                      claude: current (v11) (/home/u/.claude/hooks/herdr-agent-state.sh)\n\
+                      opencode: not installed (/home/u/.config/opencode/plugins/x.js)\n";
+        assert_eq!(
+            missing_integrations(status, &["claude", "opencode", "pi"]),
+            ["opencode", "pi"]
+        );
+        assert!(missing_integrations("", &["claude"]).is_empty());
+    }
+
+    #[test]
+    fn tool_calls_come_from_the_transcript() {
+        let called = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Looking"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#;
+        let [Seen::ToolStarted { id, name, input }] = &tool_calls(called)[..] else {
+            panic!("one tool call");
+        };
+        assert_eq!((id.as_str(), name.as_str()), ("t1", "Bash"));
+        assert_eq!(tool_title(name, input), "ls");
+
+        let failed = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true}]}}"#;
+        let [Seen::ToolFinished { id, success }] = &tool_calls(failed)[..] else {
+            panic!("one result");
+        };
+        assert_eq!((id.as_str(), *success), ("t1", false));
+
+        let subagent = r#"{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"tool_use","id":"t2","name":"Read","input":{}}]}}"#;
+        assert!(tool_calls(subagent).is_empty());
+        assert_eq!(tool_title("Read", &json!({"file_path": "/a"})), "Read /a");
+        assert_eq!(tool_title("read", &json!({"path": "b"})), "read b");
+    }
+
+    #[test]
+    fn a_permission_request_claims_its_tool_call() {
+        let due = tokio::time::Instant::now();
+        let long = "x".repeat(crate::herdr_tools::LONGEST_TEXT * 2);
+        let mut unclaimed = Unclaimed::from([
+            (
+                "ls".to_owned(),
+                ("Bash".to_owned(), json!({"command": "ls"}), due),
+            ),
+            (
+                "big".to_owned(),
+                ("Write".to_owned(), json!({"content": long}), due),
+            ),
+        ]);
+        let asked = |tool: &str, input: Value| json!({"tool_name": tool, "tool_input": input});
+
+        assert_eq!(
+            claim(&mut unclaimed, &asked("Bash", json!({"command": "pwd"}))),
+            None
+        );
+        assert_eq!(
+            claim(&mut unclaimed, &asked("Read", json!({"command": "ls"}))),
+            None
+        );
+        let shortened = crate::herdr_tools::shortened(json!({"content": long}));
+        assert_eq!(
+            claim(&mut unclaimed, &asked("Write", shortened)).as_deref(),
+            Some("big")
+        );
+        assert_eq!(
+            claim(&mut unclaimed, &asked("Bash", json!({"command": "ls"}))).as_deref(),
+            Some("ls")
+        );
+        assert!(unclaimed.is_empty());
+    }
+
+    #[test]
+    fn a_studio_session_gets_its_tools_and_instructions() {
+        let backend = HerdrBackend::new(&crate::config::Config::default());
+        let spec = SessionSpec {
+            provider: PROVIDER.to_owned(),
+            cwd: PathBuf::from("/tmp"),
+            resume: None,
+            attached: Vec::new(),
+            mcp_servers: vec![crate::agent::McpStdio {
+                name: "preview".to_owned(),
+                command: PathBuf::from("/usr/bin/otto-preview"),
+                args: vec!["--mcp".to_owned()],
+                env: vec![("OTTO_PREVIEW_DOC".to_owned(), "/tmp/a.pdf".to_owned())],
+            }],
+            instructions: Some("You are editing /tmp/a.pdf.".to_owned()),
+            runs_as: None,
+            subject: Vec::new(),
+        };
+        let argv = backend
+            .launch(backend.agent(PROVIDER), "s1", false, &spec)
+            .argv;
+        let after = |flag: &str| {
+            let at = argv.iter().position(|word| word == flag)?;
+            argv.get(at + 1).cloned()
+        };
+        let config: Value = serde_json::from_str(&after("--mcp-config").unwrap()).unwrap();
+        let preview = &config["mcpServers"]["preview"];
+        assert_eq!(preview["command"], "/usr/bin/otto-preview");
+        assert_eq!(preview["args"], json!(["--mcp"]));
+        assert_eq!(preview["env"]["OTTO_PREVIEW_DOC"], "/tmp/a.pdf");
+        assert!(
+            after("--append-system-prompt")
+                .unwrap()
+                .ends_with("You are editing /tmp/a.pdf.")
+        );
+        assert_eq!(
+            argv.iter()
+                .filter(|word| *word == "--append-system-prompt")
+                .count(),
+            1,
+            "one system prompt"
+        );
+    }
+
+    #[test]
+    fn a_studio_session_in_opencode_gets_its_tools_and_instructions() {
+        let backend = HerdrBackend::new(&crate::config::Config::default());
+        let spec = SessionSpec {
+            provider: PROVIDER.to_owned(),
+            cwd: PathBuf::from("/tmp"),
+            resume: None,
+            attached: Vec::new(),
+            mcp_servers: vec![crate::agent::McpStdio {
+                name: "preview".to_owned(),
+                command: PathBuf::from("/usr/bin/otto-preview"),
+                args: vec!["--mcp".to_owned()],
+                env: vec![("OTTO_PREVIEW_DOC".to_owned(), "/tmp/a.pdf".to_owned())],
+            }],
+            instructions: Some("You are editing /tmp/a.pdf.".to_owned()),
+            runs_as: None,
+            subject: Vec::new(),
+        };
+        let session = opencode_session_id();
+        let profile = skills::AgentFile {
+            name: "studio".to_owned(),
+            description: "Edits documents".to_owned(),
+            tools: Vec::new(),
+            model: None,
+            skills: Vec::new(),
+            session_only: true,
+            body: "You edit documents.".to_owned(),
+            path: PathBuf::from("/tmp/studio.md"),
+        };
+        let config = opencode_config(&session, Some(&profile), &spec);
+        let Launch { argv, env } = opencode_launch(backend.agent(PROVIDER), &session, None, config);
+
+        assert_eq!(argv[0], "opencode");
+        let content = env["OPENCODE_CONFIG_CONTENT"].as_str().unwrap();
+        let config: Value = serde_json::from_str(content).unwrap();
+        let preview = &config["mcp"]["preview"];
+        assert_eq!(
+            preview["command"],
+            json!(["/usr/bin/otto-preview", "--mcp"])
+        );
+        assert_eq!(preview["environment"]["OTTO_PREVIEW_DOC"], "/tmp/a.pdf");
+        assert_eq!(config["agent"]["studio"]["prompt"], "You edit documents.");
+        assert_eq!(argv[argv.len() - 2..], ["--agent", "studio"]);
+        let file = PathBuf::from(config["instructions"][0].as_str().unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "You are editing /tmp/a.pdf."
+        );
+        let _ = std::fs::remove_file(file);
+    }
+
+    #[test]
+    fn an_opencode_session_with_nothing_asked_runs_plainly() {
+        let backend = HerdrBackend::new(&crate::config::Config::default());
+        let spec = SessionSpec {
+            provider: PROVIDER.to_owned(),
+            cwd: PathBuf::from("/tmp"),
+            resume: None,
+            attached: Vec::new(),
+            mcp_servers: Vec::new(),
+            instructions: None,
+            runs_as: None,
+            subject: Vec::new(),
+        };
+        let config = opencode_config("ses_x", None, &spec);
+        assert!(config.is_none());
+        let launch = opencode_launch(backend.agent(PROVIDER), "ses_x", None, config);
+        assert_eq!(launch.argv, ["opencode", "-s", "ses_x"]);
+        assert!(launch.env.is_empty());
+    }
+
+    #[test]
+    fn requests_wait_side_by_side_by_id() {
+        let item = json!({ "labels": {
+            "otto.permission.a1": r#"{"id":"a1","tool_name":"Bash"}"#,
+            "otto.permission.b2": r#"{"id":"b2","tool_name":"Write"}"#,
+            "otto.permission-answer.a1": r#"{"id":"a1","allow":true}"#,
+            "otto.ask.c3": r#"{"id":"c3","questions":[]}"#,
+            "otto.ask.d4": r#"{"id":"other"}"#,
+            "otto.ask.e5": "",
+        }});
+        let permissions = requests(&item, Request::Permission);
+        let mut ids: Vec<&str> = permissions.keys().map(String::as_str).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["a1", "b2"]);
+        let asks = requests(&item, Request::Ask);
+        assert_eq!(asks.keys().collect::<Vec<_>>(), ["c3"]);
+        assert_eq!(
+            Request::Permission.answer_key("a1"),
+            "otto.permission-answer.a1"
+        );
+    }
+
+    #[test]
+    fn an_agents_terminal_title_names_its_session() {
+        let named = |title: &str| agent_title(title);
+        assert_eq!(
+            named("herdr core otto session management").as_deref(),
+            Some("herdr core otto session management")
+        );
+        assert_eq!(named("✳ Fix the dock").as_deref(), Some("Fix the dock"));
+        assert_eq!(
+            named("OC | Pong reply request").as_deref(),
+            Some("Pong reply request")
+        );
+        assert_eq!(named("π - tidy up - otto").as_deref(), Some("tidy up"));
+        assert_eq!(named("OC | "), None);
+        assert_eq!(named("π - otto"), None);
+        assert_eq!(named("riccardo@framework:~/dev/otto"), None);
+        assert_eq!(named("✳ Claude Code"), None);
+        assert_eq!(named(""), None);
+    }
+
+    #[test]
+    fn transcripts_live_under_the_folder_with_dashes() {
+        let path = transcript_path(Path::new("/home/me/dev/otto/.claude/x"), "abc");
+        assert!(path.ends_with("projects/-home-me-dev-otto--claude-x/abc.jsonl"));
+    }
+
+    #[test]
+    fn history_is_prompts_and_what_answered_them() {
+        let transcript = [
+            r#"{"type":"user","message":{"content":"what time is it?"}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash"}]}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"11:15"}]}}"#,
+            r#"{"type":"user","isMeta":true,"message":{"content":"caveat"}}"#,
+            r#"{"type":"user","message":{"content":"<command-name>/model</command-name>"}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"text","text":"thanks"}]}}"#,
+        ]
+        .join("\n");
+        let turns = history(&transcript);
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].prompt, "what time is it?");
+        assert_eq!(
+            turns[0].parts,
+            vec![
+                HistoryPart::ToolCall {
+                    tool_call_id: "t1".into(),
+                    title: "Bash".into(),
+                    success: false,
+                },
+                HistoryPart::Message("11:15\n\n".into()),
+            ]
+        );
+        assert_eq!(turns[1].prompt, "thanks");
+        assert!(turns[1].parts.is_empty());
+    }
+
+    #[test]
+    fn a_pi_turn_reads_as_claude() {
+        let pi = [
+            r#"{"type":"session","id":"s1"}"#,
+            r#"{"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"Run echo hi"}]}}"#,
+            r#"{"type":"message","id":"b","message":{"role":"assistant","content":[{"type":"thinking","thinking":"ok"},{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"echo hi"}}],"stopReason":"toolUse"}}"#,
+            r#"{"type":"message","id":"c","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"hi"}],"isError":false}}"#,
+            r#"{"type":"message","id":"d","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop"}}"#,
+            "",
+        ]
+        .join("\n");
+        let claude = pi_as_claude(&pi);
+        let lines: Vec<&str> = claude.lines().collect();
+        assert_eq!(lines.len(), 4);
+        assert_eq!(prompt_of(lines[0]).as_deref(), Some("Run echo hi"));
+        assert!(!ends_turn(lines[1]));
+        assert_eq!(prompt_of(lines[2]), None, "a tool's result is not a prompt");
+        assert!(ends_turn(lines[3]));
+        assert_eq!(assistant_text(lines[3]), vec!["done\n\n".to_owned()]);
+        let turns = history(&claude);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].prompt, "Run echo hi");
+        assert_eq!(turns[0].parts.len(), 2, "the tool call and the answer");
+    }
+
+    #[test]
+    fn a_session_started_by_hand_goes_to_the_agent_of_its_folder() {
+        let agents = vec![
+            ("claude".to_owned(), None),
+            ("dev".to_owned(), Some(PathBuf::from("/home/me/dev"))),
+            ("otto".to_owned(), Some(PathBuf::from("/home/me/dev/otto"))),
+        ];
+        assert_eq!(
+            adopted_agent(&agents, Path::new("/home/me/dev/otto/src")),
+            "otto"
+        );
+        assert_eq!(adopted_agent(&agents, Path::new("/home/me/dev/x")), "dev");
+        assert_eq!(adopted_agent(&agents, Path::new("/tmp")), "claude");
+        assert_eq!(adopted_agent(&[], Path::new("/tmp")), PROVIDER);
+    }
+
+    #[test]
+    fn sessions_started_together_get_their_own_terminal_names() {
+        // OpenCode ids share their time prefix when made close together.
+        let one = terminal_name("ses_2063a1f04ffeWq3kT9xLmN2pQr");
+        let two = terminal_name("ses_2063a1f05ffeZz8yB1cDeF4gHi");
+        assert_ne!(one, two);
+        assert_eq!(one, "otto-xLmN2pQr");
+        assert_eq!(terminal_name("abc"), "otto-abc");
+    }
+
+    #[test]
+    fn a_space_is_found_by_its_folder() {
+        let spaces = vec![
+            json!({"id": "sp1", "name": "Home", "folder": "/home/me"}),
+            json!({"id": "sp2", "name": "", "folder": "/home/me/dev/otto"}),
+        ];
+        assert_eq!(
+            space_in(&spaces, Path::new("/home/me/dev/otto")).as_deref(),
+            Some("sp2")
+        );
+        assert_eq!(space_in(&spaces, Path::new("/home/me/dev")), None);
+    }
+
+    #[test]
+    fn a_space_is_named_after_its_folder() {
+        assert_eq!(
+            folder_name(Path::new("/home/me/.local/state/otto/ask")),
+            "Ask"
+        );
+        assert_eq!(folder_name(Path::new("/home/me/dev/otto")), "Otto");
+        assert_eq!(folder_name(Path::new("/")), "/");
+    }
+
+    #[test]
+    fn prompts_go_only_to_an_agent_in_front() {
+        // As `hc ls` lists them: the program in front as `agent`.
+        assert!(holds_agent(&json!({"state": "live", "agent": "claude"})));
+        assert!(holds_agent(&json!({"state": "live", "agent": "pi"})));
+        assert!(holds_agent(
+            &json!({"state": "live", "agent": "claude-code"})
+        ));
+        assert!(!holds_agent(&json!({"state": "live", "agent": "zsh"})));
+        assert!(!holds_agent(
+            &json!({"state": "finished", "agent": "claude"})
+        ));
+        // As `hc get` gives them: Otto's own terminal runs the agent.
+        let ours = json!({"state": "live", "argv": ["/usr/bin/opencode", "-s", "x"]});
+        assert!(holds_agent(&ours));
+        // A shell Claude was started in by hand: only while Claude is in front.
+        let shell = |name: &str| {
+            json!({"state": "live", "argv": ["/bin/zsh"], "pid": 1,
+                   "foreground": {"name": name, "pid": 2}})
+        };
+        assert!(holds_agent(&shell("claude")));
+        assert!(!holds_agent(&shell("zsh")));
+        assert!(!holds_agent(&shell("vim")));
+    }
+
+    #[test]
+    fn pi_is_told_by_its_command() {
+        assert_eq!(Harness::of("pi"), Some(Harness::Pi));
+        assert_eq!(Harness::of("/usr/bin/pi-acp"), Some(Harness::Pi));
+        assert_eq!(Harness::of("claude"), Some(Harness::Claude));
+        assert_eq!(Harness::of("pipx"), None);
+        assert_eq!(
+            Harness::of("/home/me/.local/bin/opencode"),
+            Some(Harness::OpenCode)
+        );
+    }
+
+    #[test]
+    fn claude_suggestions_read_as_options() {
+        let rule = json!({ "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": "npm test" }], "behavior": "allow", "destination": "localSettings" });
+        assert_eq!(
+            suggestion_label(&rule).as_deref(),
+            Some("Always allow Bash(npm test) in this project")
+        );
+        let edits = json!({ "type": "setMode", "mode": "acceptEdits", "destination": "session" });
+        assert_eq!(
+            suggestion_label(&edits).as_deref(),
+            Some("Allow all edits for this session")
+        );
+        let deny = json!({ "type": "addRules", "rules": [{ "toolName": "Bash" }], "behavior": "deny", "destination": "session" });
+        assert_eq!(suggestion_label(&deny), None);
+
+        let request = json!({ "tool_name": "Bash", "tool_input": { "command": "npm test" }, "suggestions": [rule, deny, edits] });
+        let question = permission_question("p1", &request, Path::new("/tmp"));
+        let ids: Vec<&str> = question
+            .options
+            .iter()
+            .map(|option| option.id.as_str())
+            .collect();
+        assert_eq!(ids, ["allow", "always-0", "always-2", "reject"]);
+    }
+
+    #[test]
+    fn a_hook_path_survives_the_shell() {
+        assert_eq!(
+            shell_quote("/usr/bin/otto-agents"),
+            "'/usr/bin/otto-agents'"
+        );
+        assert_eq!(shell_quote("/home/a b/it's"), r"'/home/a b/it'\''s'");
+    }
+
+    #[test]
+    fn an_agent_herdr_cannot_run_is_left_out() {
+        let args = |words: &[&str]| {
+            words
+                .iter()
+                .map(|word| word.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            Harness::of_agent(
+                "npx",
+                &args(&["-y", "@agentclientprotocol/claude-agent-acp@latest"])
+            ),
+            Some(Harness::Claude)
+        );
+        assert_eq!(
+            Harness::of_agent("opencode", &args(&["acp"])),
+            Some(Harness::OpenCode)
+        );
+        assert_eq!(Harness::of_agent("gemini", &args(&["--acp"])), None);
+        assert_eq!(
+            Harness::of_agent(
+                "npx",
+                &args(&["-y", "@agentclientprotocol/codex-acp@latest"])
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn an_opencode_id_is_safe_in_sql() {
+        let id = opencode_session_id();
+        assert_eq!(id.len(), 30);
+        assert!(is_opencode_id(&id));
+        assert!(!is_opencode_id("ses_x' or 1=1 --"));
+        assert!(!is_opencode_id("44522e32-3005-4ee1-a108-3757ae35bed2"));
+    }
+
+    #[test]
+    fn an_opencode_turn_reads_as_claude() {
+        let row = |message: &str, message_data: Value, part: &str, part_data: Value| {
+            json!({
+                "message": message,
+                "message_data": message_data.to_string(),
+                "part": part,
+                "part_data": part_data.to_string(),
+            })
+        };
+        let user = json!({ "role": "user" });
+        let working = json!({ "role": "assistant", "time": { "created": 1 } });
+        let called =
+            json!({ "role": "assistant", "time": { "completed": 2 }, "finish": "tool-calls" });
+        let stopped = json!({ "role": "assistant", "time": { "completed": 3 }, "finish": "stop" });
+        let text =
+            |text: &str| json!({ "type": "text", "text": text, "time": { "start": 1, "end": 2 } });
+        let tool = |status: &str| {
+            json!({
+                "type": "tool", "tool": "bash", "callID": "c1",
+                "state": { "status": status, "input": { "command": "echo hi" } },
+            })
+        };
+        let mut rows = vec![
+            row("m1", user.clone(), "p1", text("Run echo hi")),
+            row("m2", called, "p2", json!({ "type": "step-start" })),
+            row(
+                "m2",
+                json!({ "role": "assistant", "time": { "completed": 2 }, "finish": "tool-calls" }),
+                "p3",
+                tool("completed"),
+            ),
+            row(
+                "m3",
+                working,
+                "p4",
+                json!({ "type": "text", "text": "do", "time": { "start": 1 } }),
+            ),
+        ];
+        let claude = opencode_as_claude(&rows);
+        let lines: Vec<&str> = claude.lines().collect();
+        assert_eq!(
+            lines.len(),
+            3,
+            "the prompt, the call and its result: {claude}"
+        );
+        assert_eq!(prompt_of(lines[0]).as_deref(), Some("Run echo hi"));
+        assert!(!ends_turn(lines[1]));
+        assert_eq!(prompt_of(lines[2]), None, "a tool's result is not a prompt");
+
+        rows.pop();
+        rows.push(row("m3", stopped, "p4", text("done")));
+        let claude = opencode_as_claude(&rows);
+        let lines: Vec<&str> = claude.lines().collect();
+        assert_eq!(lines.len(), 5);
+        assert!(
+            !ends_turn(lines[3]),
+            "text is not the end until the message is"
+        );
+        assert_eq!(assistant_text(lines[3]), vec!["done\n\n".to_owned()]);
+        assert!(ends_turn(lines[4]));
+        assert!(assistant_text(lines[4]).is_empty());
+        let turns = history(&claude);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].parts.len(), 2, "the tool call and the answer");
+    }
+
+    #[test]
+    fn a_profile_asks_through_otto() {
+        let profile = skills::AgentFile {
+            name: "otto".into(),
+            description: "Otto's own helper".into(),
+            tools: vec!["Read".into(), "AskUserQuestion".into()],
+            model: None,
+            skills: vec!["otto-help".into()],
+            session_only: false,
+            body: "You are Otto.".into(),
+            path: PathBuf::new(),
+        };
+        let definition = agent_definition(&profile, true);
+        assert_eq!(definition["tools"], json!(["Read", "mcp__otto__ask"]));
+        assert_eq!(definition["prompt"], "You are Otto.");
+        assert_eq!(definition["skills"], json!(["otto-help"]));
+        let plain = agent_definition(&profile, false);
+        assert_eq!(plain["tools"], json!(["Read", "AskUserQuestion"]));
+    }
+
+    #[test]
+    fn a_write_asks_with_its_diff() {
+        let request = json!({
+            "id": "p1",
+            "tool_name": "Write",
+            "tool_input": { "file_path": "/tmp/test.txt", "content": "test" }
+        });
+        let question = permission_question("p1", &request, Path::new("/home/me"));
+        assert_eq!(question.edits.len(), 1);
+        assert_eq!(question.edits[0]["newText"], "test");
+        assert!(question.options.iter().any(|option| option.allow()));
+        assert!(question.options.iter().any(|option| !option.allow()));
+    }
+
+    #[test]
+    fn prompts_are_what_you_wrote() {
+        assert_eq!(
+            prompt_of(r#"{"type":"user","message":{"content":" hi "}}"#).as_deref(),
+            Some("hi")
+        );
+        assert_eq!(
+            prompt_of(r#"{"type":"user","message":{"content":[{"type":"text","text":"yo"}]}}"#)
+                .as_deref(),
+            Some("yo")
+        );
+        assert_eq!(
+            prompt_of(
+                r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t"}]}}"#
+            ),
+            None
+        );
+        assert_eq!(
+            prompt_of(r#"{"type":"user","isMeta":true,"message":{"content":"x"}}"#),
+            None
+        );
+        assert_eq!(
+            prompt_of(r#"{"type":"user","message":{"content":"<command-name>/x</command-name>"}}"#),
+            None
+        );
+        assert_eq!(
+            prompt_of(r#"{"type":"assistant","message":{"content":"x"}}"#),
+            None
+        );
+        assert_eq!(
+            prompt_of(
+                r#"{"type":"user","isCompactSummary":true,"message":{"content":"This session is being continued"}}"#
+            ),
+            None,
+            "a compaction's summary is not a prompt"
+        );
+    }
+
+    #[test]
+    fn a_compaction_summary_is_left_out_of_the_history() {
+        let transcript = [
+            r#"{"type":"user","uuid":"u1","message":{"content":"hi"}}"#,
+            r#"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn"}}"#,
+            r#"{"type":"system","subtype":"compact_boundary","content":"Conversation compacted"}"#,
+            r#"{"type":"user","uuid":"u2","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"message":{"content":"This session is being continued"}}"#,
+        ]
+        .join("\n");
+        assert_eq!(history(&transcript).len(), 1, "only the prompt you wrote");
+    }
+
+    #[test]
+    fn an_opencode_compaction_summary_is_not_a_reply() {
+        let rows = [
+            json!({
+                "message": "m1",
+                "message_data": json!({ "role": "user" }).to_string(),
+                "part": "p1",
+                "part_data": json!({ "type": "compaction", "auto": true }).to_string(),
+            }),
+            json!({
+                "message": "m2",
+                "message_data": json!({
+                    "role": "assistant", "summary": true, "finish": "stop",
+                    "time": { "completed": 2 },
+                })
+                .to_string(),
+                "part": "p2",
+                "part_data": json!({
+                    "type": "text", "text": "Summary of the work", "time": { "start": 1, "end": 2 },
+                })
+                .to_string(),
+            }),
+        ];
+        assert_eq!(opencode_as_claude(&rows), "");
+    }
+
+    #[test]
+    fn the_transcript_says_when_a_turn_ends() {
+        assert!(ends_turn(
+            r#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}"#
+        ));
+        // The thinking comes first, as an entry of its own, already marked
+        // as the end: the text is still to come.
+        assert!(!ends_turn(
+            r#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"thinking","thinking":""}]}}"#
+        ));
+        assert!(!ends_turn(
+            r#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[]}}"#
+        ));
+        assert!(!ends_turn(r#"{"type":"user","message":{"content":"hi"}}"#));
+    }
+
+    #[test]
+    fn only_assistant_text_is_taken() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hi"},{"type":"tool_use","name":"x"}]}}"#;
+        assert_eq!(assistant_text(line), vec!["Hi\n\n".to_owned()]);
+        assert!(assistant_text(r#"{"type":"user","message":{"content":"hey"}}"#).is_empty());
+    }
+
+    #[test]
+    fn ask_questions_become_a_form_and_answers_come_back_by_question() {
+        let questions = json!([{
+            "question": "Favourite colour?",
+            "options": [{ "label": "Red" }, { "label": "Blue" }]
+        }]);
+        let form = elicitation::form("r1", "", &schema(&questions));
+        let asked = form.request.questions.as_ref().unwrap();
+        assert_eq!(asked.len(), 1);
+
+        let mut content = std::collections::BTreeMap::new();
+        content.insert(
+            "question_0".to_owned(),
+            agent_client_protocol::schema::v1::ElicitationContentValue::String("Blue".into()),
+        );
+        assert_eq!(
+            to_labels(&questions, &content),
+            json!({ "Favourite colour?": "Blue" })
+        );
+    }
+}

@@ -55,8 +55,9 @@ use tokio::sync::{mpsc, oneshot};
 use otto_agents_client::session::SESSION_SCHEME;
 
 use crate::agent::{
-    Attachment, Backend, Decision, HistoryPart, HistoryTurn, InputAnswer, McpStdio, Mode, Question,
-    QuestionOption, SessionCommand, SessionEvent, SessionSpec, TurnOutcome,
+    Attachment, Backend, Decision, FoundSession, HistoryPart, HistoryTurn, InputAnswer, McpStdio,
+    Mode, Question, QuestionOption, SessionChange, SessionCommand, SessionEvent, SessionSpec,
+    TurnOutcome,
 };
 use crate::dialog::{self, Choice, Prompt, Prompter, Reply};
 use crate::elicitation;
@@ -73,6 +74,19 @@ use crate::uri;
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[PROTOCOL_VERSION];
 
 const TITLE_MAX_CHARS: usize = 80;
+
+/// A session's title from a prompt: its first line that says something, cut
+/// to [`TITLE_MAX_CHARS`].
+fn title_of(prompt: &str) -> String {
+    prompt
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default()
+        .chars()
+        .take(TITLE_MAX_CHARS)
+        .collect()
+}
 
 pub type ConnId = u64;
 
@@ -191,6 +205,11 @@ struct Session {
     runs_as: Option<String>,
     /// The files the creating client shows beside the chat.
     subject: Vec<PathBuf>,
+    /// What the agent is doing outside the turns started here, as
+    /// `SessionStatus` bits the backend reports: shown on top of the chat's.
+    outside: u32,
+    /// Whether the agent's process runs, as the backend last said.
+    running: bool,
 }
 
 /// The `setMode` request: switch `session`'s agent to the mode `mode_id`, one
@@ -260,7 +279,26 @@ impl Host {
             config: None,
             meta,
         };
-        let records = store.as_ref().map(Store::load).unwrap_or_default();
+        let mut records = store.as_ref().map(Store::load).unwrap_or_default();
+        // A backend that keeps its own sessions is the authority on them: a
+        // stored session it does not have is not shown, and one it has twice
+        // is shown once, the first made. Neither is deleted: the backend may
+        // have it again later, as after herdr-core restarts.
+        records.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        let mut seen = HashSet::new();
+        records.retain(|record| {
+            let Some(agent_session) = record.agent_session.as_deref() else {
+                return true;
+            };
+            let Some(has) = backend.exists(&record.session.provider, agent_session) else {
+                return true;
+            };
+            let twin = !seen.insert(agent_session.to_owned());
+            if !has || twin {
+                tracing::info!(session_uri = %record.resource, twin, "not showing a session the backend does not have, or has twice");
+            }
+            has && !twin
+        });
         let unsaved = store.as_ref().map(|_| HashSet::new());
         let host = Arc::new_cyclic(|host| Self {
             prompter,
@@ -283,7 +321,52 @@ impl Host {
             next_conn: AtomicU64::new(1),
         });
         host.lock().restore(records);
+        host.watch_sessions();
         host
+    }
+
+    /// For a backend that keeps its own sessions: the ones it has that Otto
+    /// does not are taken up, and the ones it removes leave Otto too.
+    fn watch_sessions(self: &Arc<Self>) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let (changes_tx, mut changes) = mpsc::unbounded_channel::<SessionChange>();
+        self.lock().backend.watch_sessions(changes_tx);
+        let host = Arc::downgrade(self);
+        runtime.spawn(async move {
+            while let Some(change) = changes.recv().await {
+                let Some(host) = host.upgrade() else {
+                    return;
+                };
+                let mut state = host.lock();
+                let agent_session = match change {
+                    SessionChange::Found(found) => {
+                        host.adopt_session(&mut state, found);
+                        continue;
+                    }
+                    SessionChange::Removed(agent_session) => agent_session,
+                    SessionChange::Titled {
+                        agent_session,
+                        title,
+                    } => {
+                        state.retitle(&agent_session, &title);
+                        continue;
+                    }
+                };
+                let uris: Vec<String> = state
+                    .sessions
+                    .iter()
+                    .filter(|(_, session)| session.agent_session.as_deref() == Some(&agent_session))
+                    .map(|(uri, _)| uri.clone())
+                    .collect();
+                for uri in uris {
+                    tracing::info!(session_uri = %uri, "the backend removed the session");
+                    host.remove_session(&mut state, uri);
+                }
+                host.flush_withdrawals(&mut state);
+            }
+        });
     }
 
     /// Stops a session's agent once it has had nothing to do for `timeout`;
@@ -519,7 +602,97 @@ impl Host {
             instructions,
             runs_as,
             subject,
+            outside: 0,
+            running: false,
         };
+        self.add_session(state, uri, session, true);
+        Ok(Value::Null)
+    }
+
+    /// A session the backend has and Otto does not, as one Otto made: it is
+    /// listed, and taken up when its agent is running.
+    fn adopt_session(self: &Arc<Self>, state: &mut HostState, found: FoundSession) {
+        let known = state
+            .sessions
+            .values()
+            .any(|session| session.agent_session.as_deref() == Some(&found.agent_session));
+        if known {
+            return;
+        }
+        let provider = match state
+            .root
+            .agents
+            .iter()
+            .find(|agent| agent.provider == found.provider)
+            .or_else(|| state.root.agents.first())
+        {
+            Some(agent) => agent.provider.clone(),
+            None => return,
+        };
+        let customizations = state
+            .root
+            .agents
+            .iter()
+            .find(|agent| agent.provider == provider)
+            .and_then(|agent| agent.customizations.clone());
+        let uri = format!("{SESSION_SCHEME}{}", uuid::Uuid::new_v4());
+        tracing::info!(session_uri = %uri, agent_session = %found.agent_session, "taking up a session the backend has");
+        let mut session_state = SessionState {
+            customizations,
+            ..new_session_state(&provider, &uri::from_path(&found.cwd))
+        };
+        if let Some(title) = found.title.as_deref() {
+            session_state.title = title_of(title);
+        }
+        // Already made where the backend keeps it, and openable in its
+        // terminal from the start.
+        session_state.lifecycle = SessionLifecycle::Ready;
+        let terminal = terminal_meta(
+            state.backend.as_ref(),
+            &session_state,
+            Some(&found.agent_session),
+            true,
+        );
+        session_state.meta = with_otto_meta(session_state.meta.take(), "terminal", terminal);
+        let session = Session {
+            state: session_state,
+            created_at: now(),
+            chat: format!("ahp-chat:/{}", uuid::Uuid::new_v4()),
+            commands: None,
+            agent_session: Some(found.agent_session),
+            open_part: None,
+            announced: (SessionStatus::Idle.bits(), String::new()),
+            questions: HashMap::new(),
+            inputs: HashMap::new(),
+            tools: HashMap::new(),
+            activity: 0,
+            written: true,
+            releasing: false,
+            attached: Vec::new(),
+            mcp_servers: Vec::new(),
+            instructions: None,
+            runs_as: None,
+            subject: Vec::new(),
+            outside: 0,
+            running: false,
+        };
+        self.add_session(state, uri.clone(), session, found.running);
+        state.mark_unsaved(&uri);
+        self.flush_withdrawals(state);
+    }
+
+    /// Puts a new session in the service and tells every client; `launch`
+    /// starts its agent.
+    fn add_session(
+        self: &Arc<Self>,
+        state: &mut HostState,
+        uri: String,
+        session: Session,
+        launch: bool,
+    ) {
+        let chat_uri = session.chat.clone();
+        let now = now();
+        let title = session.state.title.clone();
         state.sessions.insert(uri.clone(), session);
         state
             .chats
@@ -528,7 +701,7 @@ impl Host {
 
         let summary = ChatSummary {
             resource: chat_uri.clone(),
-            title: String::new(),
+            title,
             status: SessionStatus::Idle.bits(),
             activity: None,
             modified_at: now,
@@ -563,9 +736,9 @@ impl Host {
             };
             state.broadcast(ROOT_RESOURCE_URI, "root/sessionAdded", &added);
         }
-
-        state.launch(&uri);
-        Ok(Value::Null)
+        if launch {
+            state.launch(&uri);
+        }
     }
 
     /// Removes a session for good: its agent stops, its state goes, and so
@@ -577,13 +750,26 @@ impl Host {
         params: DisposeSessionParams,
     ) -> Result<Value, RpcError> {
         let uri = params.channel;
-        let Some(session) = state.sessions.remove(&uri) else {
+        let Some(session) = state.sessions.get(&uri) else {
             return Err(RpcError::new(
                 ahp_error_codes::SESSION_NOT_FOUND,
                 format!("no such session: {uri}"),
             ));
         };
         tracing::info!(session_uri = %uri, "disposing of the session");
+        if let Some(agent_session) = session.agent_session.as_deref() {
+            state.backend.forget(&session.state.provider, agent_session);
+        }
+        self.remove_session(state, uri);
+        Ok(Value::Null)
+    }
+
+    /// Takes `uri` out of the service: its agent, chat, subscriptions and
+    /// stored record, telling every client.
+    fn remove_session(&self, state: &mut HostState, uri: String) {
+        let Some(session) = state.sessions.remove(&uri) else {
+            return;
+        };
         // Dropping the commands ends the agent's session and its process.
         drop(session.commands);
         state.chats.remove(&session.chat);
@@ -613,7 +799,6 @@ impl Host {
             session: uri,
         };
         state.broadcast(ROOT_RESOURCE_URI, "root/sessionRemoved", &removed);
-        Ok(Value::Null)
     }
 
     fn dispatch_client_action(&self, conn: &Connection, params: DispatchActionParams) {
@@ -727,6 +912,35 @@ impl Host {
                 state.rebuild_chat(&chat_uri, turns);
                 state.set_loading(session_uri, false);
             }
+            SessionEvent::Outside(bits) => {
+                if let Some(session) = state.sessions.get_mut(session_uri) {
+                    session.outside = bits;
+                }
+            }
+            SessionEvent::RequestWithdrawn(id) => {
+                state.withdraw_request(session_uri, &chat_uri, &id);
+            }
+            SessionEvent::TurnStarted { turn_id, prompt } => {
+                state.start_outside_turn(session_uri, &chat_uri, turn_id, prompt);
+            }
+            SessionEvent::Running(running) => {
+                let changed = state.sessions.get_mut(session_uri).is_some_and(|session| {
+                    std::mem::replace(&mut session.running, running) != running
+                });
+                if changed {
+                    let changed = json!({
+                        "channel": ROOT_RESOURCE_URI,
+                        "session": session_uri,
+                        "changes": {},
+                    });
+                    state.broadcast(ROOT_RESOURCE_URI, "root/sessionSummaryChanged", &changed);
+                }
+            }
+            SessionEvent::Active => {
+                if let Some(chat) = state.chats.get_mut(&chat_uri) {
+                    chat.modified_at = now();
+                }
+            }
             SessionEvent::ModesChanged { current, available } => {
                 state.set_modes(session_uri, &current, &available)
             }
@@ -783,6 +997,21 @@ impl Host {
                     self.escalate_input_after(state.watched_grace, session_uri, &request_id);
                 }
             }
+            SessionEvent::ToolCallStarted {
+                turn_id,
+                tool_call_id,
+                tool_name,
+                title,
+                input,
+            } => state.start_tool(
+                session_uri,
+                &chat_uri,
+                turn_id,
+                tool_call_id,
+                tool_name,
+                title,
+                input,
+            ),
             SessionEvent::ToolCallFinished {
                 turn_id,
                 tool_call_id,
@@ -1114,8 +1343,10 @@ impl HostState {
                 session: mut state,
                 chat,
                 written: record_written,
+                client,
                 ..
             } = record;
+            let client = client.as_ref();
             if self.sessions.contains_key(&resource) || self.chats.contains_key(&chat.resource) {
                 continue;
             }
@@ -1167,12 +1398,12 @@ impl HostState {
                 activity: 0,
                 releasing: false,
                 attached: Vec::new(),
-                // Not kept in the store: a client that wants its tools back
-                // opens a new session. TODO: persist with the session.
-                mcp_servers: Vec::new(),
-                instructions: None,
-                runs_as: None,
-                subject: Vec::new(),
+                mcp_servers: McpStdio::from_meta(client),
+                instructions: crate::agent::instructions_from_meta(client),
+                runs_as: crate::agent::runs_as_from_meta(client),
+                subject: crate::agent::subject_from_meta(client),
+                outside: 0,
+                running: false,
             };
             self.sessions.insert(resource.clone(), session);
             self.chats.insert(chat_uri.clone(), chat);
@@ -1199,6 +1430,26 @@ impl HostState {
             self.start_next_queued(&session_uri);
             self.sync_summaries(&session_uri);
         }
+        // Agents still running without the service, in terminals that
+        // outlived it, are taken up again now rather than when first opened.
+        let live: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|(_, session)| !agent_running(session))
+            .filter(|(_, session)| {
+                session
+                    .agent_session
+                    .as_deref()
+                    .is_some_and(|agent_session| {
+                        self.backend.live(&session.state.provider, agent_session)
+                    })
+            })
+            .map(|(uri, _)| uri.clone())
+            .collect();
+        for session_uri in live {
+            tracing::info!(session_uri, "taking up a session still running outside");
+            self.launch(&session_uri);
+        }
     }
 
     /// The sessions changed since the last save, as records to store.
@@ -1217,14 +1468,21 @@ impl HostState {
                 chat.turns = Vec::new();
                 chat.turns_next_cursor = None;
                 let written = session.written;
-                Some(SessionRecord::new(
+                let mut record = SessionRecord::new(
                     uri,
                     session.created_at.clone(),
                     session.agent_session.clone(),
                     session.state.clone(),
                     chat,
                     written,
-                ))
+                );
+                record.client = crate::agent::client_meta(
+                    &session.mcp_servers,
+                    session.instructions.as_deref(),
+                    session.runs_as.as_deref(),
+                    &session.subject,
+                );
+                Some(record)
             })
             .collect()
     }
@@ -1799,6 +2057,48 @@ impl HostState {
         })
     }
 
+    /// Opens a turn the agent started on a prompt Otto did not send, such as
+    /// one typed in its terminal, unless a turn is already under way.
+    fn start_outside_turn(
+        &mut self,
+        session_uri: &str,
+        chat_uri: &str,
+        turn_id: String,
+        prompt: String,
+    ) {
+        let busy = self
+            .chats
+            .get(chat_uri)
+            .is_some_and(|chat| chat.active_turn.is_some());
+        if busy {
+            return;
+        }
+        self.mark_written(session_uri);
+        if let Some(session) = self.sessions.get_mut(session_uri) {
+            session.open_part = None;
+        }
+        self.apply(
+            chat_uri,
+            StateAction::ChatTurnStarted(ChatTurnStartedAction {
+                turn_id,
+                started_at: now(),
+                message: Message {
+                    text: prompt,
+                    origin: MessageOrigin {
+                        kind: MessageKind::User,
+                    },
+                    attachments: None,
+                    model: None,
+                    agent: None,
+                    meta: None,
+                },
+                queued_message_id: None,
+                meta: None,
+            }),
+            None,
+        );
+    }
+
     /// Opens `request` in the chat's active turn and in the session's
     /// `inputNeeded`. Returns whether it was opened: a request from outside
     /// the active turn is declined at once.
@@ -1969,6 +2269,49 @@ impl HostState {
         let _ = pending.reply.send(answer);
     }
 
+    /// Takes down a permission question or input request the agent no longer
+    /// waits on: the tool call is skipped, the input request cancelled.
+    fn withdraw_request(&mut self, session_uri: &str, chat_uri: &str, id: &str) {
+        let question = self
+            .sessions
+            .get_mut(session_uri)
+            .and_then(|session| session.questions.remove(id));
+        if let Some(pending) = question {
+            if pending.escalated {
+                self.withdrawals.push(dialog_cookie(session_uri, id));
+            }
+            tracing::info!(tool_call = %id, "permission question withdrawn");
+            let skipped = StateAction::ChatToolCallConfirmed(ChatToolCallConfirmedAction {
+                turn_id: pending.turn_id.clone(),
+                tool_call_id: id.to_owned(),
+                meta: None,
+                approved: false,
+                confirmed: None,
+                reason: Some(ToolCallCancellationReason::Skipped),
+                edited_tool_input: None,
+                user_suggestion: None,
+                reason_message: None,
+                selected_option_id: None,
+            });
+            self.apply(chat_uri, skipped, None);
+            let _ = pending.reply.send(Decision::Cancelled);
+            return;
+        }
+        let waiting = self
+            .sessions
+            .get(session_uri)
+            .is_some_and(|session| session.inputs.contains_key(id));
+        if waiting {
+            tracing::info!(request_id = %id, "input request withdrawn");
+            let cancelled = ChatInputCompletedAction {
+                request_id: id.to_owned(),
+                response: ChatInputResponseKind::Cancel,
+                answers: None,
+            };
+            self.complete_input(session_uri, chat_uri, cancelled, None);
+        }
+    }
+
     /// Lets go of the questions `turn_id` left unanswered: permission requests
     /// and input requests are both cancelled, not refused.
     fn drop_turn_requests(&mut self, session_uri: &str, turn_id: &str) {
@@ -2017,7 +2360,65 @@ impl HostState {
         }
     }
 
-    /// Completes a tool call that was allowed, once the agent says it is done.
+    /// Shows a tool call the agent runs without asking, running until it
+    /// finishes. Only in the active turn, and only once.
+    #[allow(clippy::too_many_arguments)]
+    fn start_tool(
+        &mut self,
+        session_uri: &str,
+        chat_uri: &str,
+        turn_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        title: String,
+        input: Option<String>,
+    ) {
+        let in_turn = self
+            .chats
+            .get(chat_uri)
+            .and_then(|chat| chat.active_turn.as_ref())
+            .is_some_and(|turn| turn.id == turn_id);
+        let Some(session) = self.sessions.get_mut(session_uri) else {
+            return;
+        };
+        if !in_turn
+            || session.questions.contains_key(&tool_call_id)
+            || session.tools.contains_key(&tool_call_id)
+        {
+            return;
+        }
+        // Text the agent writes after the tool goes below it.
+        session.open_part = None;
+        session.tools.insert(tool_call_id.clone(), title.clone());
+        let start = StateAction::ChatToolCallStart(ChatToolCallStartAction {
+            turn_id: turn_id.clone(),
+            tool_call_id: tool_call_id.clone(),
+            meta: None,
+            tool_name,
+            display_name: title.clone(),
+            intention: None,
+            contributor: None,
+        });
+        self.apply(chat_uri, start, None);
+        let ready = StateAction::ChatToolCallReady(ChatToolCallReadyAction {
+            turn_id,
+            tool_call_id,
+            meta: None,
+            contributor: None,
+            intention: None,
+            invocation_message: StringOrMarkdown::Plain(title),
+            tool_input: input.map(ToolInput::Inline),
+            confirmation_title: None,
+            risk_assessment: None,
+            edits: None,
+            editable: None,
+            confirmed: Some(ToolCallConfirmationReason::NotNeeded),
+            options: None,
+        });
+        self.apply(chat_uri, ready, None);
+    }
+
+    /// Completes a tool call that is running, once the agent says it is done.
     fn finish_tool(
         &mut self,
         session_uri: &str,
@@ -2338,7 +2739,7 @@ impl HostState {
         let Some(session) = self.sessions.get(&session_uri) else {
             return;
         };
-        if session.commands.is_some() || session.agent_session.is_none() {
+        if agent_running(session) || session.agent_session.is_none() {
             return;
         }
         tracing::info!(session_uri, "starting the agent to load its history");
@@ -2485,7 +2886,7 @@ impl HostState {
         SessionSummary {
             provider: session.state.provider.clone(),
             title: session.state.title.clone(),
-            status: chat.map_or(session.state.status, |chat| chat.status),
+            status: chat.map_or(session.state.status, |chat| chat.status) | session.outside,
             activity: None,
             origin: None,
             project: None,
@@ -2498,8 +2899,25 @@ impl HostState {
                 |chat| chat.modified_at.clone(),
             ),
             changes: None,
-            meta: session.state.meta.clone(),
+            meta: self.summary_meta(session),
         }
+    }
+
+    /// The session's own `_meta`, with `otto.running` added when the backend
+    /// says whether sessions run: `false` for one only kept to be taken up
+    /// again.
+    fn summary_meta(&self, session: &Session) -> Option<serde_json::Map<String, Value>> {
+        if !self.backend.reports_running() {
+            return session.state.meta.clone();
+        }
+        let mut meta = session.state.meta.clone().unwrap_or_default();
+        let otto = meta
+            .entry("otto")
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if let Value::Object(otto) = otto {
+            otto.insert("running".into(), Value::Bool(session.running));
+        }
+        Some(meta)
     }
 
     fn check_turn_start(&self, session_uri: &str, chat_uri: &str) -> Result<(), &'static str> {
@@ -2533,6 +2951,30 @@ impl HostState {
         }
     }
 
+    /// Titles each session of `agent_session` as its agent calls it.
+    fn retitle(&mut self, agent_session: &str, title: &str) {
+        let title = title_of(title);
+        if title.is_empty() {
+            return;
+        }
+        let uris: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|(_, session)| {
+                session.agent_session.as_deref() == Some(agent_session)
+                    && session.state.title != title
+            })
+            .map(|(uri, _)| uri.clone())
+            .collect();
+        for uri in uris {
+            let action = StateAction::SessionTitleChanged(SessionTitleChangedAction {
+                title: title.clone(),
+            });
+            self.apply(&uri, action, None);
+            self.sync_summaries(&uri);
+        }
+    }
+
     /// Titles an untitled session after the first line of its first prompt.
     fn title_from_prompt(&mut self, session_uri: &str, prompt: &str) {
         if !self
@@ -2542,14 +2984,7 @@ impl HostState {
         {
             return;
         }
-        let title: String = prompt
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .unwrap_or_default()
-            .chars()
-            .take(TITLE_MAX_CHARS)
-            .collect();
+        let title = title_of(prompt);
         if !title.is_empty() {
             let action = StateAction::SessionTitleChanged(SessionTitleChangedAction { title });
             self.apply(session_uri, action, None);
@@ -2765,7 +3200,7 @@ impl HostState {
             return;
         };
         let chat_uri = session.chat.clone();
-        let (status, modified_at) = (chat.status, chat.modified_at.clone());
+        let (status, modified_at) = (chat.status | session.outside, chat.modified_at.clone());
         let title = session.state.title.clone();
         let catalogue_stale = session.state.chats.iter().any(|c| {
             c.resource == chat_uri && (c.status != status || c.modified_at != modified_at)
@@ -3210,10 +3645,21 @@ fn terminal_meta(
         // already in one: `otto-agents new`.
         "enter": enter,
         "cwd": cwd.to_string_lossy(),
+        "window": backend.window(&state.provider),
         // The agent's id for the session, which is how a client tells
         // that a terminal already has it open.
         "session": agent_session,
     }))
+}
+
+/// Whether the session's agent is running: started, and still taking
+/// commands. One that ended on its own, such as a terminal closed outside
+/// Otto, has let go of them.
+fn agent_running(session: &Session) -> bool {
+    session
+        .commands
+        .as_ref()
+        .is_some_and(|commands| !commands.is_closed())
 }
 
 /// `meta` with `otto.<key>` set to `value`, or taken out for `None`. The
@@ -3302,8 +3748,8 @@ fn error_info(error_type: &str, message: String) -> ErrorInfo {
     }
 }
 
-/// The chat app a message was written in away from the desktop, as a chat
-/// bridge marks it in the message's `_meta`: `otto.remote.via`.
+/// The chat app a message was written in away from the desktop, as the
+/// `acp` facade marks it in the message's `_meta`: `otto.remote.via`.
 fn remote_origin(message: &Message) -> Option<String> {
     let via = message
         .meta
@@ -3340,7 +3786,7 @@ fn attachments(message: &Message) -> Vec<Attachment> {
 
 /// What a prompt shares with the agent, which may read it without asking:
 /// its attachments, except from a chat app. A message marked as written there
-/// shares nothing, so whoever can reach a bridge cannot point the agent at a
+/// shares nothing, so whoever can reach that chat cannot point the agent at a
 /// file and have it read without the person at the desk being asked.
 fn shared(message: &Message) -> Vec<Attachment> {
     if remote_origin(message).is_some() {

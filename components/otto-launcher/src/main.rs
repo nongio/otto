@@ -24,6 +24,7 @@ use otto_kit::frosted::Frosted;
 use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity};
 use otto_kit::protocols::otto_timing_function_v1::Preset;
 use otto_kit::skia::Rect;
+use otto_kit::surfaces::StyleFrame;
 use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
 use otto_kit::CursorShape;
 use otto_kit::{App, AppContext, AppRunner, ObjectId};
@@ -91,6 +92,9 @@ const CLOSE: Duration = Duration::from_millis(120);
 const HAND_OFF_GRACE: Duration = Duration::from_secs(3);
 /// How long the card stays to say the session is going to its terminal.
 const HANDOVER_LINGER: Duration = Duration::from_millis(1400);
+
+/// The point of the card its transforms are taken about: the top centre.
+const CARD_ANCHOR: (f64, f64) = (0.5, 0.0);
 
 /// How small the card is before it arrives, and again once it has gone. Near
 /// enough to full size that it reads as a swell rather than a zoom.
@@ -206,6 +210,9 @@ struct Launcher {
     /// `--send`: the query on the command line is a request to send as soon
     /// as the card is up, rather than one to finish typing.
     send_on_start: bool,
+    /// `--terminal`: the session opened with `--session` goes to its
+    /// terminal as soon as the service says which, as Ctrl+O takes it.
+    terminal_on_start: bool,
     /// The session to highlight once the list of sessions arrives.
     return_to: Option<String>,
     /// Down has listed the agents under the field, to send the first request
@@ -372,6 +379,7 @@ impl Launcher {
             picking: scope == Scope::Agents,
             opened_session: None,
             send_on_start: false,
+            terminal_on_start: false,
             return_to: None,
             choosing_agent: false,
             picked_agent: None,
@@ -937,6 +945,59 @@ impl Launcher {
             .flatten()
     }
 
+    /// Take the session up in a terminal, in the agent's own interface, and
+    /// go: the terminal has the keyboard now. The session being followed, or
+    /// the one highlighted in the list. Says whether there was a terminal to
+    /// open it in.
+    fn open_in_terminal(&mut self) -> bool {
+        let Some(terminal) = self.selected_terminal() else {
+            return false;
+        };
+        // A session that lives in a window of its own app (herdr): the
+        // command shows it there, the window comes forward, and the service
+        // keeps running it.
+        if let Some(window) = terminal.window.as_deref() {
+            if let Err(err) = terminal.open() {
+                tracing::warn!(%err, "could not show the session");
+            }
+            windows::focus_matching(window);
+            self.close();
+            return true;
+        }
+        // One terminal per session: a second would be a second agent writing
+        // the same history. The one that is open comes to the front instead.
+        if terminal.already_open() {
+            terminal.focus(windows::focus_matching);
+            self.close();
+            return true;
+        }
+        match terminal.open() {
+            Ok(()) => {
+                // The terminal's agent writes the history from here; the
+                // service cancels its turn and lets go of its own.
+                let index = self
+                    .picking
+                    .then(|| self.selected_origin())
+                    .flatten()
+                    .filter(|origin| origin.source == ASK_ROWS)
+                    .map(|origin| origin.index);
+                if let Some(ask) = self.ask.as_mut() {
+                    ask.release(index);
+                }
+                // From the conversation the log says so first; the list just
+                // goes.
+                if index.is_none() && self.ask_running() {
+                    self.linger_until = Some(Instant::now() + HANDOVER_LINGER);
+                    self.dirty = true;
+                } else {
+                    self.close();
+                }
+            }
+            Err(err) => tracing::warn!(%err, "could not open the session in a terminal"),
+        }
+        true
+    }
+
     /// Open the session picked from the list.
     fn resume_selected(&mut self) {
         let Some(index) = self.selected_origin().map(|origin| origin.index) else {
@@ -1389,10 +1450,12 @@ impl Launcher {
         // Surface-style geometry is in physical pixels.
         let scale = AppContext::fractional_scale();
         let (x, y) = palette.card_origin();
+        // The anchor is the top centre, and position is measured from it. On
+        // whole pixels, or the card's text is resampled wherever it rests.
+        let frame = StyleFrame::on_pixel_grid((x, y), (width, height), CARD_ANCHOR, scale);
         let place = || {
-            // The anchor is the top centre, and position is measured from it.
-            style.set_position((x + width / 2.0) as f64 * scale, y as f64 * scale);
-            style.set_size(width as f64 * scale, height as f64 * scale);
+            style.set_position(frame.position.0, frame.position.1);
+            style.set_size(frame.size.0, frame.size.1);
         };
         // The agents opening under the field, and the log above it, grow the
         // card with the spring it opens with. The material clips what is drawn
@@ -1705,7 +1768,7 @@ fn apply_card_material(card: &SubsurfaceSurface, tint: Option<Frosted>) {
     // Transforms are taken about the top centre. Centre horizontally so the
     // card swells outwards evenly; top vertically so the field stays put while
     // the card arrives and when the list grows under it.
-    style.set_anchor_point(0.5, 0.0);
+    style.set_anchor_point(CARD_ANCHOR.0, CARD_ANCHOR.1);
 
     // Where the card starts: just short of full size, and invisible. The
     // entrance animates out of this once there is something on it to see.
@@ -1932,45 +1995,9 @@ impl App for Launcher {
             return;
         }
 
-        // Ctrl+O takes the session up in a terminal, in the agent's own
-        // interface, and the launcher goes: the terminal has the keyboard now.
-        // The session being followed, or the one highlighted in the list.
-        if control == Some('o') {
-            if let Some(terminal) = self.selected_terminal() {
-                // One terminal per session: a second would be a second agent
-                // writing the same history. The one that is open comes to the
-                // front instead.
-                if terminal.already_open() {
-                    terminal.focus(windows::focus_matching);
-                    self.close();
-                    return;
-                }
-                match terminal.open() {
-                    Ok(()) => {
-                        // The terminal's agent writes the history from here;
-                        // the service cancels its turn and lets go of its own.
-                        let index = self
-                            .picking
-                            .then(|| self.selected_origin())
-                            .flatten()
-                            .filter(|origin| origin.source == ASK_ROWS)
-                            .map(|origin| origin.index);
-                        if let Some(ask) = self.ask.as_mut() {
-                            ask.release(index);
-                        }
-                        // From the conversation the log says so first; the
-                        // list just goes.
-                        if index.is_none() && self.ask_running() {
-                            self.linger_until = Some(Instant::now() + HANDOVER_LINGER);
-                            self.dirty = true;
-                        } else {
-                            self.close();
-                        }
-                    }
-                    Err(err) => tracing::warn!(%err, "could not open the session in a terminal"),
-                }
-                return;
-            }
+        // Ctrl+O takes the session up in a terminal.
+        if control == Some('o') && self.open_in_terminal() {
+            return;
         }
 
         // Text picked out of the log is what Ctrl+C or Cmd+C copies, before
@@ -2461,6 +2488,15 @@ impl App for Launcher {
             Some((true, false)) => self.reload(),
             _ => {}
         }
+        if self.terminal_on_start
+            && self
+                .ask
+                .as_ref()
+                .is_some_and(|ask| ask.terminal().is_some())
+        {
+            self.terminal_on_start = false;
+            self.open_in_terminal();
+        }
         self.follow_draft();
         self.refresh_card_tint();
         self.refresh_composer_placeholder();
@@ -2574,6 +2610,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut session: Option<String> = None;
     let mut with_selection = false;
+    let mut terminal = false;
     let mut send = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -2586,6 +2623,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // place of starting one. Either means asking.
             "--file" => files.extend(args.next().map(PathBuf::from)),
             "--session" => session = args.next(),
+            // With `--session`: open it in its terminal, as Ctrl+O does.
+            "--terminal" => terminal = true,
             // Start from what is selected in the app in front, stashed.
             "--selection" => {
                 scope = Scope::Ask;
@@ -2605,7 +2644,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--help" | "-h" => {
                 println!(
                     "usage: otto-launcher [--apps|--windows|--all|--ask|--agents] \
-                     [--file PATH]... [--session ID] [--selection] [--send] [--] [query]\n\
+                     [--file PATH]... [--session ID [--terminal]] [--selection] [--send] \
+                     [--] [query]\n\
                      otto-ask opens in --ask mode"
                 );
                 return Ok(());
@@ -2624,7 +2664,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut launcher = Launcher::new(&words.join(" "), scope);
     launcher.prepare_ask(files, session.as_deref());
     launcher.stashed = stashed;
+    // What is stashed is there from the first frame, and goes with `--send`.
+    launcher.show_stashed();
     launcher.send_on_start = send && session.is_none();
+    launcher.terminal_on_start = terminal && session.is_some();
     AppRunner::new(launcher).run()?;
     Ok(())
 }
