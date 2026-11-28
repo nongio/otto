@@ -23,7 +23,7 @@ How it works: [Agents](../../docs/developer/agents.md).
 - The wire side: `src/server.rs` (WebSocket, one JSON-RPC message per text frame) and `src/rpc.rs`.
 - `src/host.rs` is the authoritative state (sessions, chats, subscriptions); `src/store.rs` keeps sessions on disk.
 - The `Backend` trait and the echo backend are `src/agent.rs`; the backends are `src/herdr.rs` (herdr) and `src/acp.rs` (ACP). `src/herdr_tools.rs` holds `herdr-ask` and `herdr-permission`, which a herdr session's Claude Code runs to reach Otto. `backend` and `[[agents]]` config is `src/config.rs` (`/etc/otto/agents.toml`, then `~/.config/otto/agents.toml`).
-- Prompts to the person (`src/dialog.rs`, `src/elicitation.rs`), the terminal views (`src/cli.rs`), the `acp` facade (`src/facade.rs`), and skills per harness for `plugins install` (`src/skills.rs`, `src/vendors.rs`).
+- Prompts to the person (`src/dialog.rs`, `src/elicitation.rs`), the terminal views (`src/cli.rs`), the `acp` facade (`src/facade.rs`), and skills per harness for `plugins install` (`src/skills.rs`, `src/vendors.rs`), which also copies Otto's herdr-app look from `/usr/share/otto/herdr` (`src/herdr_look.rs`, files in `resources/herdr/`).
 
 ## Rules
 - `spec/upstream/` is a vendored copy of the AHP spec and is read-only. Change it only with `scripts/sync-spec.sh`. The normative rules are in `spec/upstream/specification/`; the type source of truth is `spec/upstream/types/*.ts`.

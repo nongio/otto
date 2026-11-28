@@ -247,6 +247,22 @@ Automatic (herdr when it is installed, else Otto), herdr and Otto. In
 only when it differs from what would happen anyway. Sessions in herdr and
 sessions Otto ran are listed apart, so switching shows the other set.
 
+## herdr-app in Otto's look
+
+herdr-app shows these sessions in terminal panes, side by side.
+Otto ships a look for it: Otto's colours and font, a translucent sidebar, spaces
+shown as coloured folders, and a Sessions list like the one in Ask, grouped into needs input, working, done
+and idle. The accent follows the one you pick in Settings.
+
+Run herdr-app once, then apply the Agents pane in Settings (or run
+`otto-agents plugins install`). That copies the look into
+`~/.config/herdr-app/`. Pick the **otto** layout in herdr-app's layout list;
+the Otto Dark and Otto Light themes come with it.
+
+A file you edit there stays yours: a later Otto update leaves it alone.
+`otto-agents plugins status` shows which files are current, which an update
+would replace, and which are left as they are.
+
 ## Add an agent of your own
 
 The four agents above are the ones Otto is set up with, not the only ones it

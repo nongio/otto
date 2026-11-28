@@ -355,10 +355,10 @@ areas = ["packaging"]
 reason = "The Fluent catalogues are compiled into otto-kit (and so every app and the compositor) and into otto-agents; otto-files reads them at run time from ../../resources/locales."
 
 [[affects]]
-paths = ["resources/bin/", "resources/plugins/"]
+paths = ["resources/bin/", "resources/plugins/", "resources/herdr/"]
 crates = []
 areas = ["packaging"]
-reason = "Installed files no crate reads: helper scripts and the Claude plugin."
+reason = "Installed files no crate reads: helper scripts, the Claude plugin and the herdr-app look."
 
 [[affects]]
 paths = ["resources/plugins/otto/agents/studio.md"]

@@ -19,6 +19,7 @@ use ahp_types::{PROTOCOL_VERSION, ROOT_RESOURCE_URI};
 use anyhow::{Context, bail};
 use serde_json::json;
 
+use crate::herdr_look;
 use crate::skills::{self, AgentFile, Entry, Installed, LinkState, Plugin};
 use otto_agents_client::session::{self, SESSION_SCHEME, session_id};
 
@@ -326,6 +327,7 @@ pub fn install_plugins(
     only: Option<&str>,
 ) -> anyhow::Result<()> {
     let only = vendor(only)?;
+    let explicit_home = home;
     let home = vendors_home(home)?;
     let plugins = skills::discover();
     let mut out = String::new();
@@ -354,6 +356,12 @@ pub fn install_plugins(
     let targets =
         vendors::install(&agents, &home, only).context("could not write an agent file")?;
     out.push_str(&render_targets(&plugins, &agents, &targets, &home));
+    if only.is_none() {
+        let target = herdr_look::herdr_home(&home, explicit_home.is_none());
+        let look = herdr_look::install(Path::new(herdr_look::SYSTEM_DIR), &target)
+            .with_context(|| format!("could not copy Otto's look into {}", target.display()))?;
+        out.push_str(&render_herdr(look.as_ref(), &home));
+    }
     print!("{out}");
     Ok(())
 }
@@ -367,6 +375,7 @@ pub fn plugins_status(
     only: Option<&str>,
 ) -> anyhow::Result<()> {
     let only = vendor(only)?;
+    let explicit_home = home;
     let home = vendors_home(home)?;
     let plugins = skills::discover();
     let mut out = String::new();
@@ -378,8 +387,44 @@ pub fn plugins_status(
     let agents = agents_of(&plugins);
     let targets = vendors::status(&agents, &home, only);
     out.push_str(&render_targets(&plugins, &agents, &targets, &home));
+    if only.is_none() {
+        let target = herdr_look::herdr_home(&home, explicit_home.is_none());
+        let look = herdr_look::status(Path::new(herdr_look::SYSTEM_DIR), &target);
+        out.push_str(&render_herdr(look.as_ref(), &home));
+    }
     print!("{out}");
     Ok(())
+}
+
+/// Where Otto's herdr look stands, one line per file; nothing without the
+/// look in the package.
+fn render_herdr(look: Option<&herdr_look::Look>, home: &Home) -> String {
+    let Some(look) = look else {
+        return String::new();
+    };
+    let folder = home.tilde(&look.home);
+    if !look.herdr_set_up {
+        return format!(
+            "skipped Otto's look for herdr-app: {folder} is not there; it is copied once herdr-app has run\n"
+        );
+    }
+    let mut out = format!("Otto's look for herdr-app, in {folder}:\n");
+    for entry in &look.entries {
+        let path = entry.path.display();
+        let line = match (entry.done, entry.state) {
+            (_, herdr_look::State::Taken) => {
+                format!("left alone: {path} was edited, or is not ours")
+            }
+            (Some(herdr_look::Done::Created), _) => format!("wrote {path}"),
+            (Some(herdr_look::Done::Updated), _) => format!("updated {path}"),
+            (Some(_), _) => format!("unchanged: {path}"),
+            (None, herdr_look::State::Current) => format!("current    {path}"),
+            (None, herdr_look::State::Stale) => format!("stale      {path}"),
+            (None, herdr_look::State::Absent) => format!("not there  {path}"),
+        };
+        out.push_str(&format!("  {line}\n"));
+    }
+    out
 }
 
 fn vendor(id: Option<&str>) -> anyhow::Result<Option<Vendor>> {
