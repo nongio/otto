@@ -394,6 +394,7 @@ impl TopBarApp {
                 "hibernate" => crate::logout::power(PowerAction::Hibernate),
                 "restart" => crate::logout::confirm_and_restart(),
                 "shutdown" => crate::logout::confirm_and_shut_down(),
+                "lock" => crate::logout::lock(),
                 "logout" => crate::logout::confirm_and_log_out(),
                 _ => {}
             })
@@ -2277,6 +2278,11 @@ fn otto_menu_items() -> Vec<KitMenuItem> {
             .with_action_id("shutdown".to_string()),
     );
     items.push(KitMenuItem::separator());
+    items.push(
+        KitMenuItem::action(otto_kit::t!("bar-otto-lock"))
+            .with_shortcut(otto_kit::t!("bar-otto-lock-shortcut"))
+            .with_action_id("lock".to_string()),
+    );
     items.push(
         KitMenuItem::action(otto_kit::t!("bar-otto-log-out")).with_action_id("logout".to_string()),
     );

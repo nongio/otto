@@ -1089,6 +1089,8 @@ bar-otto-menu = Otto
 bar-otto-update-available = Доступна нова версія…
 bar-otto-about = Про Otto
 bar-otto-settings = Налаштування…
+bar-otto-lock = Заблокувати екран
+bar-otto-lock-shortcut = Ctrl+Alt+Esc
 bar-otto-log-out = Вийти
 # The menu under the focused application's name in the top bar.
 bar-app-minimize = Згорнути

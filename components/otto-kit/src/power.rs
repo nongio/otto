@@ -1,4 +1,4 @@
-//! Sleep, hibernate, restart and shut down, asked of logind.
+//! Sleep, hibernate, restart, shut down and lock, asked of logind.
 //!
 //! The login screen, the lock screen and the bar's Otto menu all offer these,
 //! and all of them go through here: one set of actions, one call to logind,
@@ -236,6 +236,33 @@ pub fn request(action: PowerAction) -> Result<(), PowerError> {
         }
         Err(zbus::Error::MethodError(name, message, _)) if is_refusal(name.as_str()) => {
             tracing::warn!(?action, %name, ?message, "logind refused");
+            Err(PowerError::Denied)
+        }
+        Err(err) => Err(failed(err)),
+    }
+}
+
+/// Lock this session.
+///
+/// logind passes the request on as `Lock` on the session, which Otto answers
+/// by starting its locker, the same path `loginctl lock-session` takes.
+///
+/// # Errors
+///
+/// [`PowerError::Denied`] when polkit refuses, [`PowerError::Failed`] when
+/// logind cannot be reached or fails.
+pub fn lock_session() -> Result<(), PowerError> {
+    let failed = |err: zbus::Error| {
+        tracing::warn!(%err, "logind unavailable");
+        PowerError::Failed(err.to_string())
+    };
+    let connection = zbus::blocking::Connection::system().map_err(failed)?;
+    let manager = Login1ManagerProxyBlocking::new(&connection).map_err(failed)?;
+    tracing::info!("asking logind to lock the session");
+    match manager.lock_session("auto") {
+        Ok(()) => Ok(()),
+        Err(zbus::Error::MethodError(name, message, _)) if is_refusal(name.as_str()) => {
+            tracing::warn!(%name, ?message, "logind refused to lock");
             Err(PowerError::Denied)
         }
         Err(err) => Err(failed(err)),

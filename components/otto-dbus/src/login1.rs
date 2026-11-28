@@ -1,4 +1,4 @@
-//! `org.freedesktop.login1.Manager`: logind's power actions.
+//! `org.freedesktop.login1.Manager`: logind's power and session actions.
 //!
 //! Served by systemd-logind on the system bus. Whether the caller may act is
 //! polkit's call; `interactive` lets polkit ask for a password where its
@@ -32,6 +32,11 @@ pub trait Login1Manager {
     /// `"challenge"` (polkit would ask), `"no"` or `"na"` (no swap or resume
     /// device to hibernate to).
     fn can_hibernate(&self) -> zbus::Result<String>;
+
+    /// Ask the session `session_id` to lock: logind emits `Lock` on it, and
+    /// whoever runs the session answers. `"auto"` is the caller's own
+    /// session, or the user's graphical one when the caller is in none.
+    fn lock_session(&self, session_id: &str) -> zbus::Result<()>;
 
     /// Sent with `true` as the machine is about to sleep, and with `false`
     /// once it has woken.

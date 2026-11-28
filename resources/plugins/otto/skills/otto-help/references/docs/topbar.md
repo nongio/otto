@@ -289,9 +289,10 @@ That one renders as `March 23, Thursday 21:16`. Some other useful formats:
 ## The Otto menu
 
 The two dots at the far left open the Otto menu: **About Otto**,
-**Settings…**, **Sleep**, **Restart…**, **Shut Down…** and **Log Out**. Hold
+**Settings…**, **Sleep**, **Restart…**, **Shut Down…**, **Lock Screen** and **Log Out**. Hold
 Cmd while it is open and **Sleep** becomes **Hibernate**, where the machine
-can hibernate. Restart, Shut Down and Log Out ask before they act. See
+can hibernate. Restart, Shut Down and Log Out ask before they act. Lock Screen locks at once,
+like Ctrl+Alt+Esc; see [Lock Screen](lock-screen.md). See
 [Power Management](power-management.md#sleep-and-hibernate).
 
 ## New versions
